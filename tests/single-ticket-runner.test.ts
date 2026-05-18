@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -12,7 +12,7 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-'));
   const store = new RuntimeStore({ repoRoot });
   const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-1', removable: true, output: ['worker started'] }));
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.match(result.message, /Scheduled feat\/001/);
@@ -21,6 +21,48 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   assert.match(readFileSync(metadataPath, 'utf8'), /session-1/);
   assert.match(readFileSync(logPath, 'utf8'), /ticket start: feat\/001/);
   assert.match(readFileSync(logPath, 'utf8'), /worker started/);
+  assert.match(readFileSync(logPath, 'utf8'), /reviewer model: review-model/);
+});
+
+test('emits progress while launching a ticket', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-progress-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, '---\nfeature: feat\n---\n\n## AFK Summary\nStatus: done\n');
+  const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-progress', removable: true, output: ['worker started'] }));
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: 'progress', label: 'feat/progress', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const progress: string[] = [];
+
+  await runner.launch(plan as never, { onProgress: (event) => progress.push(`${event.ticketLabel}: ${event.message}`) });
+
+  assert.deepEqual(progress, [
+    'feat/progress: starting ticket run',
+    'feat/progress: run completed',
+  ]);
+});
+
+test('sends ticket file summary instructions to the execution provider', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-prompt-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '006.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n', { flag: 'w' });
+  let capturedPrompt = '';
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ prompt }) => {
+      capturedPrompt = prompt;
+      writeFileSync(ticketPath, 'Status: done\n\n## Title\n\nImplement the thing\n\n## AFK Summary\n\nStatus: completed\n');
+      return { status: 'completed', sessionId: 'session-prompt', removable: true };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '006', label: 'feat/006', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  assert.match(capturedPrompt, new RegExp(`Ticket file to update: ${ticketPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(capturedPrompt, /Do not put the final AFK summary only in the assistant response, runtime log, or commit message/);
+  assert.match(capturedPrompt, /Status: ready-for-agent/);
+  assert.match(capturedPrompt, /Reviewer prompt: reviewer-default/);
 });
 
 test('does not promote completed runs without an AFK summary', async () => {
@@ -61,6 +103,25 @@ test('records failed state when the provider throws', async () => {
   assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "failed"/);
 });
 
+test('persists failed provider output for later inspection', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-failed-output-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({
+    status: 'failed',
+    sessionId: 'session-model-error',
+    removable: false,
+    unsafeReason: 'The requested model is not available for integrator "copilot-language-server".',
+    output: ['The requested model is not available for integrator "copilot-language-server".'],
+  }));
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '005', label: 'feat/005', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-005.log');
+  assert.match(readFileSync(logPath, 'utf8'), /requested model is not available/);
+  assert.match(readFileSync(logPath, 'utf8'), /run failed/);
+});
+
 test('scheduler queues tickets by feature and starts the next queued ticket after completion', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-scheduler-'));
   const store = new RuntimeStore({ repoRoot });
@@ -79,4 +140,23 @@ test('scheduler queues tickets by feature and starts the next queued ticket afte
 
   await scheduler.launch(plan as never);
   assert.deepEqual(started, ['feat-a/001', 'feat-b/001', 'feat-a/002']);
+});
+
+test('scheduler forwards progress events from queued tickets', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-scheduler-progress-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-queued', removable: true }));
+  const scheduler = new Scheduler(runner, 1);
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [
+    { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+  ], gitContext: { commits: [] }, checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' } };
+  const progress: string[] = [];
+
+  await scheduler.launch(plan as never, { onProgress: (event) => progress.push(`${event.ticketLabel}: ${event.message}`) });
+
+  assert.deepEqual(progress.filter((event) => event.endsWith('starting ticket run')), [
+    'feat-a/001: starting ticket run',
+    'feat-b/001: starting ticket run',
+  ]);
 });

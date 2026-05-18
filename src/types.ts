@@ -12,6 +12,18 @@ export interface LaunchModel {
   label?: string;
 }
 
+export interface LaunchPreferences {
+  harness?: 'OpenCode';
+  modelId?: string;
+  reviewerModelId?: string;
+}
+
+export interface ReviewerPromptTemplate {
+  id: string;
+  label: string;
+  path: string;
+}
+
 export interface GitContext {
   commits: string[];
 }
@@ -27,6 +39,8 @@ export interface CheckoutContext {
 
 export interface LaunchPlan {
   model: LaunchModel;
+  reviewerModel?: LaunchModel;
+  reviewerPrompt?: ReviewerPromptTemplate;
   tickets: TicketRecord[];
   repoRoot: string;
   gitContext: GitContext;
@@ -59,3 +73,11 @@ export interface AgentExecutionResult {
   output?: string[];
   inspectionTargetIdentifier?: string | null;
 }
+
+export interface AgentExecutionProgressEvent {
+  ticketLabel: string;
+  message: string;
+  sessionId?: string | null;
+}
+
+export type AgentExecutionProgressCallback = (event: AgentExecutionProgressEvent) => void;

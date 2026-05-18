@@ -1,4 +1,4 @@
-import type { LaunchPlan, TicketRecord } from './types.js';
+import type { AgentExecutionProgressCallback, LaunchPlan, TicketRecord } from './types.js';
 import type { SingleTicketRunner } from './single-ticket-runner.js';
 
 export interface SchedulerRunResult {
@@ -9,7 +9,7 @@ export interface SchedulerRunResult {
 export class Scheduler {
   constructor(private readonly runner: SingleTicketRunner, private readonly concurrencyLimit = 3) {}
 
-  async launch(plan: LaunchPlan): Promise<SchedulerRunResult> {
+  async launch(plan: LaunchPlan, options: { onProgress?: AgentExecutionProgressCallback } = {}): Promise<SchedulerRunResult> {
     if (!plan.tickets.length) return { scheduled: false, message: 'No ticket available for launch' };
 
     const grouped = this.groupByFeature(plan.tickets);
@@ -33,7 +33,7 @@ export class Scheduler {
         if (!ticket) return;
         active.add(nextFeature);
 
-        const run = this.runner.launch({ ...plan, tickets: [ticket] }).then((result) => {
+        const run = this.runner.launch({ ...plan, tickets: [ticket] }, { onProgress: options.onProgress }).then((result) => {
           if (!result.scheduled) failures.push(result.message);
         }).catch((error) => {
           failures.push(error instanceof Error ? error.message : `ticket failed: ${ticket.label}`);

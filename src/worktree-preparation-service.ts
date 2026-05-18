@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export interface PreparedCheckoutContext {
@@ -42,9 +43,11 @@ function branchWorktreePath(repoRoot: string, branchName: string): string | null
   try {
     const output = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
     const lines = output.split('\n');
+    let currentWorktreePath: string | null = null;
     for (let index = 0; index < lines.length; index += 1) {
+      if (lines[index].startsWith('worktree ')) currentWorktreePath = lines[index].slice('worktree '.length);
       if (lines[index] === `branch refs/heads/${branchName}`) {
-        return lines[index - 1]?.startsWith('worktree ') ? lines[index - 1].slice('worktree '.length) : null;
+        return currentWorktreePath;
       }
     }
     return null;
@@ -58,13 +61,26 @@ function ensureBranch(repoRoot: string, branchName: string): void {
   runGit(repoRoot, ['branch', '--no-track', branchName, 'HEAD']);
 }
 
+function ensureIgnoredWorktreeRoot(repoRoot: string): string {
+  const worktreeRoot = path.join(repoRoot, '.worktree');
+  mkdirSync(worktreeRoot, { recursive: true });
+  const gitignorePath = path.join(repoRoot, '.gitignore');
+  const entry = '.worktree/';
+  const current = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+  const lines = current.split(/\r?\n/).map((line) => line.trim());
+  if (lines.includes(entry) || lines.includes('.worktree')) return worktreeRoot;
+  const prefix = current && !current.endsWith('\n') ? '\n' : '';
+  writeFileSync(gitignorePath, `${current}${prefix}${entry}\n`, 'utf8');
+  return worktreeRoot;
+}
+
 export class WorktreePreparationService {
   prepare(input: WorktreePreparationInput): PreparedCheckoutContext {
     const defaultWorktreeName = input.featureSlug;
     const effectiveWorktreeName = input.ticketOverrides?.afk_worktree?.trim() || defaultWorktreeName;
     const defaultBranchName = `afk/${defaultWorktreeName}`;
     const effectiveBranchName = input.ticketOverrides?.afk_branch?.trim() || defaultBranchName;
-    const worktreePath = path.join(input.repoRoot, '..', `${effectiveWorktreeName}-worktree`);
+    const worktreePath = path.join(ensureIgnoredWorktreeRoot(input.repoRoot), effectiveWorktreeName);
 
     ensureBranch(input.repoRoot, effectiveBranchName);
 

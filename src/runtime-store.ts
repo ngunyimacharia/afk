@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
-import type { RuntimeMetadataRecord } from './types.js';
+import type { LaunchPreferences, RuntimeMetadataRecord } from './types.js';
 
 export interface RuntimeStoreInput {
   repoRoot: string;
@@ -27,11 +27,33 @@ export class RuntimeStore {
   private readonly logRoot: string;
   private readonly metadataRoot: string;
   private readonly sentinelRoot: string;
+  private readonly launchPreferencesPath: string;
 
   constructor(input: RuntimeStoreInput) {
     this.logRoot = path.join(input.repoRoot, '.scratch', '.opencode-afk-logs');
     this.metadataRoot = path.join(this.logRoot, 'runtime-metadata');
     this.sentinelRoot = path.join(this.logRoot, 'sentinels');
+    this.launchPreferencesPath = path.join(this.logRoot, 'launch-preferences.json');
+  }
+
+  readLaunchPreferences(): LaunchPreferences {
+    if (!existsSync(this.launchPreferencesPath)) return {};
+    try {
+      const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+      return {
+        harness: value.harness === 'OpenCode' ? 'OpenCode' : undefined,
+        modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
+        reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
+      };
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  writeLaunchPreferences(preferences: LaunchPreferences): void {
+    mkdirSync(path.dirname(this.launchPreferencesPath), { recursive: true });
+    writeFileSync(this.launchPreferencesPath, `${JSON.stringify(preferences, null, 2)}\n`, 'utf8');
   }
 
   createRecord(context: RuntimeTicketContext): RuntimeRecordHandle {

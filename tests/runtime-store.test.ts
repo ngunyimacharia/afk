@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -23,4 +23,27 @@ test('creates metadata, appends logs, and writes sentinels', () => {
   assert.match(readFileSync(record.logPath, 'utf8'), /hello/);
   assert.match(readFileSync(record.doneSentinelPath, 'utf8'), /done/);
   assert.match(readFileSync(record.failedSentinelPath, 'utf8'), /failed/);
+});
+
+test('reads empty launch preferences when missing or malformed', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
+  const store = new RuntimeStore({ repoRoot });
+  assert.deepEqual(store.readLaunchPreferences(), {});
+
+  const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
+  mkdirSync(path.dirname(preferencesPath), { recursive: true });
+  writeFileSync(preferencesPath, 'not json', 'utf8');
+  assert.deepEqual(store.readLaunchPreferences(), {});
+});
+
+test('round-trips launch preferences', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
+  const store = new RuntimeStore({ repoRoot });
+  store.writeLaunchPreferences({ harness: 'OpenCode', modelId: 'provider/exec', reviewerModelId: 'provider/review' });
+
+  assert.deepEqual(store.readLaunchPreferences(), {
+    harness: 'OpenCode',
+    modelId: 'provider/exec',
+    reviewerModelId: 'provider/review',
+  });
 });

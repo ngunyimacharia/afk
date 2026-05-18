@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
+import type { LaunchPlan } from '../src/types.js';
 
 test('serializes tickets within a feature and caps cross-feature concurrency', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-'));
@@ -14,7 +15,7 @@ test('serializes tickets within a feature and caps cross-feature concurrency', a
   const launches: string[] = [];
 
   const scheduler = new Scheduler({
-    launch: async (plan) => {
+    launch: async (plan: LaunchPlan) => {
       const ticket = plan.tickets[0];
       assert.ok(ticket);
       assert.equal(active.has(ticket.feature), false);
@@ -55,7 +56,7 @@ test('serializes tickets within a feature and caps cross-feature concurrency', a
 test('continues independent queues when one ticket fails', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-fail-'));
   const scheduler = new Scheduler({
-    launch: async (plan) => {
+    launch: async (plan: LaunchPlan) => {
       const ticket = plan.tickets[0];
       assert.ok(ticket);
       if (ticket.feature === 'feat-a' && ticket.issueName === '001') throw new Error('boom');
