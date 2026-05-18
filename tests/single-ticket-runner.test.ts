@@ -63,6 +63,7 @@ test('approves minor-only reviews without another execution cycle', async () => 
     (request) => {
       assert.equal(request.invocationMode, 'execution');
       assert.equal(request.sessionId, null);
+      assert.equal(request.prompt, 'AFK run for feat/001');
       return { status: 'completed', sessionId: 'session-1', removable: true, output: ['worker started'] };
     },
     (request) => {
@@ -138,6 +139,7 @@ test('loops on major findings and continues the same session', async () => {
     (request) => {
       assert.equal(request.invocationMode, 'execution');
       assert.equal(request.sessionId, 'session-3');
+      assert.match(request.prompt, /Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass\./);
       assert.match(request.prompt, /Reviewer summary: Missing guard/);
       return { status: 'completed', sessionId: 'session-3', removable: true, output: ['second pass'] };
     },

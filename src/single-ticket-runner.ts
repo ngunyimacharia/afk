@@ -6,6 +6,7 @@ import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 
 const MAX_REVIEW_CYCLES = 3;
+const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
 
 export interface SingleTicketRunResult {
   scheduled: boolean;
@@ -153,6 +154,7 @@ export class SingleTicketRunner {
       `AFK follow-up for ${ticketLabel}`,
       `Continue the same execution session: ${sessionId ?? 'unknown'}`,
       `Review cycle: ${cycleCount}`,
+      FIXUP_REMEDIATION_GUIDANCE,
       `Reviewer summary: ${review.summary}`,
       'Reviewer findings:',
       ...review.findings.map((finding) => {
