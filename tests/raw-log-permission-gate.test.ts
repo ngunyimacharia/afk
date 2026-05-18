@@ -8,15 +8,19 @@ import { SummaryReporter } from '../src/summary-reporter.js';
 test('summary reporter requests raw-log permission when configured', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   let requested = false;
+  let requestArgs: { scope: string; reason: string } | null = null;
   const report = await new SummaryReporter({
     repoRoot,
     permission: {
-      async request() {
+      async request(args) {
         requested = true;
+        requestArgs = args;
         return false;
       },
     },
   }).summarize();
   assert.equal(requested, true);
+  assert.equal(requestArgs?.scope, '.scratch/.opencode-afk-logs/');
+  assert.match(requestArgs?.reason ?? '', /missing summaries|incomplete|contradictory/i);
   assert.match(report.message, /Raw logs were not inspected/);
 });

@@ -36,6 +36,12 @@ interface SummaryAttempt {
   index: number;
 }
 
+interface SummaryGroupItem {
+  issue: IssueFileRecord;
+  attempt?: SummaryAttempt;
+  metadata?: RuntimeMetadataRecord;
+}
+
 function normalize(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? '';
 }
@@ -76,6 +82,14 @@ function parseFields(text: string): Record<string, string> {
     if (match) fields[match[1].trim().toLowerCase()] = match[2].trim();
   }
   return fields;
+}
+
+function fieldValue(fields: Record<string, string>, ...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = fields[name.toLowerCase()];
+    if (value) return value;
+  }
+  return undefined;
 }
 
 function classify(status: string | undefined, attempt: SummaryAttempt): 'completed' | 'failed' | 'interrupted' | 'missing' | 'other' {
@@ -119,14 +133,24 @@ function readRuntimeMetadata(repoRoot: string): RuntimeMetadataRecord[] {
     .map((file) => JSON.parse(readFileSync(path.join(metadataRoot, file), 'utf8')) as RuntimeMetadataRecord);
 }
 
-function formatAttempt(issue: IssueFileRecord, attempt: SummaryAttempt, metadata?: RuntimeMetadataRecord): string {
+function formatAttempt(item: SummaryGroupItem): string {
+  const { issue, attempt, metadata } = item;
+    const session = fieldValue(attempt?.fields ?? {}, 'session or run id', 'session/run id', 'session id') ?? metadata?.PROVIDER_SESSION_ID ?? undefined;
   const bits = [
     `- ${issue.feature}/${issue.issueName}`,
     issue.status ? `status: ${issue.status}` : null,
     metadata?.STATUS ? `runtime: ${metadata.STATUS}` : null,
-    attempt.fields.timestamp ? `timestamp: ${attempt.fields.timestamp}` : null,
-    attempt.fields['session or run id'] ? `session: ${attempt.fields['session or run id']}` : attempt.fields['session/run id'] ? `session: ${attempt.fields['session/run id']}` : null,
-    attempt.text ? attempt.text : null,
+    metadata?.START_TIME ? `started: ${metadata.START_TIME}` : null,
+    fieldValue(attempt?.fields ?? {}, 'timestamp') ? `timestamp: ${fieldValue(attempt?.fields ?? {}, 'timestamp')}` : null,
+    session ? `session: ${session}` : null,
+    fieldValue(attempt?.fields ?? {}, 'outcome', 'result') ? `outcome: ${fieldValue(attempt?.fields ?? {}, 'outcome', 'result')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'commits') ? `commits: ${fieldValue(attempt?.fields ?? {}, 'commits')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes') ? `changes: ${fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched') ? `touched: ${fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run') ? `verification: ${fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors') ? `blockers: ${fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'next action', 'next step') ? `next: ${fieldValue(attempt?.fields ?? {}, 'next action', 'next step')}` : null,
+    attempt?.text ? attempt.text : null,
   ].filter(Boolean);
   return bits.join('\n');
 }
@@ -152,7 +176,7 @@ export class SummaryReporter {
       if (issue.summaries.length > 1) repeated.push(`- ${issue.feature}/${issue.issueName}: ${issue.summaries.length} attempts`);
       for (const attempt of issue.summaries) {
         const runtime = byTicket.get(`${issue.issueName}.md`) ?? metadata.find((entry) => entry.FEATURE_SLUG === issue.feature && entry.ISSUE_NAME === issue.issueName);
-        const rendered = formatAttempt(issue, attempt, runtime);
+        const rendered = formatAttempt({ issue, attempt, metadata: runtime });
         const bucket = classify(issue.status, attempt);
         if (bucket === 'completed') completed.push(rendered);
         else if (bucket === 'failed') failed.push(rendered);
@@ -180,13 +204,16 @@ export class SummaryReporter {
     ];
 
     const permission = this.input.permission;
-    if (permission) {
-      const granted = await permission.request({ scope: '.scratch/.opencode-afk-logs/', reason: 'fill missing summaries and clarify incomplete or contradictory AFK results' });
-      lines.push('', granted ? 'Raw logs were permitted for this invocation.' : 'Raw logs were not inspected because permission was denied.');
-      return { message: lines.join('\n'), rawLogsInspected: granted };
+    if (!permission) {
+      lines.push('', 'Raw logs were not inspected because permission was not granted for this invocation.');
+      return { message: lines.join('\n'), rawLogsInspected: false };
     }
 
-    lines.push('', 'Raw logs were not inspected because permission was not granted for this invocation.');
-    return { message: lines.join('\n'), rawLogsInspected: false };
+    const granted = await permission.request({
+      scope: '.scratch/.opencode-afk-logs/',
+      reason: 'fill missing summaries and clarify incomplete or contradictory AFK results',
+    });
+    lines.push('', granted ? 'Raw logs were permitted for this invocation.' : 'Raw logs were not inspected because permission was denied.');
+    return { message: lines.join('\n'), rawLogsInspected: granted };
   }
 }
