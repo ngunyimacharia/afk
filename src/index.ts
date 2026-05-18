@@ -4,5 +4,6 @@ export { SelectionService } from './selection-service.js';
 export { resolveLaunchModelSelection } from './launch-models.js';
 export { resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
 export { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
+export { assertCommandAllowed, resolveAgentInvocationPolicy } from './agent-execution-provider.js';
 export { buildLaunchPlan } from './launch-context-builder.js';
 export { runAfk } from './cli.js';
