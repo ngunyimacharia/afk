@@ -4,10 +4,12 @@
     "module": "ES2022",
     "moduleResolution": "Bundler",
     "strict": true,
+    "rootDir": ".",
+    "outDir": "dist",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "types": ["node"]
   },
-  "include": ["src", "tests"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
 }
