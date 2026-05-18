@@ -37,6 +37,7 @@ export class RuntimeStore {
   createRecord(context: RuntimeTicketContext): RuntimeRecordHandle {
     mkdirSync(this.metadataRoot, { recursive: true });
     mkdirSync(this.sentinelRoot, { recursive: true });
+    mkdirSync(this.logRoot, { recursive: true });
     const logPath = path.join(this.logRoot, `${context.featureSlug}-${context.issueName}.log`);
     const metadataPath = path.join(this.metadataRoot, `${context.featureSlug}-${context.issueName}.json`);
     const doneSentinelPath = path.join(this.sentinelRoot, `${context.featureSlug}-${context.issueName}.done`);
@@ -78,10 +79,12 @@ export class RuntimeStore {
   }
 
   markDone(handle: RuntimeRecordHandle): void {
+    mkdirSync(path.dirname(handle.doneSentinelPath), { recursive: true });
     writeFileSync(handle.doneSentinelPath, `${isoNow()} done\n`, 'utf8');
   }
 
   markFailed(handle: RuntimeRecordHandle, reason: string): void {
+    mkdirSync(path.dirname(handle.failedSentinelPath), { recursive: true });
     writeFileSync(handle.failedSentinelPath, `${isoNow()} ${reason}\n`, 'utf8');
   }
 

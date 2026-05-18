@@ -13,7 +13,7 @@ export interface AgentExecutionProvider {
 export class FakeAgentExecutionProvider implements AgentExecutionProvider {
   constructor(private readonly result: AgentExecutionResult) {}
 
-  async execute(): Promise<AgentExecutionResult> {
+  async execute(_request: AgentExecutionRequest): Promise<AgentExecutionResult> {
     return this.result;
   }
 }

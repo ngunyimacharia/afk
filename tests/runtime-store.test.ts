@@ -21,4 +21,6 @@ test('creates metadata, appends logs, and writes sentinels', () => {
   assert.equal(existsSync(record.doneSentinelPath), true);
   assert.equal(existsSync(record.failedSentinelPath), true);
   assert.match(readFileSync(record.logPath, 'utf8'), /hello/);
+  assert.match(readFileSync(record.doneSentinelPath, 'utf8'), /done/);
+  assert.match(readFileSync(record.failedSentinelPath, 'utf8'), /failed/);
 });
