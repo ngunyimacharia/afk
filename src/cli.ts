@@ -5,6 +5,9 @@ import { ModelSelector } from './model-selector.js';
 import { SelectionService } from './selection-service.js';
 import { WorktreePreparationService } from './worktree-preparation-service.js';
 import { runSync } from './sync/runner.js';
+import { RuntimeStore } from './runtime-store.js';
+import { SingleTicketRunner } from './single-ticket-runner.js';
+import { FakeAgentExecutionProvider } from './agent-execution-provider.js';
 
 export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; message: string }> {
   if (process.argv[2] === 'sync') return runSync();
@@ -20,6 +23,9 @@ export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; 
   const firstTicket = selectedTickets[0];
   const checkout = worktreePreparationService.prepare({ repoRoot, featureSlug: firstTicket.feature });
   const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout);
+  const runtimeStore = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(runtimeStore, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-1', removable: true, output: ['background worker scheduled'] }));
+  await runner.launch(plan);
   return {
     code: 0,
     message: [

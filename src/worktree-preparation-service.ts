@@ -69,7 +69,7 @@ export class WorktreePreparationService {
     ensureBranch(input.repoRoot, effectiveBranchName);
 
     const existingWorktreePath = branchWorktreePath(input.repoRoot, effectiveBranchName);
-    if (!existingWorktreePath && !worktreeExists(input.repoRoot, worktreePath)) {
+    if (!existingWorktreePath && !worktreeExists(input.repoRoot, worktreePath) && !worktreePath.includes('undefined')) {
       runGit(input.repoRoot, ['worktree', 'add', worktreePath, effectiveBranchName]);
     }
 
