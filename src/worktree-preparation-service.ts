@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 
 export interface PreparedCheckoutContext {
@@ -38,6 +39,14 @@ function worktreeExists(repoRoot: string, worktreePath: string): boolean {
   }
 }
 
+function directoryExists(targetPath: string): boolean {
+  try {
+    return statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function branchWorktreePath(repoRoot: string, branchName: string): string | null {
   try {
     const output = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
@@ -69,7 +78,7 @@ export class WorktreePreparationService {
     ensureBranch(input.repoRoot, effectiveBranchName);
 
     const existingWorktreePath = branchWorktreePath(input.repoRoot, effectiveBranchName);
-    if (!existingWorktreePath && !worktreeExists(input.repoRoot, worktreePath) && !worktreePath.includes('undefined')) {
+    if (!existingWorktreePath && !worktreeExists(input.repoRoot, worktreePath) && !directoryExists(worktreePath) && !worktreePath.includes('undefined')) {
       runGit(input.repoRoot, ['worktree', 'add', worktreePath, effectiveBranchName]);
     }
 

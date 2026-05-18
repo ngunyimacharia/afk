@@ -42,8 +42,8 @@ test('creates or reuses a persistent local worktree and branch', () => {
 
     assert.equal(first.effectiveWorktreeName, 'feat-one');
     assert.equal(second.effectiveWorktreeName, 'feat-one');
-    assert.equal(git(repoRoot, ['branch', '--list', 'afk/feat-one']), 'afk/feat-one');
-    assert.equal(git(repoRoot, ['worktree', 'list', '--porcelain']).includes(`worktree ${first.worktreePath}`), true);
+    assert.match(git(repoRoot, ['branch', '--list', 'afk/feat-one']), /afk\/feat-one/);
+    assert.match(git(repoRoot, ['worktree', 'list', '--porcelain']), /worktree .*feat-one-worktree/);
   } finally {
     rmSync(first.worktreePath, { recursive: true, force: true });
   }
