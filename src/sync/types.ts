@@ -26,3 +26,8 @@ export type SyncReport = {
   actions: SyncAction[];
   counts: Record<SyncActionStatus, number>;
 };
+
+export type SyncRenderLine = {
+  label: string;
+  value: string;
+};

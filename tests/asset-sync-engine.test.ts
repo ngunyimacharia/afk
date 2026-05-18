@@ -58,3 +58,23 @@ test('classifies changed destination content as updated', async () => {
   const report = await engine.plan();
   assert.equal(report.counts.updated, 1);
 });
+
+test('reports skipped files outside configured extensions', async () => {
+  const { src, dst } = await fixture();
+  await writeFile(path.join(src, 'a.md'), '# A');
+  await writeFile(path.join(src, 'b.txt'), 'nope');
+  const engine = new AssetSyncEngine({ id: 'test', assetCategories: () => [{ name: 'docs', sourceRoot: src, destinationRoot: dst, extensions: ['.md'] }] });
+  const report = await engine.plan();
+  assert.equal(report.counts.skipped, 1);
+});
+
+test('does not rewrite unchanged destination files', async () => {
+  const { src, dst } = await fixture();
+  await writeFile(path.join(src, 'a.md'), '# A');
+  await writeFile(path.join(dst, 'a.md'), '# A');
+  const before = await readFile(path.join(dst, 'a.md'), 'utf8');
+  const engine = new AssetSyncEngine({ id: 'test', assetCategories: () => [{ name: 'docs', sourceRoot: src, destinationRoot: dst, extensions: ['.md'] }] });
+  const report = await engine.execute();
+  assert.equal(report.counts.unchanged, 1);
+  assert.equal(await readFile(path.join(dst, 'a.md'), 'utf8'), before);
+});

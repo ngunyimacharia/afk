@@ -63,6 +63,14 @@ export class AssetSyncEngine {
   }
 }
 
+export function formatSyncReport(report: SyncReport): string {
+  const lines = [`Adapter: ${report.adapterId}`, `Created: ${report.counts.created}`, `Updated: ${report.counts.updated}`, `Unchanged: ${report.counts.unchanged}`, `Skipped: ${report.counts.skipped}`];
+  for (const action of report.actions) {
+    lines.push(`${action.status.toUpperCase()} ${action.category}: ${action.sourcePath} -> ${action.destinationPath}`);
+  }
+  return lines.join('\n');
+}
+
 function countActions(actions: SyncReport['actions']): SyncReport['counts'] {
   const counts: SyncReport['counts'] = { created: 0, updated: 0, unchanged: 0, skipped: 0 };
   for (const action of actions) counts[action.status] += 1;
