@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { access } from 'node:fs/promises';
 import test from 'node:test';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 import { formatSyncReport } from '../src/sync/engine.js';
@@ -14,12 +15,17 @@ test('sync report renders reviewable counts and actions', () => {
     adapterId: 'opencode',
     counts: { created: 1, updated: 2, unchanged: 3, skipped: 4 },
     actions: [
-      { category: 'sub-agents', sourcePath: 'PRDs/sub-agents/a.md', destinationPath: 'private_dot_config/opencode/agents/a.md', status: 'created' },
-      { category: 'prompts', sourcePath: 'PRDs/prompts/b.md', destinationPath: 'private_dot_config/opencode/prompts/b.md', status: 'updated' },
+      { category: 'agents', sourcePath: 'artifacts/opencode/agents/a.md', destinationPath: 'private_dot_config/opencode/agents/a.md', status: 'created' },
+      { category: 'prompts', sourcePath: 'artifacts/opencode/prompts/b.md', destinationPath: 'private_dot_config/opencode/prompts/b.md', status: 'updated' },
     ],
   });
 
   assert.match(output, /Adapter: opencode/);
   assert.match(output, /Created: 1/);
-  assert.match(output, /UPDATED prompts: PRDs\/prompts\/b\.md -> private_dot_config\/opencode\/prompts\/b\.md/);
+  assert.match(output, /UPDATED prompts: artifacts\/opencode\/prompts\/b\.md -> private_dot_config\/opencode\/prompts\/b\.md/);
+});
+
+test('internal AFK prompt is not a syncable opencode artifact', async () => {
+  await assert.rejects(access('artifacts/opencode/prompts/afk-prompt.md'));
+  await assert.doesNotReject(access('src/prompts/afk-prompt.md'));
 });

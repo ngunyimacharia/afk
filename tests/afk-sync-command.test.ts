@@ -8,28 +8,28 @@ import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 
 async function makeFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'afk-opencode-sync-'));
-  const prds = path.join(root, 'PRDs');
+  const artifacts = path.join(root, 'artifacts', 'opencode');
   const opencode = path.join(root, 'private_dot_config', 'opencode');
-  await mkdir(path.join(prds, 'sub-agents'), { recursive: true });
-  await mkdir(path.join(prds, 'prompts'), { recursive: true });
-  await mkdir(path.join(prds, 'commands'), { recursive: true });
-  return { root, prds, opencode };
+  await mkdir(path.join(artifacts, 'agents'), { recursive: true });
+  await mkdir(path.join(artifacts, 'prompts'), { recursive: true });
+  await mkdir(path.join(artifacts, 'commands'), { recursive: true });
+  return { root, artifacts, opencode };
 }
 
 test('syncs initial opencode asset categories into the destination tree', async () => {
-  const { prds, opencode } = await makeFixture();
-  await writeFile(path.join(prds, 'sub-agents', 'alpha.md'), '# alpha');
-  await writeFile(path.join(prds, 'prompts', 'beta.md'), '# beta');
-  await writeFile(path.join(prds, 'commands', 'gamma.md'), '# gamma');
+  const { artifacts, opencode } = await makeFixture();
+  await writeFile(path.join(artifacts, 'agents', 'alpha.md'), '# alpha');
+  await writeFile(path.join(artifacts, 'prompts', 'beta.md'), '# beta');
+  await writeFile(path.join(artifacts, 'commands', 'gamma.md'), '# gamma');
 
   const engine = new AssetSyncEngine({
     id: 'opencode',
     assetCategories: () => OpenCodeSyncAdapter.assetCategories().map((category) => {
-      const relativeSource = category.sourceRoot.replace('PRDs/', '');
+      const relativeSource = category.sourceRoot.replace('artifacts/opencode/', '');
       const relativeDestination = category.destinationRoot.replace('private_dot_config/opencode/', '');
       return {
         ...category,
-        sourceRoot: path.join(prds, relativeSource),
+        sourceRoot: path.join(artifacts, relativeSource),
         destinationRoot: path.join(opencode, relativeDestination),
         destinationBase: opencode,
       };
