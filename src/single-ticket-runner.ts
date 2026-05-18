@@ -3,6 +3,9 @@ import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
 import type { LaunchPlan } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
+import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
+
+const MAX_REVIEW_CYCLES = 3;
 
 export interface SingleTicketRunResult {
   scheduled: boolean;
@@ -30,28 +33,60 @@ export class SingleTicketRunner {
       REVIEWER_PROMPT_ID: plan.reviewerPrompt.id,
       REVIEWER_PROMPT_PATH: plan.reviewerPrompt.path,
     });
-    const prompt = `AFK run for ${ticket.label}`;
+    const reviewerPromptText = this.readReviewerPrompt(plan.reviewerPrompt.path);
+    let prompt = `AFK run for ${ticket.label}`;
+    let sessionId: string | null = null;
+    let reviewCycle = 0;
 
     try {
-      const result = await this.provider.execute({ plan, ticketIndex: 0, prompt });
-      this.runtimeStore.appendLog(record.logPath, `provider session: ${result.sessionId ?? 'unknown'}`);
-      this.runtimeStore.updateMetadata(record.metadataPath, {
-        STATUS: normalizeStatus(result.status),
-        PROVIDER_SESSION_ID: result.sessionId ?? null,
-        PROVIDER_SESSION_REMOVABLE: result.removable ?? false,
-        UNSAFE_REASON: result.unsafeReason ?? null,
-        INSPECTION_PROVIDER: result.inspectionTargetIdentifier ? 'tmux' : null,
-        INSPECTION_TARGET_IDENTIFIER: result.inspectionTargetIdentifier ?? null,
-      });
-      (result.output ?? []).forEach((line) => this.runtimeStore.appendLog(record.logPath, line));
-      if (result.status === 'completed') {
-        const ticketContent = this.readTicketContent(ticket.path);
-        if (this.summaryPresenceGate.hasSummary(ticketContent)) this.runtimeStore.markDone(record);
-        else this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
-      } else {
-        this.runtimeStore.markFailed(record, result.status);
+      while (true) {
+        const executionResult = await this.provider.execute({ plan, ticketIndex: 0, prompt, invocationMode: 'execution', sessionId });
+        sessionId = executionResult.sessionId ?? sessionId;
+        this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
+        if (executionResult.status !== 'completed') {
+          this.runtimeStore.markFailed(record, executionResult.status);
+          this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
+          return { scheduled: true, message: `Scheduled ${ticket.label}` };
+        }
+
+        const reviewResult = await this.provider.execute({
+          plan,
+          ticketIndex: 0,
+          prompt: this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionResult),
+          invocationMode: 'reviewer',
+          sessionId,
+        });
+        this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
+        const review = parseReviewerOutput((reviewResult.output ?? []).join('\n'));
+        const decision = decideReviewOutcome({ review, cycleCount: reviewCycle + 1, maxCycles: MAX_REVIEW_CYCLES });
+        this.runtimeStore.appendLog(record.logPath, `review cycle ${reviewCycle + 1}: ${decision.outcome} (${decision.reason})`);
+
+        if (decision.outcome === 'approve') {
+          const ticketContent = this.readTicketContent(ticket.path);
+          if (this.summaryPresenceGate.hasSummary(ticketContent)) {
+            this.runtimeStore.markDone(record);
+            this.runtimeStore.appendLog(record.logPath, 'run completed');
+          } else {
+            this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
+            this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
+          }
+          return { scheduled: true, message: `Scheduled ${ticket.label}` };
+        }
+
+        if (decision.outcome === 'handoff-required') {
+          this.runtimeStore.updateMetadata(record.metadataPath, {
+            STATUS: 'blocked',
+            UNSAFE_REASON: decision.reason,
+          });
+          this.runtimeStore.markFailed(record, 'needs-human handoff required');
+          this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
+          this.runtimeStore.appendLog(record.logPath, 'run blocked');
+          return { scheduled: true, message: `Scheduled ${ticket.label}` };
+        }
+
+        reviewCycle += 1;
+        prompt = this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review);
       }
-      this.runtimeStore.appendLog(record.logPath, `run ${result.status}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'provider execution failed';
       this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -66,6 +101,49 @@ export class SingleTicketRunner {
 
   private readTicketContent(ticketPath: string): string {
     return readFileSync(ticketPath, 'utf8');
+  }
+
+  private readReviewerPrompt(promptPath: string): string {
+    return readFileSync(promptPath, 'utf8');
+  }
+
+  private recordExecutionResult(metadataPath: string, logPath: string, result: { status: string; sessionId?: string | null; removable?: boolean; unsafeReason?: string | null; output?: string[]; inspectionTargetIdentifier?: string | null }, sessionId: string | null): void {
+    this.runtimeStore.appendLog(logPath, `provider session: ${sessionId ?? 'unknown'}`);
+    this.runtimeStore.updateMetadata(metadataPath, {
+      STATUS: normalizeStatus(result.status),
+      PROVIDER_SESSION_ID: sessionId,
+      PROVIDER_SESSION_REMOVABLE: result.removable ?? false,
+      UNSAFE_REASON: result.unsafeReason ?? null,
+      INSPECTION_PROVIDER: result.inspectionTargetIdentifier ? 'tmux' : null,
+      INSPECTION_TARGET_IDENTIFIER: result.inspectionTargetIdentifier ?? null,
+    });
+    (result.output ?? []).forEach((line) => this.runtimeStore.appendLog(logPath, line));
+  }
+
+  private buildReviewerPrompt(ticketLabel: string, reviewerPromptText: string, sessionId: string | null, executionResult: { status: string; output?: string[] }): string {
+    return [
+      reviewerPromptText.trim(),
+      '',
+      `Ticket: ${ticketLabel}`,
+      `Execution session: ${sessionId ?? 'unknown'}`,
+      `Execution status: ${executionResult.status}`,
+      ...(executionResult.output?.length ? ['', 'Execution output:', ...executionResult.output] : []),
+    ].join('\n');
+  }
+
+  private buildFixupPrompt(ticketLabel: string, sessionId: string | null, cycleCount: number, review: ReturnType<typeof parseReviewerOutput>): string {
+    return [
+      `AFK follow-up for ${ticketLabel}`,
+      `Continue the same execution session: ${sessionId ?? 'unknown'}`,
+      `Review cycle: ${cycleCount}`,
+      `Reviewer summary: ${review.summary}`,
+      'Reviewer findings:',
+      ...review.findings.map((finding) => {
+        const detail = finding.detail ? ` - ${finding.detail}` : '';
+        const path = finding.path ? ` (${finding.path}${finding.line ? `:${finding.line}` : ''})` : '';
+        return `- ${finding.severity}: ${finding.summary}${detail}${path}`;
+      }),
+    ].join('\n');
   }
 }
 

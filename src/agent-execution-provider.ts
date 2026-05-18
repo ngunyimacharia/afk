@@ -44,6 +44,7 @@ export interface AgentExecutionRequest {
   ticketIndex: number;
   prompt: string;
   invocationMode?: AgentInvocationMode;
+  sessionId?: string | null;
 }
 
 export interface AgentExecutionProvider {
@@ -89,9 +90,9 @@ export function assertCommandAllowed(policy: AgentInvocationPolicy, command: Age
 }
 
 export class FakeAgentExecutionProvider implements AgentExecutionProvider {
-  constructor(private readonly result: AgentExecutionResult) {}
+  constructor(private readonly result: AgentExecutionResult | ((request: AgentExecutionRequest) => AgentExecutionResult | Promise<AgentExecutionResult>)) {}
 
-  async execute(_request: AgentExecutionRequest): Promise<AgentExecutionResult> {
-    return this.result;
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    return typeof this.result === 'function' ? this.result(request) : this.result;
   }
 }
