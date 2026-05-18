@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { LaunchPlan } from './types.js';
+import type { LaunchPlan, ReviewCycleHistoryEntry } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 
@@ -59,10 +59,17 @@ export class SingleTicketRunner {
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         const review = parseReviewerOutput((reviewResult.output ?? []).join('\n'));
         const decision = decideReviewOutcome({ review, cycleCount: reviewCycle + 1, maxCycles: MAX_REVIEW_CYCLES });
-        this.runtimeStore.appendLog(record.logPath, `review cycle ${reviewCycle + 1}: ${decision.outcome} (${decision.reason})`);
+        this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, this.buildReviewCycleEntry(reviewCycle + 1, decision));
 
         if (decision.outcome === 'approve') {
           const ticketContent = this.readTicketContent(ticket.path);
+          const terminalOutcome = this.summaryPresenceGate.hasSummary(ticketContent) ? 'approved' : 'needs-human';
+          const terminalReason = terminalOutcome === 'approved' ? decision.reason : 'ready-for-human gate blocked: missing ## AFK Summary';
+          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+            outcome: terminalOutcome,
+            reason: terminalReason,
+            cycle: reviewCycle + 1,
+          });
           if (this.summaryPresenceGate.hasSummary(ticketContent)) {
             this.runtimeStore.markDone(record);
             this.runtimeStore.appendLog(record.logPath, 'run completed');
@@ -78,6 +85,11 @@ export class SingleTicketRunner {
             STATUS: 'blocked',
             UNSAFE_REASON: decision.reason,
           });
+          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+            outcome: 'needs-human',
+            reason: decision.reason,
+            cycle: reviewCycle + 1,
+          });
           this.runtimeStore.markFailed(record, 'needs-human handoff required');
           this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
           this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -92,6 +104,11 @@ export class SingleTicketRunner {
       this.runtimeStore.updateMetadata(record.metadataPath, {
         STATUS: 'failed',
         UNSAFE_REASON: message,
+      });
+      this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+        outcome: 'needs-human',
+        reason: message,
+        cycle: reviewCycle + 1,
       });
       this.runtimeStore.markFailed(record, 'failed');
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
@@ -144,6 +161,16 @@ export class SingleTicketRunner {
         return `- ${finding.severity}: ${finding.summary}${detail}${path}`;
       }),
     ].join('\n');
+  }
+
+  private buildReviewCycleEntry(cycle: number, decision: ReturnType<typeof decideReviewOutcome>): ReviewCycleHistoryEntry {
+    return {
+      cycle,
+      outcome: decision.outcome,
+      reason: decision.reason,
+      malformed: decision.malformed,
+      findings: decision.findings,
+    };
   }
 }
 

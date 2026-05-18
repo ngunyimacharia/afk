@@ -84,7 +84,11 @@ test('approves minor-only reviews without another execution cycle', async () => 
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-001.log');
   const donePath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-001.done');
   assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "completed"/);
-  assert.match(readFileSync(logPath, 'utf8'), /review cycle 1: approve/);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"REVIEW_CYCLE_HISTORY": \[/);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "approved"/);
+  assert.match(readFileSync(logPath, 'utf8'), /"event":"review-cycle"/);
+  assert.match(readFileSync(logPath, 'utf8'), /"event":"review-terminal"/);
+  assert.match(readFileSync(logPath, 'utf8'), /"outcome":"approved"/);
   assert.match(readFileSync(logPath, 'utf8'), /run completed/);
   assert.match(readFileSync(donePath, 'utf8'), /done/);
 });
@@ -107,6 +111,8 @@ test('does not promote completed runs without an AFK summary', async () => {
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-003.json');
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-003.log');
   assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "completed"/);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "needs-human"/);
+  assert.match(readFileSync(logPath, 'utf8'), /"event":"review-terminal"/);
   assert.match(readFileSync(logPath, 'utf8'), /ready-for-human gate blocked/);
   assert.match(readFileSync(logPath, 'utf8'), /run blocked: missing ## AFK Summary/);
   assert.doesNotMatch(readFileSync(logPath, 'utf8'), /run completed/);
@@ -148,8 +154,10 @@ test('loops on major findings and continues the same session', async () => {
 
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-004.log');
   assert.equal(requests.length, 4);
-  assert.match(readFileSync(logPath, 'utf8'), /review cycle 1: loop-required/);
-  assert.match(readFileSync(logPath, 'utf8'), /review cycle 2: approve/);
+  assert.match(readFileSync(logPath, 'utf8'), /"cycle":1/);
+  assert.match(readFileSync(logPath, 'utf8'), /"cycle":2/);
+  assert.match(readFileSync(logPath, 'utf8'), /"outcome":"loop-required"/);
+  assert.match(readFileSync(logPath, 'utf8'), /"outcome":"approved"/);
   assert.match(readFileSync(logPath, 'utf8'), /run completed/);
 });
 
@@ -187,6 +195,8 @@ test('hands off after three high-severity review cycles', async () => {
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-005.log');
   assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "blocked"/);
   assert.match(readFileSync(metadataPath, 'utf8'), /"UNSAFE_REASON": "Reviewer cycle cap reached with unresolved major findings"/);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "needs-human"/);
+  assert.match(readFileSync(logPath, 'utf8'), /"event":"review-terminal"/);
   assert.match(readFileSync(logPath, 'utf8'), /needs-human handoff: Reviewer cycle cap reached with unresolved major findings/);
   assert.match(readFileSync(logPath, 'utf8'), /run blocked/);
 });

@@ -12,6 +12,7 @@ import { Scheduler } from './scheduler.js';
 import { FakeAgentExecutionProvider } from './agent-execution-provider.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
+import type { ReviewTerminalOutcome } from './types.js';
 
 function commandArg(): string | undefined {
   const command = process.argv[2];
@@ -81,17 +82,29 @@ export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; 
   const runner = new SingleTicketRunner(runtimeStore, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-1', removable: true, output: ['background worker scheduled'] }));
   const scheduler = new Scheduler(runner);
   await scheduler.launch(plan);
+  const finalOutcome = readFinalReviewOutcome(runtimeStore, repoRoot, firstTicket.feature, firstTicket.issueName);
   return {
     code: 0,
     message: [
-      `Selected model: ${plan.model.id}`,
-      `Selected reviewer model: ${plan.reviewerModel.id}`,
-      `Reviewer prompt: ${plan.reviewerPrompt.id} (${path.relative(repoRoot, plan.reviewerPrompt.path)})`,
-      `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
-      `Repo root: ${path.resolve(plan.repoRoot)}`,
-      `Worktree: ${plan.checkout.effectiveWorktreeName}`,
-      `Branch: ${plan.checkout.effectiveBranchName}`,
-      `Recent git: ${plan.gitContext.commits.join(' | ')}`,
+      `Reviewer model: ${plan.reviewerModel.id}`,
+      `Final review outcome: ${finalOutcome}`,
     ].join('\n'),
   };
+}
+
+function readFinalReviewOutcome(runtimeStore: RuntimeStore, repoRoot: string, featureSlug: string, issueName: string): ReviewTerminalOutcome {
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${featureSlug}-${issueName}.json`);
+
+  try {
+    const metadata = runtimeStore.readMetadata(metadataPath);
+    if (metadata.FINAL_REVIEW_OUTCOME === 'approved' || metadata.FINAL_REVIEW_OUTCOME === 'needs-human') {
+      return metadata.FINAL_REVIEW_OUTCOME;
+    }
+    if (metadata.STATUS === 'blocked' || metadata.STATUS === 'failed' || metadata.STATUS === 'interrupted') return 'needs-human';
+    if (metadata.STATUS === 'completed') return 'approved';
+  } catch {
+    return 'needs-human';
+  }
+
+  return 'needs-human';
 }

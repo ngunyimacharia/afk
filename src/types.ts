@@ -40,6 +40,32 @@ export interface LaunchPlan {
   checkout: CheckoutContext;
 }
 
+export interface ReviewFindingSnapshot {
+  severity: string;
+  summary: string;
+  detail?: string;
+  path?: string;
+  line?: number;
+}
+
+export type ReviewCycleOutcome = 'approve' | 'loop-required' | 'handoff-required';
+
+export type ReviewTerminalOutcome = 'approved' | 'needs-human';
+
+export interface ReviewCycleHistoryEntry {
+  cycle: number;
+  outcome: ReviewCycleOutcome;
+  reason: string;
+  malformed: boolean;
+  findings: ReviewFindingSnapshot[];
+}
+
+export interface ReviewTerminalOutcomeRecord {
+  outcome: ReviewTerminalOutcome;
+  reason: string;
+  cycle: number;
+}
+
 export interface RuntimeMetadataRecord {
   TICKET_PATH: string;
   FEATURE_SLUG: string;
@@ -55,6 +81,10 @@ export interface RuntimeMetadataRecord {
   REVIEWER_MODEL_ID?: string;
   REVIEWER_PROMPT_ID?: string;
   REVIEWER_PROMPT_PATH?: string;
+  REVIEW_CYCLE_HISTORY?: ReviewCycleHistoryEntry[];
+  FINAL_REVIEW_OUTCOME?: ReviewTerminalOutcome | null;
+  FINAL_REVIEW_REASON?: string | null;
+  FINAL_REVIEW_CYCLE?: number | null;
   PROVIDER_SESSION_ID: string | null;
   PROVIDER_SESSION_REMOVABLE: boolean;
   INSPECTION_PROVIDER: string | null;
