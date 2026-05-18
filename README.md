@@ -11,7 +11,7 @@ It currently provides four core behaviors:
 
 ## Current Surface Area
 
-- `afk`: discover eligible AFK tickets, choose a model, prepare checkout context, and launch scheduled work
+- `afk`: interactive launch wizard (harness, model, ticket multiselect) followed by scheduled work
 - `afk summary`: read-only summary of AFK work from ticket files plus runtime metadata
 - `afk cleanup`: dry-run-first cleanup for terminal AFK tickets and attributable runtime artifacts
 - `afk sync`: sync vendored OpenCode assets from `artifacts/opencode/` into `private_dot_config/opencode/`
@@ -67,7 +67,7 @@ Typical workflow:
 
 1. Add or update issue files under `.scratch/<feature-slug>/issues/`.
 2. Mark tickets with an eligible status such as `ready-for-agent`.
-3. Run AFK to prepare worktree context and schedule selected tickets.
+3. Run AFK in an interactive terminal and complete the prompts for harness, model, and tickets.
 4. Run `afk summary` to inspect issue summaries and runtime metadata.
 5. Run `afk cleanup` first as a dry run, then repeat with `confirm cleanup plan` only when the plan is correct.
 
@@ -92,6 +92,14 @@ Key conventions:
 
 Eligible launch tickets are discovered from `.scratch/*/issues/*.md`. Terminal tickets, including `ready-for-human`, are excluded from relaunch.
 
+Launch behavior notes:
+
+- `afk` launch is interactive-only and requires a TTY (no CI/non-interactive launch mode in this pass).
+- prompt order is harness -> model -> ticket multiselect.
+- the only harness currently supported is `OpenCode`.
+- no prompt preselects a default option.
+- canceling any prompt exits without creating worktrees or runtime artifacts.
+
 ## Runtime Artifacts
 
 AFK writes runtime state under `.scratch/.opencode-afk-logs/`:
@@ -115,6 +123,7 @@ bun run build
 ## Repo Layout
 
 - `src/`: AFK implementation
+- `src/prompts/`: internal AFK runner prompt templates, not synced into OpenCode
 - `tests/`: Node test runner coverage for AFK behavior
 - `docs/`: repo documentation
 - `docs/agents/`: issue-tracker and triage conventions for agents
