@@ -16,9 +16,19 @@ export interface GitContext {
   commits: string[];
 }
 
+export interface CheckoutContext {
+  featureSlug: string;
+  defaultWorktreeName: string;
+  effectiveWorktreeName: string;
+  defaultBranchName: string;
+  effectiveBranchName: string;
+  worktreePath: string;
+}
+
 export interface LaunchPlan {
   model: LaunchModel;
   tickets: TicketRecord[];
   repoRoot: string;
   gitContext: GitContext;
+  checkout: CheckoutContext;
 }
