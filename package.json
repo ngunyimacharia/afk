@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --import tsx tests/*.test.ts",
-    "build": "tsc -p tsconfig.json"
+    "test": "bun test tests/*.test.ts",
+    "build": "tsc -p tsconfig.json",
+    "build:exe": "bun run scripts/build-executable.ts",
+    "install:local": "bun run scripts/install-local.ts"
   },
   "dependencies": {
     "yaml": "^2.7.1"

@@ -26,3 +26,13 @@ Outcome: completed
   assert.match(result.message, /AFK Summary/);
   assert.match(result.message, /completed/);
 });
+
+test('afk summary subcommand is supported by the single executable entrypoint', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const originalArg = process.argv[2];
+  process.argv[2] = 'summary';
+  const result = await runAfk(repoRoot);
+  process.argv[2] = originalArg;
+  assert.equal(result.code, 0);
+  assert.match(result.message, /AFK Summary/);
+});

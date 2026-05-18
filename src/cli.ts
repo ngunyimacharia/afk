@@ -12,13 +12,21 @@ import { FakeAgentExecutionProvider } from './agent-execution-provider.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 
+function commandArg(): string | undefined {
+  const command = process.argv[2];
+  if (command === 'summary') return 'afk-summary';
+  if (command === 'cleanup') return 'afk-cleanup';
+  return command;
+}
+
 export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; message: string }> {
-  if (process.argv[2] === 'afk-summary') {
+  const command = commandArg();
+  if (command === 'afk-summary') {
     const reporter = new SummaryReporter({ repoRoot });
     const report = await reporter.summarize();
     return { code: 0, message: report.message };
   }
-  if (process.argv[2] === 'afk-cleanup') {
+  if (command === 'afk-cleanup') {
     const planner = new CleanupPlanner({ repoRoot });
     const plan = planner.buildPlan();
     const logTargets = plan.terminalTargets.flatMap((target) => [target.logPath, target.metadataPath]).filter(Boolean) as string[];
@@ -49,7 +57,7 @@ export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; 
     }
     return { code: 0, message: dryRun };
   }
-  if (process.argv[2] === 'sync') return runSync();
+  if (command === 'sync') return runSync();
   const repository = new TicketRepository(repoRoot);
   const tickets = repository.discoverTickets().filter((ticket) => repository.isEligible(ticket));
   if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
