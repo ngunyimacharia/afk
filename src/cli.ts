@@ -9,8 +9,14 @@ import { RuntimeStore } from './runtime-store.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { Scheduler } from './scheduler.js';
 import { FakeAgentExecutionProvider } from './agent-execution-provider.js';
+import { SummaryReporter } from './summary-reporter.js';
 
 export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; message: string }> {
+  if (process.argv[2] === 'afk-summary') {
+    const reporter = new SummaryReporter({ repoRoot });
+    const report = await reporter.summarize();
+    return { code: 0, message: report.message };
+  }
   if (process.argv[2] === 'sync') return runSync();
   const repository = new TicketRepository(repoRoot);
   const tickets = repository.discoverTickets().filter((ticket) => repository.isEligible(ticket));
