@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -21,6 +21,33 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   assert.match(readFileSync(metadataPath, 'utf8'), /session-1/);
   assert.match(readFileSync(logPath, 'utf8'), /ticket start: feat\/001/);
   assert.match(readFileSync(logPath, 'utf8'), /worker started/);
+});
+
+test('does not promote completed runs without an AFK summary', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-summary-missing-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, '---\nfeature: feat\n---\n');
+  const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-2', removable: true }));
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '003', label: 'feat/003', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  await runner.launch(plan as never);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-003.json');
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-003.log');
+  assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "completed"/);
+  assert.match(readFileSync(logPath, 'utf8'), /ready-for-human gate blocked/);
+  assert.doesNotMatch(readFileSync(logPath, 'utf8'), /done/);
+});
+
+test('promotes completed runs when an AFK summary is present', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-summary-present-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, '---\nfeature: feat\n---\n\n## AFK Summary\nStatus: done\n');
+  const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-3', removable: true }));
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '004', label: 'feat/004', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  await runner.launch(plan as never);
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-004.log');
+  assert.match(readFileSync(logPath, 'utf8'), /run completed/);
 });
 
 test('records failed state when the provider throws', async () => {
