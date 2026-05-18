@@ -10,12 +10,44 @@ import { SingleTicketRunner } from './single-ticket-runner.js';
 import { Scheduler } from './scheduler.js';
 import { FakeAgentExecutionProvider } from './agent-execution-provider.js';
 import { SummaryReporter } from './summary-reporter.js';
+import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 
 export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; message: string }> {
   if (process.argv[2] === 'afk-summary') {
     const reporter = new SummaryReporter({ repoRoot });
     const report = await reporter.summarize();
     return { code: 0, message: report.message };
+  }
+  if (process.argv[2] === 'afk-cleanup') {
+    const planner = new CleanupPlanner({ repoRoot });
+    const plan = planner.buildPlan();
+    const logTargets = plan.terminalTargets.flatMap((target) => [target.logPath, target.metadataPath]).filter(Boolean) as string[];
+    const dryRun = [
+      'AFK Cleanup Plan',
+      '',
+      'Terminal tickets to delete',
+      ...(plan.terminalTargets.length ? plan.terminalTargets.map((target) => `- ${target.issuePath}`) : ['- none']),
+      '',
+      'Matching logs / metadata to delete',
+      ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
+      '',
+      'Preserved tickets',
+      ...(plan.preservedIssues.length ? plan.preservedIssues.map((issuePath) => `- ${issuePath}`) : ['- none']),
+      '',
+      'Preserved artifacts',
+      ...(plan.preservedArtifacts.length ? plan.preservedArtifacts.map((artifact) => `- ${artifact}`) : ['- none']),
+      '',
+      'Feature directories to delete',
+      ...(plan.featureDirectoriesToDelete.length ? plan.featureDirectoriesToDelete.map((featureDir) => `- ${featureDir}`) : ['- none']),
+      '',
+      'Run `afk-cleanup` again with the exact phrase `confirm cleanup plan` to execute this plan.',
+    ].join('\n');
+    if (process.argv.includes('confirm cleanup plan')) {
+      const executor = new CleanupExecutor();
+      const result = executor.execute(plan);
+      return { code: 0, message: `${dryRun}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}` };
+    }
+    return { code: 0, message: dryRun };
   }
   if (process.argv[2] === 'sync') return runSync();
   const repository = new TicketRepository(repoRoot);
