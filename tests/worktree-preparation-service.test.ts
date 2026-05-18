@@ -1,18 +1,18 @@
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { buildPrompt } from '../src/prompt-builder.js';
 import { WorktreePreparationService } from '../src/worktree-preparation-service.js';
+import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
 
 function git(repoRoot: string, args: string[]): string {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
 function createRepo(prefix: string): string {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), prefix));
+  const repoRoot = mkRepoLocalTempDir(prefix);
   git(repoRoot, ['init', '-b', 'main']);
   writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
   git(repoRoot, ['add', 'README.md']);
@@ -34,6 +34,16 @@ test('derives names and honors overrides', () => {
   assert.equal(checkout.defaultBranchName, 'afk/feature-a');
   assert.equal(checkout.effectiveBranchName, 'local/branch');
   assert.match(buildPrompt({ checkout, ticket: { path: '/tmp/ticket.md', feature: 'feature-a', issueName: '001', label: 'feature-a/001', executorAfk: true }, ticketContent: 'Status: ready-for-agent' }), /prepared checkout context/);
+});
+
+test('fails clearly when the target worktree path exists but is not registered', () => {
+  const repoRoot = createRepo('afk-worktree-stale-');
+  mkdirSync(path.join(repoRoot, '.worktree', 'feature-stale'), { recursive: true });
+
+  assert.throws(
+    () => new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'feature-stale' }),
+    /already exists but is not registered with git/,
+  );
 });
 
 test('creates or reuses a persistent local worktree and branch', () => {

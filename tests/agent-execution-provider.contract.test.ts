@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FakeAgentExecutionProvider, OpenCodeAgentExecutionProvider } from '../src/agent-execution-provider.js';
+import { decideAfkPermission, FakeAgentExecutionProvider, OpenCodeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 
 test('normalizes execution outcomes and session ids', async () => {
   const provider = new FakeAgentExecutionProvider({ status: 'failed', sessionId: 'abc', removable: false, unsafeReason: 'sdk session id unavailable' });
@@ -84,4 +84,49 @@ test('opencode provider maps model availability output to failed status', async 
   assert.equal(result.removable, false);
   assert.match(result.unsafeReason ?? '', /requested model is not available/);
   assert.deepEqual(result.output, ['The requested model is not available for integrator "copilot-language-server".']);
+});
+
+test('opencode provider forwards permission progress events', async () => {
+  const progress: string[] = [];
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      input.onProgress?.({ kind: 'permission', message: 'opencode permission required: external_directory for /tmp/*; requested ask', sessionId: 'session-42', permissionId: 'per_1', permissionPatterns: ['/tmp/*'] });
+      return { sessionId: 'session-42', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+    onProgress: (event) => progress.push(`${event.kind ?? 'message'}:${event.ticketLabel}:${event.message}`),
+  });
+
+  assert.deepEqual(progress, [
+    'message:feat/01:starting opencode session',
+    'permission:feat/01:opencode permission required: external_directory for /tmp/*; requested ask',
+    'message:feat/01:opencode session completed',
+  ]);
+});
+
+test('opencode provider supplies AFK permission policy that rejects external directories', async () => {
+  let decision = '';
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      decision = await input.decidePermission?.({ sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/tmp/worktree/*'] }) ?? '';
+      return { sessionId: 'session-42', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(decision, 'reject');
+});
+
+test('AFK permission policy leaves non-external requests to OpenCode defaults', async () => {
+  assert.equal(await decideAfkPermission({ sessionId: 'session-42', permissionId: 'per_2', type: 'bash', title: 'bash', patterns: ['bun test'] }), null);
 });

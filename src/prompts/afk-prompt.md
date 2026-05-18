@@ -41,7 +41,12 @@ You are running in fully autonomous AFK mode. Your job is to implement the attac
    terminate live AFK ticket sessions because helper paths and prompts contain
    those strings. Only terminate explicit PIDs or tmux windows you created and
    recorded for the current task.
-10. **Stop when done**: Only output `<promise>NO MORE TASKS</promise>` and
+10. **No OS temp cleanup**: Do not read, write, delete, or clean paths outside
+    the repository checkout such as `/tmp/*`, `/var/folders/*`, or other
+    `os.tmpdir()` locations. If tests fail because a temp path already exists,
+    fix the test isolation or code path, or record the failure as a blocker;
+    do not remove the external temp path from an autonomous AFK run.
+11. **Stop when done**: Only output `<promise>NO MORE TASKS</promise>` and
     exit after implementation, verification, required commits, ticket status,
     and the AFK summary are complete, with no ticket-owned worktree changes
     left uncommitted.

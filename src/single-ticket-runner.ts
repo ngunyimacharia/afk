@@ -36,7 +36,11 @@ export class SingleTicketRunner {
     });
 
     try {
-      const result = await this.provider.execute({ plan, ticketIndex: 0, prompt, onProgress: options.onProgress });
+      const result = await this.provider.execute({ plan, ticketIndex: 0, prompt, onProgress: (event) => {
+        if (event.kind === 'permission') this.runtimeStore.appendLog(record.logPath, `permission required: ${event.message}`);
+        else if (event.permissionId) this.runtimeStore.appendLog(record.logPath, `permission event: ${event.message}`);
+        options.onProgress?.(event);
+      } });
       this.runtimeStore.appendLog(record.logPath, `provider session: ${result.sessionId ?? 'unknown'}`);
       this.runtimeStore.updateMetadata(record.metadataPath, {
         STATUS: normalizeStatus(result.status),

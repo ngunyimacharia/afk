@@ -122,6 +122,38 @@ test('persists failed provider output for later inspection', async () => {
   assert.match(readFileSync(logPath, 'utf8'), /run failed/);
 });
 
+test('persists permission progress before provider completion', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-permission-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ onProgress }) => {
+      onProgress?.({
+        ticketLabel: 'feat/permission',
+        kind: 'permission',
+        message: 'opencode permission required: external_directory for /tmp/worktree/*; requested ask',
+        sessionId: 'session-permission',
+        permissionId: 'per_1',
+      });
+      onProgress?.({
+        ticketLabel: 'feat/permission',
+        message: 'opencode permission once (per_1)',
+        sessionId: 'session-permission',
+        permissionId: 'per_1',
+      });
+      return { status: 'completed', sessionId: 'session-permission', removable: true };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: 'permission', label: 'feat/permission', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-permission.log');
+  assert.match(readFileSync(logPath, 'utf8'), /permission required: opencode permission required: external_directory/);
+  assert.match(readFileSync(logPath, 'utf8'), /permission event: opencode permission once/);
+});
+
 test('scheduler queues tickets by feature and starts the next queued ticket after completion', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-scheduler-'));
   const store = new RuntimeStore({ repoRoot });

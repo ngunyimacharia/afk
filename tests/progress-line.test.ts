@@ -44,6 +44,37 @@ test('progress line does not repeat an id already present in the message', () =>
   assert.doesNotMatch(output, /\[opencode: abc\]/);
 });
 
+test('progress line prints durable permission requests', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'opencode session busy', sessionId: 'session-1' });
+  progressLine.update({ ticketLabel: 'feat/001', kind: 'permission', message: 'opencode permission required: external_directory for /tmp/worktree/*; requested ask', sessionId: 'session-1', permissionId: 'per_1' });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'opencode session busy', sessionId: 'session-1' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /Permission required for feat\/001/);
+  assert.match(output, /external_directory/);
+  assert.match(output, /\[opencode: session-1\]/);
+  assert.equal((output.match(/Permission required for feat\/001/g) ?? []).length, 1);
+});
+
+test('progress line resumes after permission is resolved', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', kind: 'permission', message: 'opencode permission required: bash; requested allow', permissionId: 'per_1' });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'tool bash running: bun test' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /Permission required for feat\/001/);
+  assert.match(output, /tool bash running: bun test/);
+});
+
 function fakeStdout(isTTY: boolean, writes: string[]): NodeJS.WriteStream {
   return {
     isTTY,

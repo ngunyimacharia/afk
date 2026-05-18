@@ -1,5 +1,5 @@
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
-import type { OpenCodeSessionExecutor } from './opencode.js';
+import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 
 export interface AgentExecutionRequest {
   plan: LaunchPlan;
@@ -34,6 +34,7 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         title: `afk: ${ticket.label}`,
         agent: 'build',
         onProgress: (event) => request.onProgress?.({ ticketLabel: ticket.label, ...event }),
+        decidePermission: decideAfkPermission,
       });
       const failureReason = detectOpenCodeFailure(result.output ?? []);
       request.onProgress?.({ ticketLabel: ticket.label, message: failureReason ? `opencode session failed: ${failureReason}` : 'opencode session completed', sessionId: result.sessionId ?? null });
@@ -55,6 +56,11 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
       };
     }
   }
+}
+
+export async function decideAfkPermission(request: OpenCodePermissionRequest): Promise<OpenCodePermissionDecision | null> {
+  if (request.type === 'external_directory') return 'reject';
+  return null;
 }
 
 export function detectOpenCodeFailure(output: string[]): string | null {

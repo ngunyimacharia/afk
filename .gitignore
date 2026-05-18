@@ -1,2 +1,3 @@
 .scratch
 .worktree/
+.test-tmp/

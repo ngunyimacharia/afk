@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractModelsFromProvidersPayload, extractSessionOutputLines, formatOpenCodeEvent } from '../src/opencode.js';
+import { extractModelsFromProvidersPayload, extractSessionOutputLines, formatOpenCodeEvent, parseOpenCodeEvent } from '../src/opencode.js';
 
 test('extracts models when provider models are object maps', () => {
   const models = extractModelsFromProvidersPayload({
@@ -63,4 +63,33 @@ test('formats session-level opencode progress events from real event stream shap
 test('ignores opencode progress events from unrelated sessions', () => {
   assert.equal(formatOpenCodeEvent({ type: 'session.status', properties: { sessionID: 'other-session', status: { type: 'busy' } } }, 'session-1'), null);
   assert.equal(formatOpenCodeEvent({ type: 'message.part.updated', properties: { part: { sessionID: 'other-session', type: 'text', text: 'not ours' } } }, 'session-1'), null);
+});
+
+test('formats opencode permission requests as permission progress events', () => {
+  const event = parseOpenCodeEvent({
+    type: 'permission.updated',
+    properties: {
+      id: 'per_123',
+      type: 'external_directory',
+      pattern: ['/tmp/feat-one-worktree/*'],
+      sessionID: 'session-1',
+      title: 'Access external worktree',
+    },
+  }, 'session-1');
+
+  assert.equal(event?.kind, 'permission');
+  assert.equal(event?.permissionId, 'per_123');
+  assert.deepEqual(event?.permissionPatterns, ['/tmp/feat-one-worktree/*']);
+  assert.equal(event?.permissionType, 'external_directory');
+  assert.equal(event?.permissionTitle, 'Access external worktree');
+  assert.match(event?.message ?? '', /external_directory/);
+  assert.match(event?.message ?? '', /Access external worktree/);
+  assert.match(event?.message ?? '', /\/tmp\/feat-one-worktree\/\*/);
+});
+
+test('formats opencode permission replies', () => {
+  assert.equal(
+    formatOpenCodeEvent({ type: 'permission.replied', properties: { sessionID: 'session-1', permissionID: 'per_123', response: 'once' } }, 'session-1'),
+    'opencode permission once (per_123)',
+  );
 });

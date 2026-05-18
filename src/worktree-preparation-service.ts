@@ -39,6 +39,10 @@ function worktreeExists(repoRoot: string, worktreePath: string): boolean {
   }
 }
 
+function staleWorktreePathMessage(worktreePath: string): string {
+  return `Worktree path already exists but is not registered with git: ${worktreePath}. Resolve the stale repo-local path with a dedicated cleanup step before rerunning AFK.`;
+}
+
 function branchWorktreePath(repoRoot: string, branchName: string): string | null {
   try {
     const output = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
@@ -85,7 +89,11 @@ export class WorktreePreparationService {
     ensureBranch(input.repoRoot, effectiveBranchName);
 
     const existingWorktreePath = branchWorktreePath(input.repoRoot, effectiveBranchName);
-    if (!existingWorktreePath && !worktreeExists(input.repoRoot, worktreePath) && !worktreePath.includes('undefined')) {
+    const registeredWorktree = worktreeExists(input.repoRoot, worktreePath);
+    if (!existingWorktreePath && !registeredWorktree && existsSync(worktreePath)) {
+      throw new Error(staleWorktreePathMessage(worktreePath));
+    }
+    if (!existingWorktreePath && !registeredWorktree && !worktreePath.includes('undefined')) {
       runGit(input.repoRoot, ['worktree', 'add', worktreePath, effectiveBranchName]);
     }
 

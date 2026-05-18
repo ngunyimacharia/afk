@@ -1,9 +1,17 @@
 import { createOpencode } from '@opencode-ai/sdk';
+import prompts from 'prompts';
 import type { LaunchModel } from './types.js';
+
+export type OpenCodePermissionDecision = 'once' | 'always' | 'reject';
 
 export interface OpenCodeSessionProgressEvent {
   message: string;
   sessionId?: string | null;
+  kind?: 'message' | 'permission';
+  permissionId?: string | null;
+  permissionPatterns?: string[];
+  permissionType?: string | null;
+  permissionTitle?: string | null;
 }
 
 export interface OpenCodeSessionExecutor {
@@ -13,7 +21,16 @@ export interface OpenCodeSessionExecutor {
     title: string;
     agent?: string;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
+    decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
   }): Promise<{ sessionId?: string | null; output: string[] }>;
+}
+
+export interface OpenCodePermissionRequest {
+  sessionId: string;
+  permissionId: string;
+  type: string;
+  title: string;
+  patterns: string[];
 }
 
 export async function discoverOpenCodeModels(): Promise<LaunchModel[]> {
@@ -55,6 +72,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     title: string;
     agent?: string;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
+    decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
   }): Promise<{ sessionId?: string | null; output: string[] }> {
     const [providerID, modelID] = parseModelId(input.model.id);
     if (!providerID || !modelID) {
@@ -68,8 +86,8 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
       const session = unwrap(sessionResponse);
       const sessionId = String(session?.id ?? '');
       input.onProgress?.({ message: `created opencode session ${sessionId || 'unknown'}`, sessionId: sessionId || null });
-      if (sessionId && input.onProgress) {
-        eventTask = consumeSessionEvents(sdk.client, sessionId, input.onProgress, abortController.signal);
+      if (sessionId) {
+        eventTask = consumeSessionEvents(sdk.client, sessionId, input.onProgress ?? (() => {}), abortController.signal, composePermissionDecisionProvider(input.decidePermission));
       }
       input.onProgress?.({ message: 'sent prompt to opencode', sessionId: sessionId || null });
       await sdk.client.session.prompt({
@@ -91,6 +109,13 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
   }
 }
 
+function composePermissionDecisionProvider(
+  override: ((request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>) | undefined,
+): (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null> {
+  if (!override) return defaultPermissionDecisionProvider;
+  return async (request) => (await override(request)) ?? defaultPermissionDecisionProvider(request);
+}
+
 async function settleEventTask(task: Promise<void> | undefined): Promise<void> {
   if (!task) return;
   await Promise.race([
@@ -104,34 +129,154 @@ async function consumeSessionEvents(
   sessionId: string,
   onProgress: (event: OpenCodeSessionProgressEvent) => void,
   signal: AbortSignal,
+  decidePermission: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>,
 ): Promise<void> {
+  const handledPermissions = new Set<string>();
   try {
     const eventClient = (client as { event?: { subscribe?: (options?: unknown) => Promise<{ stream: AsyncIterable<unknown> }> } }).event;
     if (!eventClient?.subscribe) return;
     const subscription = await eventClient.subscribe({ signal });
     for await (const event of subscription.stream) {
       if (signal.aborted) return;
-      const message = formatOpenCodeEvent(event, sessionId);
-      if (message) onProgress({ message, sessionId });
+      const progress = parseOpenCodeEvent(event, sessionId);
+      if (progress) onProgress(progress);
+      const permission = parsePermissionRequest(event, sessionId);
+      if (!permission || handledPermissions.has(permission.permissionId)) continue;
+      handledPermissions.add(permission.permissionId);
+      const decision = await decidePermission(permission);
+      if (!decision) continue;
+      await replyToPermission(client, permission, decision);
+      onProgress({
+        kind: 'message',
+        message: `opencode permission ${decision}: ${permission.type}${permission.patterns.length ? ` for ${permission.patterns.join(', ')}` : ''}`,
+        sessionId,
+        permissionId: permission.permissionId,
+        permissionPatterns: permission.patterns,
+      });
     }
   } catch (error) {
     if (!signal.aborted) onProgress({ message: `opencode event stream unavailable: ${error instanceof Error ? error.message : 'unknown error'}`, sessionId });
   }
 }
 
+async function replyToPermission(client: unknown, request: OpenCodePermissionRequest, decision: OpenCodePermissionDecision): Promise<void> {
+  const responder = (client as { postSessionIdPermissionsPermissionId?: (options: unknown) => Promise<unknown> }).postSessionIdPermissionsPermissionId;
+  if (!responder) throw new Error('opencode permission response API is unavailable');
+  await responder.call(client, {
+    path: { id: request.sessionId, permissionID: request.permissionId },
+    body: { response: decision },
+  });
+}
+
+async function defaultPermissionDecisionProvider(request: OpenCodePermissionRequest): Promise<OpenCodePermissionDecision | null> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
+  const pattern = request.patterns.length ? `\nPattern: ${request.patterns.join(', ')}` : '';
+  const response = await prompts(
+    {
+      type: 'select',
+      name: 'decision',
+      message: `OpenCode permission required\nType: ${request.type}\nTitle: ${request.title}${pattern}`,
+      choices: [
+        { title: 'Allow once', value: 'once' },
+        { title: 'Always allow', value: 'always' },
+        { title: 'Reject', value: 'reject' },
+      ],
+      initial: 0,
+    },
+    { onCancel: () => true },
+  );
+  return response.decision === 'once' || response.decision === 'always' || response.decision === 'reject' ? response.decision : 'reject';
+}
+
 export function formatOpenCodeEvent(event: unknown, sessionId: string): string | null {
+  return parseOpenCodeEvent(event, sessionId)?.message ?? null;
+}
+
+export function parseOpenCodeEvent(event: unknown, sessionId: string): OpenCodeSessionProgressEvent | null {
   const item = unwrapSseEvent(event) as { type?: string; properties?: { part?: unknown; info?: unknown; sessionID?: string; status?: unknown; error?: unknown; diff?: unknown[] } } | null;
   if (!item || typeof item !== 'object') return null;
-  if (item.type === 'message.part.updated') return formatOpenCodePart(item.properties?.part, sessionId, item.properties as { delta?: string });
+  if (item.type === 'permission.updated' || item.type === 'permission.asked') return formatPermissionRequest(item, sessionId);
+  if (item.type === 'permission.replied') return formatPermissionReply(item, sessionId);
+  if (item.type === 'message.part.updated') return messageProgress(formatOpenCodePart(item.properties?.part, sessionId, item.properties as { delta?: string }), sessionId);
   if (item.type === 'message.updated') {
     const info = item.properties?.info as { sessionID?: string; finish?: string } | undefined;
-    if (info?.sessionID === sessionId && info.finish) return `assistant finished: ${info.finish}`;
+    if (info?.sessionID === sessionId && info.finish) return messageProgress(`assistant finished: ${info.finish}`, sessionId);
   }
-  if (item.type === 'session.status' && item.properties?.sessionID === sessionId) return formatSessionStatus(item.properties.status);
-  if (item.type === 'session.idle' && item.properties?.sessionID === sessionId) return 'opencode session idle';
-  if (item.type === 'session.error' && item.properties?.sessionID === sessionId) return formatMessageError(item.properties.error) ?? 'opencode session error';
-  if (item.type === 'session.diff' && item.properties?.sessionID === sessionId) return formatSessionDiff(item.properties.diff);
+  if (item.type === 'session.status' && item.properties?.sessionID === sessionId) return messageProgress(formatSessionStatus(item.properties.status), sessionId);
+  if (item.type === 'session.idle' && item.properties?.sessionID === sessionId) return messageProgress('opencode session idle', sessionId);
+  if (item.type === 'session.error' && item.properties?.sessionID === sessionId) return messageProgress(formatMessageError(item.properties.error) ?? 'opencode session error', sessionId);
+  if (item.type === 'session.diff' && item.properties?.sessionID === sessionId) return messageProgress(formatSessionDiff(item.properties.diff), sessionId);
   return null;
+}
+
+function messageProgress(message: string | null, sessionId: string): OpenCodeSessionProgressEvent | null {
+  return message ? { kind: 'message', message, sessionId } : null;
+}
+
+function formatPermissionRequest(item: { properties?: unknown }, sessionId: string): OpenCodeSessionProgressEvent {
+  const permission = readPermissionProperties(item.properties);
+  const permissionId = readString(permission.id) ?? readString(permission.permissionID) ?? null;
+  const patterns = readStringArray(permission.patterns) ?? readStringArray(permission.pattern) ?? [];
+  const permissionType = readString(permission.permission) ?? readString(permission.type) ?? 'permission';
+  const permissionTitle = readString(permission.title) ?? permissionType;
+  const action = readObject(permission.action);
+  const actionName = readString(action?.action) ?? readString(action?.permission) ?? readString(permission.action) ?? 'decision';
+  const target = patterns.length ? ` for ${patterns.join(', ')}` : '';
+  const id = permissionId ? ` (${permissionId})` : '';
+  return {
+    kind: 'permission',
+    message: `opencode permission required: ${permissionType}${target}; ${permissionTitle}; requested ${actionName}${id}`,
+    sessionId,
+    permissionId,
+    permissionPatterns: patterns,
+    permissionType,
+    permissionTitle,
+  };
+}
+
+function formatPermissionReply(item: { properties?: unknown }, sessionId: string): OpenCodeSessionProgressEvent | null {
+  const properties = readObject(item.properties);
+  if (!properties || readString(properties.sessionID) !== sessionId) return null;
+  const permissionId = readString(properties.permissionID) ?? null;
+  const response = readString(properties.response) ?? 'answered';
+  return { kind: 'message', message: `opencode permission ${response}${permissionId ? ` (${permissionId})` : ''}`, sessionId, permissionId };
+}
+
+function parsePermissionRequest(event: unknown, sessionId: string): OpenCodePermissionRequest | null {
+  const item = unwrapSseEvent(event) as { type?: string; properties?: unknown } | null;
+  if (!item || (item.type !== 'permission.updated' && item.type !== 'permission.asked')) return null;
+  const permission = readPermissionProperties(item.properties);
+  const requestSessionId = readString(permission.sessionID) ?? sessionId;
+  if (requestSessionId !== sessionId) return null;
+  const permissionId = readString(permission.id) ?? readString(permission.permissionID);
+  if (!permissionId) return null;
+  const type = readString(permission.permission) ?? readString(permission.type) ?? 'permission';
+  return {
+    sessionId,
+    permissionId,
+    type,
+    title: readString(permission.title) ?? type,
+    patterns: readStringArray(permission.patterns) ?? readStringArray(permission.pattern) ?? [],
+  };
+}
+
+function readPermissionProperties(value: unknown): Record<string, unknown> {
+  const properties = readObject(value) ?? {};
+  return readObject(properties.permission) ?? properties;
+}
+
+function readObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (typeof value === 'string' && value.trim()) return [value.trim()];
+  if (!Array.isArray(value)) return undefined;
+  return value.map((item) => readString(item)).filter((item): item is string => Boolean(item));
 }
 
 function unwrapSseEvent(event: unknown): unknown {

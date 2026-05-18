@@ -78,6 +78,11 @@ export interface AgentExecutionProgressEvent {
   ticketLabel: string;
   message: string;
   sessionId?: string | null;
+  kind?: 'message' | 'permission';
+  permissionId?: string | null;
+  permissionPatterns?: string[];
+  permissionType?: string | null;
+  permissionTitle?: string | null;
 }
 
 export type AgentExecutionProgressCallback = (event: AgentExecutionProgressEvent) => void;
