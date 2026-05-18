@@ -5,13 +5,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
+import type { LaunchPlan } from '../src/types.js';
 
 test('starts the next ticket for a feature after completion', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-runtime-'));
   const store = new RuntimeStore({ repoRoot });
   const started: string[] = [];
   const scheduler = new Scheduler({
-    launch: async (plan) => {
+    launch: async (plan: LaunchPlan) => {
       const ticket = plan.tickets[0];
       assert.ok(ticket);
       started.push(ticket.label);
@@ -22,6 +23,8 @@ test('starts the next ticket for a feature after completion', async () => {
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
+    reviewerModel: { id: 'reviewer-model-1' },
+    reviewerPrompt: { id: 'reviewer-default', path: '/tmp/reviewer-default.md' },
     tickets: [
       { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
       { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },

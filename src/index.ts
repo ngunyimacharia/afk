@@ -1,5 +1,7 @@
 export { TicketRepository } from './ticket-repository.js';
 export { ModelSelector } from './model-selector.js';
 export { SelectionService } from './selection-service.js';
+export { resolveLaunchModelSelection } from './launch-models.js';
+export { resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
 export { buildLaunchPlan } from './launch-context-builder.js';
 export { runAfk } from './cli.js';

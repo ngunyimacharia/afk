@@ -12,6 +12,11 @@ export interface LaunchModel {
   label?: string;
 }
 
+export interface ReviewerPromptReference {
+  id: string;
+  path: string;
+}
+
 export interface GitContext {
   commits: string[];
 }
@@ -27,6 +32,8 @@ export interface CheckoutContext {
 
 export interface LaunchPlan {
   model: LaunchModel;
+  reviewerModel: LaunchModel;
+  reviewerPrompt: ReviewerPromptReference;
   tickets: TicketRecord[];
   repoRoot: string;
   gitContext: GitContext;
@@ -44,6 +51,10 @@ export interface RuntimeMetadataRecord {
   FAILED_SENTINEL_PATH: string;
   STATUS: string;
   EXECUTION_PROVIDER: string;
+  EXECUTION_MODEL_ID?: string;
+  REVIEWER_MODEL_ID?: string;
+  REVIEWER_PROMPT_ID?: string;
+  REVIEWER_PROMPT_PATH?: string;
   PROVIDER_SESSION_ID: string | null;
   PROVIDER_SESSION_REMOVABLE: boolean;
   INSPECTION_PROVIDER: string | null;

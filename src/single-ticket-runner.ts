@@ -22,6 +22,14 @@ export class SingleTicketRunner {
     const record = this.runtimeStore.createRecord({ featureSlug: ticket.feature, issueName: ticket.issueName, ticketPath: ticket.path });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);
+    this.runtimeStore.appendLog(record.logPath, `reviewer model: ${plan.reviewerModel.id}`);
+    this.runtimeStore.appendLog(record.logPath, `reviewer prompt: ${plan.reviewerPrompt.id} -> ${plan.reviewerPrompt.path}`);
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      EXECUTION_MODEL_ID: plan.model.id,
+      REVIEWER_MODEL_ID: plan.reviewerModel.id,
+      REVIEWER_PROMPT_ID: plan.reviewerPrompt.id,
+      REVIEWER_PROMPT_PATH: plan.reviewerPrompt.path,
+    });
     const prompt = `AFK run for ${ticket.label}`;
 
     try {

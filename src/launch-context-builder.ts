@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import type { GitContext, LaunchModel, LaunchPlan, TicketRecord } from './types.js';
+import type { LaunchModel, LaunchPlan, ReviewerPromptReference, TicketRecord } from './types.js';
 import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
 
 function recentCommits(repoRoot: string): string[] {
@@ -10,6 +10,13 @@ function recentCommits(repoRoot: string): string[] {
   }
 }
 
-export function buildLaunchPlan(repoRoot: string, model: LaunchModel, tickets: TicketRecord[], checkout: PreparedCheckoutContext): LaunchPlan {
-  return { repoRoot, model, tickets, checkout, gitContext: { commits: recentCommits(repoRoot) } };
+export function buildLaunchPlan(
+  repoRoot: string,
+  model: LaunchModel,
+  reviewerModel: LaunchModel,
+  reviewerPrompt: ReviewerPromptReference,
+  tickets: TicketRecord[],
+  checkout: PreparedCheckoutContext,
+): LaunchPlan {
+  return { repoRoot, model, reviewerModel, reviewerPrompt, tickets, checkout, gitContext: { commits: recentCommits(repoRoot) } };
 }

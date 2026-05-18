@@ -8,6 +8,7 @@ It currently provides four core behaviors:
 - deterministic worktree and branch preparation in TypeScript
 - runtime logging, summary reporting, and conservative cleanup
 - asset sync for vendored OpenCode commands, prompts, and agents
+- independent execution and reviewer model resolution with a deterministic reviewer prompt catalog
 
 ## Current Surface Area
 

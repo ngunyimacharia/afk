@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { TicketRepository } from './ticket-repository.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
-import { ModelSelector } from './model-selector.js';
+import { resolveLaunchModelSelection } from './launch-models.js';
+import { resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
 import { SelectionService } from './selection-service.js';
 import { WorktreePreparationService } from './worktree-preparation-service.js';
 import { runSync } from './sync/runner.js';
@@ -61,15 +62,21 @@ export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; 
   const repository = new TicketRepository(repoRoot);
   const tickets = repository.discoverTickets().filter((ticket) => repository.isEligible(ticket));
   if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
-  const modelSelector = new ModelSelector(async () => [{ id: 'default-model' }], async (models) => models[0] ?? null);
   const selectionService = new SelectionService(async (items) => items);
   const worktreePreparationService = new WorktreePreparationService();
-  const model = await modelSelector.selectModel();
+  const launchModels = resolveLaunchModelSelection({
+    executionModelId: process.env.AFK_EXECUTION_MODEL?.trim() || process.env.AFK_MODEL?.trim(),
+    reviewerModelId: process.env.AFK_REVIEWER_MODEL?.trim(),
+  });
+  const reviewerPrompt = resolveReviewerPrompt({
+    repoRoot,
+    override: process.env.AFK_REVIEWER_PROMPT?.trim() || undefined,
+  });
   const selectedTickets = await selectionService.selectTickets(tickets);
   if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
   const firstTicket = selectedTickets[0];
   const checkout = worktreePreparationService.prepare({ repoRoot, featureSlug: firstTicket.feature });
-  const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout);
+  const plan = buildLaunchPlan(repoRoot, launchModels.executionModel, launchModels.reviewerModel, reviewerPrompt, selectedTickets, checkout);
   const runtimeStore = new RuntimeStore({ repoRoot });
   const runner = new SingleTicketRunner(runtimeStore, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-1', removable: true, output: ['background worker scheduled'] }));
   const scheduler = new Scheduler(runner);
@@ -78,6 +85,8 @@ export async function runAfk(repoRoot = process.cwd()): Promise<{ code: number; 
     code: 0,
     message: [
       `Selected model: ${plan.model.id}`,
+      `Selected reviewer model: ${plan.reviewerModel.id}`,
+      `Reviewer prompt: ${plan.reviewerPrompt.id} (${path.relative(repoRoot, plan.reviewerPrompt.path)})`,
       `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
       `Repo root: ${path.resolve(plan.repoRoot)}`,
       `Worktree: ${plan.checkout.effectiveWorktreeName}`,

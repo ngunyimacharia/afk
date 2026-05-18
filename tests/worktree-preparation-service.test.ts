@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -37,12 +37,16 @@ test('creates or reuses a persistent local worktree and branch', () => {
 
   const service = new WorktreePreparationService();
   const first = service.prepare({ repoRoot, featureSlug: 'feat-one' });
-  const second = service.prepare({ repoRoot, featureSlug: 'feat-one' });
+  try {
+    const second = service.prepare({ repoRoot, featureSlug: 'feat-one' });
 
-  assert.equal(first.effectiveWorktreeName, 'feat-one');
-  assert.equal(second.effectiveWorktreeName, 'feat-one');
-  assert.equal(git(repoRoot, ['branch', '--list', 'afk/feat-one']), 'afk/feat-one');
-  assert.equal(git(repoRoot, ['worktree', 'list', '--porcelain']).includes(`worktree ${first.worktreePath}`), true);
+    assert.equal(first.effectiveWorktreeName, 'feat-one');
+    assert.equal(second.effectiveWorktreeName, 'feat-one');
+    assert.equal(git(repoRoot, ['branch', '--list', 'afk/feat-one']), 'afk/feat-one');
+    assert.equal(git(repoRoot, ['worktree', 'list', '--porcelain']).includes(`worktree ${first.worktreePath}`), true);
+  } finally {
+    rmSync(first.worktreePath, { recursive: true, force: true });
+  }
 });
 
 test('fails clearly when git rejects the requested branch state', () => {
