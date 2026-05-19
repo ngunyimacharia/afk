@@ -150,6 +150,56 @@ test('persists failed provider output for later inspection', async () => {
   assert.match(readFileSync(logPath, 'utf8'), /run failed/);
 });
 
+test('records path-not-found failure kind for failed provider results', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-failure-kind-path-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({
+    status: 'failed',
+    sessionId: 'session-missing-path',
+    removable: false,
+    unsafeReason: 'ENOENT: no such file or directory, open \"/tmp/missing.md\"',
+    output: ['Tool failed: ENOENT: no such file or directory'],
+  }));
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'path-missing', label: 'feat/path-missing', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-path-missing.json');
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FAILURE_KIND": "path-not-found"/);
+});
+
+test('records patch-context-mismatch failure kind when provider throws', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-failure-kind-patch-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, {
+    execute: async () => {
+      throw new Error('apply_patch verification failed: Failed to find expected lines in src/file.ts');
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'patch-mismatch', label: 'feat/patch-mismatch', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-patch-mismatch.json');
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FAILURE_KIND": "patch-context-mismatch"/);
+});
+
+test('records dependency-missing failure kind when provider throws', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-failure-kind-deps-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, {
+    execute: async () => {
+      throw new Error('require(vendor/autoload.php): Failed to open stream: No such file or directory');
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'dependency-missing', label: 'feat/dependency-missing', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-dependency-missing.json');
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FAILURE_KIND": "dependency-missing"/);
+});
+
 test('persists permission progress before provider completion', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-permission-'));
   const store = new RuntimeStore({ repoRoot });
