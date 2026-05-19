@@ -101,19 +101,70 @@ function parsePayload(input: unknown): Record<string, unknown> | null {
   if (input && typeof input === 'object' && !Array.isArray(input)) return input as Record<string, unknown>;
   if (typeof input !== 'string') return null;
 
-  const source = extractJsonSource(input);
-  try {
-    const value = JSON.parse(source) as unknown;
-    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
-    return null;
-  } catch {
-    return null;
+  for (const source of extractJsonCandidates(input)) {
+    try {
+      const value = JSON.parse(source) as unknown;
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }
 
-function extractJsonSource(raw: string): string {
+function extractJsonCandidates(raw: string): string[] {
+  const candidates: string[] = [];
   const fence = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  return (fence?.[1] ?? raw).trim();
+  if (fence?.[1]) candidates.push(fence[1].trim());
+  candidates.push(raw.trim());
+  const embeddedObject = findEmbeddedJsonObject(raw);
+  if (embeddedObject) candidates.push(embeddedObject);
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+function findEmbeddedJsonObject(raw: string): string | null {
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (!char) continue;
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      if (depth === 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) return raw.slice(start, index + 1).trim();
+    }
+  }
+
+  return null;
 }
 
 function normalizeFinding(value: unknown): ReviewerFinding | undefined {

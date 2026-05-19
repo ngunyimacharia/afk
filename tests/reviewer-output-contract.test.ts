@@ -52,6 +52,25 @@ test('falls back safely when reviewer output cannot be parsed', () => {
   assert.match(review.findings[0]?.detail ?? '', /this is not structured reviewer output/);
 });
 
+test('parses JSON object embedded in plain-text reviewer output', () => {
+  const review = parseReviewerOutput([
+    'opencode session prompt completed',
+    'review payload follows',
+    '{"summary":"Needs updates","findings":[{"severity":"major","title":"Missing test","detail":"Add coverage for retry flow."}]}',
+  ].join('\n'));
+
+  assert.equal(review.fallback, false);
+  assert.equal(review.summary, 'Needs updates');
+  assert.equal(review.highestSeverity, 'major');
+  assert.deepEqual(review.findings, [
+    {
+      severity: 'major',
+      title: 'Missing test',
+      detail: 'Add coverage for retry flow.',
+    },
+  ]);
+});
+
 test('approves minor-only feedback and loops on high severity until the cap', () => {
   const minorReview = parseReviewerOutput({
     summary: 'Minor polish only',
