@@ -23,6 +23,8 @@ test('starts the next ticket for a feature after completion', async () => {
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
+    reviewerModel: { id: 'reviewer-model-1' },
+    reviewerPrompt: { id: 'reviewer-default', path: '/tmp/reviewer-default.md' },
     tickets: [
       { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
       { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },

@@ -12,7 +12,7 @@ import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import { isInteractiveLaunchAllowed, runInteractiveLaunchWizard, type PromptIO } from './interactive-launch.js';
 import { createProgressLine } from './progress-line.js';
-import type { LaunchModel, TicketRecord } from './types.js';
+import type { LaunchModel, ReviewTerminalOutcome, TicketRecord } from './types.js';
 
 function commandArg(): string | undefined {
   const command = process.argv[2];
@@ -123,6 +123,24 @@ export async function runAfk(
       `Worktree: ${plan.checkout.effectiveWorktreeName}`,
       `Branch: ${plan.checkout.effectiveBranchName}`,
       `Recent git: ${plan.gitContext.commits.join(' | ')}`,
+      `Final review outcome: ${readFinalReviewOutcome(runtimeStore, repoRoot, firstTicket.feature, firstTicket.issueName)}`,
     ].join('\n'),
   };
+}
+
+function readFinalReviewOutcome(runtimeStore: RuntimeStore, repoRoot: string, featureSlug: string, issueName: string): ReviewTerminalOutcome {
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${featureSlug}-${issueName}.json`);
+
+  try {
+    const metadata = runtimeStore.readMetadata(metadataPath);
+    if (metadata.FINAL_REVIEW_OUTCOME === 'approved' || metadata.FINAL_REVIEW_OUTCOME === 'needs-human') {
+      return metadata.FINAL_REVIEW_OUTCOME;
+    }
+    if (metadata.STATUS === 'blocked' || metadata.STATUS === 'failed' || metadata.STATUS === 'interrupted') return 'needs-human';
+    if (metadata.STATUS === 'completed') return 'approved';
+  } catch {
+    return 'needs-human';
+  }
+
+  return 'needs-human';
 }

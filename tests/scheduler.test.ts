@@ -31,6 +31,8 @@ test('serializes tickets within a feature and caps cross-feature concurrency', a
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
+    reviewerModel: { id: 'reviewer-model-1' },
+    reviewerPrompt: { id: 'reviewer-default', path: '/tmp/reviewer-default.md' },
     tickets: [
       { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
@@ -67,6 +69,8 @@ test('continues independent queues when one ticket fails', async () => {
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
+    reviewerModel: { id: 'reviewer-model-1' },
+    reviewerPrompt: { id: 'reviewer-default', path: '/tmp/reviewer-default.md' },
     tickets: [
       { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },

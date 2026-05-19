@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
-import type { LaunchPreferences, RuntimeMetadataRecord } from './types.js';
+import type { LaunchPreferences, ReviewCycleHistoryEntry, ReviewTerminalOutcomeRecord, RuntimeMetadataRecord } from './types.js';
 
 export interface RuntimeStoreInput {
   repoRoot: string;
@@ -79,6 +79,10 @@ export class RuntimeStore {
       PROVIDER_SESSION_REMOVABLE: false,
       INSPECTION_PROVIDER: null,
       INSPECTION_TARGET_IDENTIFIER: null,
+      REVIEW_CYCLE_HISTORY: [],
+      FINAL_REVIEW_OUTCOME: null,
+      FINAL_REVIEW_REASON: null,
+      FINAL_REVIEW_CYCLE: null,
       UNSAFE_REASON: 'session capture pending',
     });
     return { metadataPath, logPath, doneSentinelPath, failedSentinelPath };
@@ -100,6 +104,29 @@ export class RuntimeStore {
     return next;
   }
 
+  recordReviewCycle(metadataPath: string, logPath: string, cycle: ReviewCycleHistoryEntry): RuntimeMetadataRecord {
+    const current = this.readMetadata(metadataPath);
+    const history = [...(current.REVIEW_CYCLE_HISTORY ?? []), cycle];
+    const next = this.writeMetadataAndReturn(metadataPath, {
+      ...current,
+      REVIEW_CYCLE_HISTORY: history,
+    });
+    this.appendLog(logPath, JSON.stringify({ event: 'review-cycle', ...cycle }));
+    return next;
+  }
+
+  recordFinalReviewOutcome(metadataPath: string, logPath: string, outcome: ReviewTerminalOutcomeRecord): RuntimeMetadataRecord {
+    const current = this.readMetadata(metadataPath);
+    const next = this.writeMetadataAndReturn(metadataPath, {
+      ...current,
+      FINAL_REVIEW_OUTCOME: outcome.outcome,
+      FINAL_REVIEW_REASON: outcome.reason,
+      FINAL_REVIEW_CYCLE: outcome.cycle,
+    });
+    this.appendLog(logPath, JSON.stringify({ event: 'review-terminal', ...outcome }));
+    return next;
+  }
+
   markDone(handle: RuntimeRecordHandle): void {
     mkdirSync(path.dirname(handle.doneSentinelPath), { recursive: true });
     writeFileSync(handle.doneSentinelPath, `${isoNow()} done\n`, 'utf8');
@@ -113,5 +140,10 @@ export class RuntimeStore {
   private writeMetadata(metadataPath: string, record: RuntimeMetadataRecord): void {
     mkdirSync(path.dirname(metadataPath), { recursive: true });
     writeFileSync(metadataPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  }
+
+  private writeMetadataAndReturn(metadataPath: string, record: RuntimeMetadataRecord): RuntimeMetadataRecord {
+    this.writeMetadata(metadataPath, record);
+    return record;
   }
 }

@@ -24,6 +24,8 @@ export interface ReviewDecisionResult {
   cycle: number;
   maxCycles: number;
   fallback: boolean;
+  reason: string;
+  findings: ReviewerFinding[];
 }
 
 const SEVERITY_RANK: Record<ReviewerSeverity, number> = {
@@ -76,6 +78,13 @@ export function decideReviewOutcome(
   const maxCycles = normalizePositiveInteger(options.maxCycles ?? 3, 3);
   const highestSeverity = review.highestSeverity;
   const decision: ReviewDecision = highestSeverity === 'minor' ? 'approve' : cycle >= maxCycles ? 'needs-human' : 'loop';
+  const reason = decision === 'approve'
+    ? 'Reviewer findings are minor only'
+    : decision === 'needs-human'
+      ? 'Reviewer cycle cap reached with unresolved major findings'
+      : review.fallback
+        ? 'Reviewer output was malformed and requires a retry'
+        : 'Reviewer findings include major or blocker severity';
 
   return {
     decision,
@@ -83,6 +92,8 @@ export function decideReviewOutcome(
     cycle,
     maxCycles,
     fallback: review.fallback,
+    reason,
+    findings: review.findings,
   };
 }
 
@@ -113,7 +124,7 @@ function normalizeFinding(value: unknown): ReviewerFinding | undefined {
 
   return {
     severity,
-    title: normalizeText(record.title),
+    title: normalizeText(record.title) || normalizeText(record.summary) || normalizeText(record.message) || normalizeText(record.finding),
     detail: normalizeText(record.detail),
     ...(normalizeText(record.suggested_fix ?? record.suggestedFix) ? { suggestedFix: normalizeText(record.suggested_fix ?? record.suggestedFix) } : {}),
   };
