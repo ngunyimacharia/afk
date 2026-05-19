@@ -15,7 +15,7 @@ It currently provides four core behaviors:
 - `afk`: interactive launch wizard (harness, model, feature multiselect, concurrency) followed by dependency-aware scheduled work
 - `afk summary`: read-only summary of AFK work from ticket files plus runtime metadata
 - `afk cleanup`: dry-run-first cleanup for terminal AFK tickets and attributable runtime artifacts
-- `afk sync`: sync vendored OpenCode assets from `artifacts/opencode/` into `private_dot_config/opencode/`
+- `afk sync`: sync vendored OpenCode assets into the global OpenCode config directory and configure Git global ignores for AFK runtime directories
 
 The current entrypoint is `runAfk()` in `src/cli.ts`. The implementation already supports the command behaviors above, but this repo is not yet packaged as an installed shell binary.
 

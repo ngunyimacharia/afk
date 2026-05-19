@@ -76,11 +76,11 @@ Asset sync is implemented under `src/sync/`.
 - `artifacts/opencode/prompts/`
 - `artifacts/opencode/commands/`
 
-into:
+into the global OpenCode config directory:
 
-- `private_dot_config/opencode/agents/`
-- `private_dot_config/opencode/prompts/`
-- `private_dot_config/opencode/command/`
+- `$XDG_CONFIG_HOME/opencode/agents/`, or `~/.config/opencode/agents/`
+- `$XDG_CONFIG_HOME/opencode/prompts/`, or `~/.config/opencode/prompts/`
+- `$XDG_CONFIG_HOME/opencode/command/`, or `~/.config/opencode/command/`
 
 Current sync behavior:
 
