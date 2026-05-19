@@ -38,7 +38,10 @@ This agent fits the workflow:
 - Ground the breakdown in the actual stack, architecture, naming, and test patterns found in the repo.
 - Determine the configured issue tracker from repo docs before publishing, starting with `AGENTS.md` and `docs/agents/issue-tracker.md`.
 - Publish issues to the configured tracker by default without asking for an approval round first.
-- If configured tracker is Local Markdown, create issue files under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`.
+- If configured tracker is Local Markdown, create issue files only under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`.
+- For Local Markdown, require the parent PRD to live at `.scratch/<feature-slug>/PRD.md` with exact uppercase casing. If the source PRD is elsewhere, normalize by using or creating the canonical path before publishing issues, and note any legacy/non-canonical source path.
+- For Local Markdown, never publish implementation issue files directly under `.scratch/<feature-slug>/`; direct child markdown files other than `PRD.md` are not discoverable by AFK feature selection.
+- For Local Markdown, create `.scratch/<feature-slug>/issues/` when it does not exist, and put every implementation issue there.
 - For Local Markdown, add blocker dependencies to issue YAML frontmatter as `Depends-On` using same-feature issue basenames only, without paths or `.md`.
 - If one feature PRD depends on another feature PRD, add `Depends-On-Features` to the dependent `.scratch/<feature-slug>/PRD.md` using exact feature slugs.
 - If configured tracker is GitHub, publish issues via `gh` using the repository's label/status conventions from docs.
@@ -69,6 +72,28 @@ afk_branch: afk/custom-name
 - AFK derives `.scratch/<feature-slug>/execution.json` from issue markdown and `.scratch/execution.json` from selected feature PRDs; do not hand-author these derived files as issue content.
 - Use `Depends-On` only for true same-feature issue blockers, not preferred ordering.
 - Use `Depends-On-Features` in PRD frontmatter for true feature blockers. First-pass AFK branch automation supports linear stacks only; fan-in/multiple feature parents should be called out as deferred/manual unless explicitly in scope.
+
+## Local Markdown Layout Requirements
+
+For Local Markdown, publish a feature package in this exact shape because AFK feature selection and execution read these paths:
+
+```text
+.scratch/
+  <feature-slug>/
+    PRD.md
+    issues/
+      01-first-slice.md
+      02-second-slice.md
+```
+
+Rules:
+
+- `PRD.md` must use exact uppercase casing.
+- Issue files must be in the `issues/` subdirectory.
+- Issue files must be numbered from `01` and use stable slug basenames.
+- Do not create sibling issue files beside `PRD.md`.
+- If the repo contains a non-canonical feature folder, such as `.scratch/<feature-slug>/prd.md` or `.scratch/<feature-slug>/01-slice.md`, normalize future output to the canonical layout and report the mismatch.
+- Each Local Markdown issue must begin with `Status: <canonical-status>` before the title or any other body content.
 
 ## Repo Grounding
 
@@ -151,6 +176,8 @@ Rules:
 Use this structure for each issue:
 
 ```md
+Status: ready-for-agent
+
 ## Title
 
 A concise, outcome-oriented title describing one slice.

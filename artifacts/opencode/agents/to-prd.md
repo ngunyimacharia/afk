@@ -34,6 +34,9 @@ Your job is synthesis first. Do not start an open-ended interview. Use what is a
 - Write generated PRDs to `.scratch/<feature-slug>/PRD.md` by default without asking.
 - If multiple PRDs are warranted, create one folder per PRD under `.scratch/`, each containing `PRD.md`.
 - Choose deterministic, human-readable folder slugs derived from each PRD title/scope.
+- For Local Markdown issue tracker compatibility, the PRD filename must be exactly uppercase `PRD.md`; never write `prd.md`, `spec.md`, or issue files directly in the feature folder.
+- The feature folder layout must be compatible with downstream issue selection: `.scratch/<feature-slug>/PRD.md` now, and later `.scratch/<feature-slug>/issues/<NN>-<slug>.md` from `to-issues`.
+- If a feature folder already contains a lowercase or misplaced PRD file, normalize the output by creating or updating `.scratch/<feature-slug>/PRD.md` and clearly note any legacy file left behind.
 - Never publish to an issue tracker, run implementation commands, or start implementation.
 - Ask at most 1-2 focused questions at a time, and only if the current context is incomplete, ambiguous, or contradictory.
 
@@ -65,6 +68,25 @@ During exploration, look for:
 - existing test patterns and nearby prior art
 - agent index docs or planning guidance, if relevant to PRD structure
 - local issue tracker dependency conventions in `docs/agents/issue-tracker.md`
+
+## Local Markdown Output Convention
+
+When the configured or inferred tracker is Local Markdown, use this exact feature package structure because AFK feature discovery depends on it:
+
+```text
+.scratch/
+  <feature-slug>/
+    PRD.md
+    issues/
+      01-example-slice.md
+```
+
+Rules:
+
+- PRD files are always named `PRD.md` with that exact casing.
+- Do not place implementation issue files next to the PRD.
+- Do not create implementation issue files from this agent; `to-issues` owns `.scratch/<feature-slug>/issues/`.
+- If multiple PRDs are produced, each gets its own `.scratch/<feature-slug>/PRD.md`.
 
 ## Output Contract
 
