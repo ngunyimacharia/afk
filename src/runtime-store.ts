@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
-import type { LaunchPreferences, PhaseHistoryEntry, ReviewCycleHistoryEntry, ReviewTerminalOutcomeRecord, RuntimeMetadataRecord } from './types.js';
+import type { BudgetExceededEvent, BudgetPolicy, LaunchPreferences, PhaseHistoryEntry, ReviewCycleHistoryEntry, ReviewTerminalOutcomeRecord, RuntimeMetadataRecord } from './types.js';
 
 export interface RuntimeStoreInput {
   repoRoot: string;
@@ -57,6 +57,24 @@ export class RuntimeStore {
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0) preferences.concurrency = value.concurrency;
+      const budgets = value.budgets;
+      if (budgets && typeof budgets === 'object' && !Array.isArray(budgets)) {
+        const budgetRecord = budgets as Record<string, unknown>;
+        const parsed: Partial<BudgetPolicy> = {};
+        if (typeof budgetRecord.malformedReviewerRetries === 'number' && budgetRecord.malformedReviewerRetries >= 0) parsed.malformedReviewerRetries = Math.floor(budgetRecord.malformedReviewerRetries);
+        if (typeof budgetRecord.fixupCycleLimit === 'number' && budgetRecord.fixupCycleLimit > 0) parsed.fixupCycleLimit = Math.floor(budgetRecord.fixupCycleLimit);
+        if (typeof budgetRecord.providerFailureRetries === 'number' && budgetRecord.providerFailureRetries >= 0) parsed.providerFailureRetries = Math.floor(budgetRecord.providerFailureRetries);
+        if (typeof budgetRecord.ticketWallClockMs === 'number' && budgetRecord.ticketWallClockMs > 0) parsed.ticketWallClockMs = Math.floor(budgetRecord.ticketWallClockMs);
+        if (budgetRecord.phaseWallClockMs && typeof budgetRecord.phaseWallClockMs === 'object' && !Array.isArray(budgetRecord.phaseWallClockMs)) {
+          const phaseWallClockMs = budgetRecord.phaseWallClockMs as Record<string, unknown>;
+          const phaseBudgets: Record<string, number> = {};
+          for (const key of ['execution', 'review', 'fixup']) {
+            if (typeof phaseWallClockMs[key] === 'number' && (phaseWallClockMs[key] as number) > 0) phaseBudgets[key] = Math.floor(phaseWallClockMs[key] as number);
+          }
+          if (Object.keys(phaseBudgets).length) parsed.phaseWallClockMs = phaseBudgets;
+        }
+        if (Object.keys(parsed).length) preferences.budgets = parsed;
+      }
       return preferences;
     } catch (_error) {
       return {};
@@ -98,6 +116,7 @@ export class RuntimeStore {
       FINAL_REVIEW_OUTCOME: null,
       FINAL_REVIEW_REASON: null,
       FINAL_REVIEW_CYCLE: null,
+      BUDGET_EXCEEDED_EVENTS: [],
       UNSAFE_REASON: 'session capture pending',
     });
     return { metadataPath, logPath, doneSentinelPath, failedSentinelPath };
@@ -177,6 +196,17 @@ export class RuntimeStore {
       FINAL_REVIEW_CYCLE: outcome.cycle,
     });
     this.appendLog(logPath, JSON.stringify({ event: 'review-terminal', ...outcome }));
+    return next;
+  }
+
+  recordBudgetExceeded(metadataPath: string, logPath: string, event: BudgetExceededEvent): RuntimeMetadataRecord {
+    const current = this.readMetadata(metadataPath);
+    const history = [...(current.BUDGET_EXCEEDED_EVENTS ?? []), event];
+    const next = this.writeMetadataAndReturn(metadataPath, {
+      ...current,
+      BUDGET_EXCEEDED_EVENTS: history,
+    });
+    this.appendLog(logPath, JSON.stringify({ event: 'budget-exceeded', ...event }));
     return next;
   }
 

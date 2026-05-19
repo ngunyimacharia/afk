@@ -48,6 +48,29 @@ test('round-trips launch preferences', () => {
   });
 });
 
+test('reads optional budget preferences', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
+  const store = new RuntimeStore({ repoRoot });
+  store.writeLaunchPreferences({
+    harness: 'OpenCode',
+    budgets: {
+      malformedReviewerRetries: 1,
+      fixupCycleLimit: 3,
+      providerFailureRetries: 0,
+      ticketWallClockMs: 1000,
+      phaseWallClockMs: { execution: 500 },
+    },
+  });
+
+  assert.deepEqual(store.readLaunchPreferences().budgets, {
+    malformedReviewerRetries: 1,
+    fixupCycleLimit: 3,
+    providerFailureRetries: 0,
+    ticketWallClockMs: 1000,
+    phaseWallClockMs: { execution: 500 },
+  });
+});
+
 test('records phase history with deterministic timing', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
   let tick = 0;

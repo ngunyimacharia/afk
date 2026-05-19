@@ -1,14 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
+import type { AgentExecutionProgressCallback, AgentExecutionResult, BudgetExceededEvent, BudgetPhaseName, BudgetPolicy, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { buildPrompt } from './prompt-builder.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import { classifyProviderFailure } from './provider-failure.js';
 
-const MAX_REVIEW_CYCLES = 3;
 const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
+const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
+  malformedReviewerRetries: 1,
+  fixupCycleLimit: 3,
+  providerFailureRetries: 0,
+};
 
 export interface SingleTicketRunResult {
   scheduled: boolean;
@@ -20,6 +24,7 @@ export class SingleTicketRunner {
     private readonly runtimeStore: RuntimeStore,
     private readonly provider: AgentExecutionProvider,
     private readonly summaryPresenceGate = new SummaryPresenceGate(),
+    private readonly configuredBudgets: Partial<BudgetPolicy> = {},
   ) {}
 
   async launch(plan: LaunchPlan, options: { onProgress?: AgentExecutionProgressCallback } = {}): Promise<SingleTicketRunResult> {
@@ -41,6 +46,9 @@ export class SingleTicketRunner {
     });
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
     const reviewerPromptText = this.readReviewerPrompt(plan.reviewerPrompt);
+    const budgets = this.resolveBudgets();
+    this.runtimeStore.updateMetadata(record.metadataPath, { EFFECTIVE_BUDGETS: budgets });
+    this.runtimeStore.appendLog(record.logPath, `effective budgets: ${JSON.stringify(budgets)}`);
     let prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
@@ -53,39 +61,67 @@ export class SingleTicketRunner {
     this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('readiness'));
     let sessionId: string | null = null;
     let reviewCycle = 0;
+    let fixupCycles = 0;
+    let malformedAttempts = 0;
+    let latestExecutionResult: AgentExecutionResult | null = null;
+    let executeBeforeReview = true;
+    const ticketStartEpoch = Date.now();
 
     try {
       while (true) {
-        const executionResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({
-          plan,
-          ticketIndex: 0,
-          prompt,
-          invocationMode: 'execution',
-          sessionId,
-          onProgress: this.progressLogger(record.logPath, options.onProgress),
-        }), reviewCycle + 1);
-        sessionId = executionResult.sessionId ?? sessionId;
-        this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
-        if (executionResult.status !== 'completed') {
-          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
-            this.runtimeStore.markFailed(record, executionResult.status);
-            this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
-            options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionResult.status}`, sessionId });
-            return { scheduled: true, message: `Scheduled ${ticket.label}` };
-          });
+        const ticketBudget = this.checkTicketBudget(record.metadataPath, record.logPath, budgets, ticketStartEpoch, reviewCycle + 1);
+        if (ticketBudget) return this.handoffForBudget(ticket.label, record, options, ticketBudget, sessionId);
+        if (executeBeforeReview && fixupCycles >= budgets.fixupCycleLimit && reviewCycle > 0) {
+          return this.handoffForBudget(ticket.label, record, options, {
+            budgetName: 'fixup-cycle-cap',
+            limit: budgets.fixupCycleLimit,
+            observed: fixupCycles,
+            phase: 'fixup',
+            cycle: reviewCycle,
+            evidence: 'Real implementation fixup cycle cap reached',
+          }, sessionId);
         }
+        if (executeBeforeReview) {
+          const executionResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({
+            plan,
+            ticketIndex: 0,
+            prompt,
+            invocationMode: 'execution',
+            sessionId,
+            onProgress: this.progressLogger(record.logPath, options.onProgress),
+          }), reviewCycle + 1);
+          sessionId = executionResult.sessionId ?? sessionId;
+          latestExecutionResult = executionResult;
+          this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
+          const executionBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'execution', reviewCycle + 1);
+          if (executionBudget) return this.handoffForBudget(ticket.label, record, options, executionBudget, sessionId);
+          if (executionResult.status !== 'completed') {
+            return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+              this.runtimeStore.markFailed(record, executionResult.status);
+              this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
+              options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionResult.status}`, sessionId });
+              return { scheduled: true, message: `Scheduled ${ticket.label}` };
+            });
+          }
+        }
+        if (!latestExecutionResult) return { scheduled: false, message: 'No execution result available for review' };
+        const executionForReview = latestExecutionResult;
 
         const reviewResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'review', () => this.provider.execute({
           plan,
           ticketIndex: 0,
-          prompt: this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionResult),
+          prompt: this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview),
           invocationMode: 'reviewer',
           sessionId,
           onProgress: this.progressLogger(record.logPath, options.onProgress),
         }), reviewCycle + 1);
+        const reviewBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'review', reviewCycle + 1);
+        if (reviewBudget) return this.handoffForBudget(ticket.label, record, options, reviewBudget, sessionId);
+        const afterReviewTicketBudget = this.checkTicketBudget(record.metadataPath, record.logPath, budgets, ticketStartEpoch, reviewCycle + 1);
+        if (afterReviewTicketBudget) return this.handoffForBudget(ticket.label, record, options, afterReviewTicketBudget, sessionId);
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         const review = parseReviewerOutput((reviewResult.output ?? []).join('\n'));
-        const decision = decideReviewOutcome(review, { cycle: reviewCycle + 1, maxCycles: MAX_REVIEW_CYCLES });
+        const decision = decideReviewOutcome(review, { cycle: reviewCycle + 1, maxCycles: budgets.fixupCycleLimit + 1 });
         this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, this.buildReviewCycleEntry(reviewCycle + 1, decision));
 
         if (decision.decision === 'approve') {
@@ -111,6 +147,22 @@ export class SingleTicketRunner {
           });
         }
 
+        if (decision.fallback) {
+          malformedAttempts += 1;
+          if (malformedAttempts > budgets.malformedReviewerRetries) {
+            return this.handoffForBudget(ticket.label, record, options, {
+              budgetName: 'malformed-reviewer-retries',
+              limit: budgets.malformedReviewerRetries,
+              observed: malformedAttempts,
+              phase: 'review',
+              cycle: reviewCycle + 1,
+              evidence: decision.reason,
+            }, sessionId);
+          }
+          executeBeforeReview = false;
+          continue;
+        }
+
         if (decision.decision === 'needs-human') {
           this.runtimeStore.updateMetadata(record.metadataPath, {
             STATUS: 'blocked',
@@ -131,10 +183,15 @@ export class SingleTicketRunner {
         }
 
         reviewCycle += 1;
+        fixupCycles += 1;
         prompt = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'fixup', () => this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review), reviewCycle);
+        const fixupBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'fixup', reviewCycle);
+        if (fixupBudget) return this.handoffForBudget(ticket.label, record, options, fixupBudget, sessionId);
+        executeBeforeReview = true;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'provider execution failed';
+      this.runtimeStore.appendLog(record.logPath, `provider failure retries configured: ${budgets.providerFailureRetries}; retries not attempted for implementation by policy`);
       options.onProgress?.({ ticketLabel: ticket.label, message: `run failed: ${message}` });
       this.runtimeStore.updateMetadata(record.metadataPath, {
         STATUS: 'failed',
@@ -145,6 +202,74 @@ export class SingleTicketRunner {
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
     }
     return { scheduled: true, message: `Scheduled ${ticket.label}` };
+  }
+
+  private resolveBudgets(): BudgetPolicy {
+    return {
+      ...DEFAULT_BUDGET_POLICY,
+      ...this.configuredBudgets,
+    };
+  }
+
+  private checkTicketBudget(metadataPath: string, logPath: string, budgets: BudgetPolicy, ticketStartEpoch: number, cycle: number): BudgetExceededEvent | null {
+    const limit = budgets.ticketWallClockMs;
+    if (!limit) return null;
+    const observed = Date.now() - ticketStartEpoch;
+    if (observed <= limit) return null;
+    const event: BudgetExceededEvent = {
+      budgetName: 'ticket-wall-clock-ms',
+      limit,
+      observed,
+      phase: 'ticket',
+      cycle,
+      evidence: `Ticket runtime exceeded wall-clock budget (${observed}ms > ${limit}ms)`,
+    };
+    return event;
+  }
+
+  private checkPhaseBudget(metadataPath: string, logPath: string, budgets: BudgetPolicy, phase: BudgetPhaseName, cycle: number): BudgetExceededEvent | null {
+    const limit = budgets.phaseWallClockMs?.[phase];
+    if (!limit) return null;
+    const metadata = this.runtimeStore.readMetadata(metadataPath);
+    const latest = [...(metadata.PHASE_HISTORY ?? [])].reverse().find((entry) => entry.name === phase && entry.cycle === cycle);
+    if (!latest || latest.durationMs <= limit) return null;
+    const event: BudgetExceededEvent = {
+      budgetName: `phase-${phase}-wall-clock-ms`,
+      limit,
+      observed: latest.durationMs,
+      phase,
+      cycle,
+      evidence: `Phase ${phase} exceeded wall-clock budget (${latest.durationMs}ms > ${limit}ms)`,
+    };
+    return event;
+  }
+
+  private handoffForBudget(
+    ticketLabel: string,
+    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
+    options: { onProgress?: AgentExecutionProgressCallback },
+    event: BudgetExceededEvent,
+    sessionId: string | null,
+  ): Promise<SingleTicketRunResult> {
+    this.runtimeStore.recordBudgetExceeded(record.metadataPath, record.logPath, event);
+    const reason = `budget exceeded: ${event.budgetName} (limit=${event.limit}, observed=${event.observed}, phase=${event.phase}, cycle=${event.cycle})`;
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      STATUS: 'blocked',
+      UNSAFE_REASON: reason,
+      FAILURE_KIND: 'needs-human',
+    });
+    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+      outcome: 'needs-human',
+      reason,
+      cycle: event.cycle,
+    });
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+      this.runtimeStore.markFailed(record, reason);
+      this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${reason}`);
+      this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      options.onProgress?.({ ticketLabel, message: `budget handoff: ${reason}`, sessionId });
+      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+    });
   }
 
   private readTicketContent(ticketPath: string): string | null {
