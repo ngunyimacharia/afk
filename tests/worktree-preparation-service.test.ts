@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { buildPrompt } from '../src/prompt-builder.js';
@@ -85,4 +85,57 @@ test('preserves existing gitignore contents when adding worktree ignore', () => 
   new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'feature-b' });
 
   assert.equal(readFileSync(path.join(repoRoot, '.gitignore'), 'utf8'), '.scratch\n.worktree/\n');
+});
+
+test('copies allowlisted dependencies and .env.testing for new worktrees', () => {
+  const repoRoot = createRepo('afk-worktree-copy-');
+  mkdirSync(path.join(repoRoot, 'node_modules', 'pkg'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;\n');
+  mkdirSync(path.join(repoRoot, 'vendor', 'bin'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'vendor', 'bin', 'tool'), 'ok\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'TEST_VALUE=yes\n');
+  writeFileSync(path.join(repoRoot, '.env'), 'SECRET=never-copy\n');
+
+  const result = new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'copy-ready' });
+
+  assert.equal(existsSync(path.join(result.worktreePath, 'node_modules', 'pkg', 'index.js')), true);
+  assert.equal(existsSync(path.join(result.worktreePath, 'vendor', 'bin', 'tool')), true);
+  assert.equal(readFileSync(path.join(result.worktreePath, '.env.testing'), 'utf8'), 'TEST_VALUE=yes\n');
+  assert.equal(existsSync(path.join(result.worktreePath, '.env')), false);
+  assert.deepEqual(result.readiness?.dependencyCopies.filter((item) => item.name === 'node_modules').map((item) => item.decision), ['copied']);
+  assert.equal(result.readiness?.envTestingCopy.decision, 'copied');
+});
+
+test('does not overwrite existing target dependencies or env files', () => {
+  const repoRoot = createRepo('afk-worktree-no-overwrite-');
+  mkdirSync(path.join(repoRoot, 'venv', 'lib'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'venv', 'lib', 'from-source.txt'), 'source\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'SOURCE=yes\n');
+
+  const service = new WorktreePreparationService();
+  const first = service.prepare({ repoRoot, featureSlug: 'copy-existing' });
+  writeFileSync(path.join(first.worktreePath, 'venv', 'lib', 'from-target.txt'), 'target\n');
+  writeFileSync(path.join(first.worktreePath, '.env.testing'), 'TARGET=yes\n');
+
+  const second = service.prepare({ repoRoot, featureSlug: 'copy-existing' });
+  assert.equal(existsSync(path.join(second.worktreePath, 'venv', 'lib', 'from-source.txt')), true);
+  assert.equal(readFileSync(path.join(second.worktreePath, '.env.testing'), 'utf8'), 'TARGET=yes\n');
+  assert.equal(second.readiness?.dependencyCopies.find((item) => item.name === 'venv')?.decision, 'already-present');
+  assert.equal(second.readiness?.envTestingCopy.decision, 'already-present');
+});
+
+test('blocks copying symlinked dependency directories that point outside source checkout', () => {
+  const repoRoot = createRepo('afk-worktree-symlink-');
+  const outsideRoot = mkRepoLocalTempDir('afk-worktree-outside-');
+  mkdirSync(path.join(outsideRoot, 'dep'), { recursive: true });
+  writeFileSync(path.join(outsideRoot, 'dep', 'leak.txt'), 'outside\n');
+  symlinkSync(path.join(outsideRoot, 'dep'), path.join(repoRoot, 'node_modules'), 'dir');
+
+  const result = new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'symlink-guard' });
+
+  assert.equal(existsSync(path.join(result.worktreePath, 'node_modules')), false);
+  assert.equal(result.readiness?.dependencyCopies.find((item) => item.name === 'node_modules')?.decision, 'blocked-external-symlink');
+  assert.match(result.readiness?.dependencyCopies.find((item) => item.name === 'node_modules')?.note ?? '', /outside source checkout/);
+
+  rmSync(outsideRoot, { recursive: true, force: true });
 });
