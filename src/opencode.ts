@@ -2,6 +2,8 @@ import { createOpencode } from '@opencode-ai/sdk';
 import prompts from 'prompts';
 import type { LaunchModel } from './types.js';
 
+const OPENCODE_EPHEMERAL_PORT = 0;
+
 export type OpenCodePermissionDecision = 'once' | 'always' | 'reject';
 
 export interface OpenCodeSessionProgressEvent {
@@ -34,7 +36,7 @@ export interface OpenCodePermissionRequest {
 }
 
 export async function discoverOpenCodeModels(): Promise<LaunchModel[]> {
-  const sdk = await createOpencode();
+  const sdk = await createAfkOpencode();
   try {
     const response = await sdk.client.config.providers();
     const payload = unwrap(response);
@@ -78,7 +80,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     if (!providerID || !modelID) {
       return { sessionId: null, output: [`invalid model id: ${input.model.id}`] };
     }
-    const sdk = await createOpencode();
+    const sdk = await createAfkOpencode();
     const abortController = new AbortController();
     let eventTask: Promise<void> | undefined;
     try {
@@ -107,6 +109,10 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
       sdk.server.close();
     }
   }
+}
+
+async function createAfkOpencode(): ReturnType<typeof createOpencode> {
+  return createOpencode({ port: OPENCODE_EPHEMERAL_PORT });
 }
 
 function composePermissionDecisionProvider(
