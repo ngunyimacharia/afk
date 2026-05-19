@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
+import type { AgentExecutionProgressCallback, LaunchBlockEvidence, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { buildPrompt } from './prompt-builder.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import { classifyProviderFailure } from './provider-failure.js';
+import { validateSelectedTicketPath } from './path-validation.js';
 
 const MAX_REVIEW_CYCLES = 3;
 const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
@@ -13,6 +14,7 @@ const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more
 export interface SingleTicketRunResult {
   scheduled: boolean;
   message: string;
+  launchBlock?: LaunchBlockEvidence;
 }
 
 export class SingleTicketRunner {
@@ -25,6 +27,8 @@ export class SingleTicketRunner {
   async launch(plan: LaunchPlan, options: { onProgress?: AgentExecutionProgressCallback } = {}): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
     if (!ticket) return { scheduled: false, message: 'No ticket available for launch' };
+    const ticketPathValidation = validateSelectedTicketPath(plan.repoRoot, ticket);
+    if (ticketPathValidation) return { scheduled: false, message: ticketPathValidation.message, launchBlock: ticketPathValidation };
     options.onProgress?.({ ticketLabel: ticket.label, message: 'starting ticket run' });
     const record = this.runtimeStore.createRecord({ featureSlug: ticket.feature, issueName: ticket.issueName, ticketPath: ticket.path });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);

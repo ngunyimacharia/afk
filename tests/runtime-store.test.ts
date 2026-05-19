@@ -47,3 +47,14 @@ test('round-trips launch preferences', () => {
     reviewerModelId: 'provider/review',
   });
 });
+
+test('rejects runtime artifact path escapes outside log root', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-path-safety-'));
+  const store = new RuntimeStore({ repoRoot });
+  const record = store.createRecord({ featureSlug: '..', issueName: 'escape', ticketPath: '/tmp/ticket.md' });
+
+  assert.throws(() => store.appendLog(path.join(repoRoot, '..', 'escape.log'), 'boom'), /Invalid runtime log path/);
+  assert.throws(() => store.updateMetadata(path.join(repoRoot, '..', 'escape.json'), { STATUS: 'failed' }), /Invalid runtime metadata path/);
+  assert.throws(() => store.markDone({ ...record, doneSentinelPath: path.join(repoRoot, '..', 'done.sentinel') }), /Invalid done sentinel path/);
+  assert.throws(() => store.markFailed({ ...record, failedSentinelPath: path.join(repoRoot, '..', 'failed.sentinel') }, 'failed'), /Invalid failed sentinel path/);
+});

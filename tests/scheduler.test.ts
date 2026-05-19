@@ -112,3 +112,36 @@ test('waits for dependency completion before launching dependent ticket', async 
   assert.equal(result.scheduled, true);
   assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
 });
+
+test('returns structured launch-block evidence for invalid selected paths', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-launch-block-'));
+  const scheduler = new Scheduler({
+    launch: async () => ({
+      scheduled: false,
+      message: 'Invalid selected issue path for feat-a/001',
+      launchBlock: {
+        kind: 'path-validation',
+        message: 'Invalid selected issue path for feat-a/001',
+        ticketLabel: 'feat-a/001',
+        feature: 'feat-a',
+        issueName: '001',
+        path: '/tmp/invalid.md',
+      },
+    }),
+  } as never);
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [
+      { path: '/tmp/invalid.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' },
+  };
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.equal(result.launchBlocks?.[0]?.kind, 'path-validation');
+  assert.equal(result.launchBlocks?.[0]?.ticketLabel, 'feat-a/001');
+});

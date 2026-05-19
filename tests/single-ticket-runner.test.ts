@@ -270,3 +270,60 @@ test('scheduler forwards progress events from queued tickets', async () => {
     'feat-b/001: starting ticket run',
   ]);
 });
+
+test('blocks launch when selected ticket path is missing', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-missing-path-'));
+  const store = new RuntimeStore({ repoRoot });
+  let executeCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async () => {
+      executeCalls += 1;
+      return { status: 'completed', sessionId: 'session-missing', removable: true };
+    },
+  });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '404.md');
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '404', label: 'feat/404', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(result.scheduled, false);
+  assert.equal(result.launchBlock?.kind, 'path-validation');
+  assert.match(result.message, /Selected issue path missing/);
+  assert.equal(executeCalls, 0);
+});
+
+test('blocks launch when selected ticket path is outside issues layout', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-layout-path-'));
+  const store = new RuntimeStore({ repoRoot });
+  let executeCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async () => {
+      executeCalls += 1;
+      return { status: 'completed', sessionId: 'session-layout', removable: true };
+    },
+  });
+  const badPath = path.join(repoRoot, '.scratch', 'feat', 'notes', '001.md');
+  mkdirSync(path.dirname(badPath), { recursive: true });
+  writeFileSync(badPath, '# wrong layout\n');
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: badPath, feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(result.scheduled, false);
+  assert.equal(result.launchBlock?.kind, 'path-validation');
+  assert.match(result.message, /Invalid selected issue path/);
+  assert.equal(executeCalls, 0);
+});
+
+test('blocks launch when selected ticket path attempts traversal', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-traversal-path-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, { execute: async () => ({ status: 'completed' }) });
+  const traversalPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '..', 'notes', '002.md');
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: traversalPath, feature: 'feat', issueName: '002', label: 'feat/002', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  const result = await runner.launch(plan as never);
+  assert.equal(result.scheduled, false);
+  assert.equal(result.launchBlock?.kind, 'path-validation');
+  assert.match(result.message, /Invalid selected issue path/);
+});

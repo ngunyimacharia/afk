@@ -8,6 +8,15 @@ export interface TicketRecord {
   dependsOn?: string[];
 }
 
+export interface LaunchBlockEvidence {
+  kind: 'path-validation';
+  message: string;
+  ticketLabel: string;
+  feature: string;
+  issueName: string;
+  path: string;
+}
+
 export interface LaunchModel {
   id: string;
   label?: string;
