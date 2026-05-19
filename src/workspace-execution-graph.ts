@@ -78,6 +78,11 @@ export function refreshWorkspaceExecutionGraph(repoRoot: string, selectedFeature
   return graph;
 }
 
+export function orderSelectedFeaturesByWaves(graph: WorkspaceExecutionGraph): string[] {
+  const selected = new Set(graph.selectedFeatures);
+  return graph.featureWaves.flat().filter((feature) => selected.has(feature));
+}
+
 function expandSelectedFeatures(repoRoot: string, selectedFeatures: string[], availableFeatures: Set<string>): string[] {
   const result = new Set<string>();
   const visit = (feature: string): void => {

@@ -15,7 +15,7 @@ import { createProgressLine } from './progress-line.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { classifyProviderFailure } from './provider-failure.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
-import { refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
+import { orderSelectedFeaturesByWaves, refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
 import type { LaunchModel, TicketRecord } from './types.js';
 
 function commandArg(): string | undefined {
@@ -120,7 +120,8 @@ export async function runAfk(
       return { code: 1, message: `Fan-in branch automation deferred for ${feature}: multiple Depends-On-Features entries are not supported for automatic stacked branch preparation.` };
     }
   }
-  const checkouts = Object.fromEntries(selectedFeatures.map((feature) => {
+  const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
+  const checkouts = Object.fromEntries(checkoutFeatures.map((feature) => {
     const stackParent = workspaceGraph.features[feature]?.stackParent;
     return [feature, worktreePreparationService.prepare({ repoRoot, featureSlug: feature, baseRef: stackParent ? `afk/${stackParent}` : undefined })];
   }));
@@ -168,12 +169,20 @@ async function preflightModel(executor: OpenCodeSessionExecutor, model: LaunchMo
       agent: role === 'reviewer' ? 'review' : 'build',
       prompt: 'AFK model availability preflight. Reply OK.',
     });
-    const reason = result.output.find((line) => classifyProviderFailure(line));
+    const reason = detectPreflightFailureReason(result.output);
     return reason ? formatPreflightFailure(model.id, role, reason) : null;
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'OpenCode model preflight failed';
     return formatPreflightFailure(model.id, role, reason);
   }
+}
+
+export function detectPreflightFailureReason(output: string[]): string | null {
+  const reason = output.find((line) => {
+    const classification = classifyProviderFailure(line);
+    return classification && classification.kind !== 'unknown';
+  });
+  return reason ?? null;
 }
 
 export function formatPreflightFailure(modelId: string, role: 'implementation' | 'reviewer', reason: string): string {

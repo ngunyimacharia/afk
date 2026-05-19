@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { classifyProviderFailure, formatProviderFailureMessage } from '../src/provider-failure.js';
-import { formatPreflightFailure } from '../src/cli.js';
+import { detectPreflightFailureReason, formatPreflightFailure } from '../src/cli.js';
 
 test('classifies Copilot unavailable-model errors and extracts alternatives', () => {
   const classification = classifyProviderFailure(
@@ -34,4 +34,15 @@ test('formats actionable preflight failure message', () => {
   assert.match(message, /Selected implementation model: github-copilot\/claude-sonnet-4\.6/);
   assert.match(message, /No tickets were started/);
   assert.match(message, /- claude-sonnet-4\.5/);
+});
+
+test('ignores normal assistant text during preflight', () => {
+  assert.equal(detectPreflightFailureReason(['AFK model availability preflight. Reply OK.', 'OK']), null);
+});
+
+test('detects concrete provider failures during preflight', () => {
+  assert.equal(
+    detectPreflightFailureReason(['thinking', 'The requested model is not available for integrator "copilot-language-server".']),
+    'The requested model is not available for integrator "copilot-language-server".',
+  );
 });

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { parseFeatureDependencies, refreshWorkspaceExecutionGraph } from '../src/workspace-execution-graph.js';
+import { orderSelectedFeaturesByWaves, parseFeatureDependencies, refreshWorkspaceExecutionGraph } from '../src/workspace-execution-graph.js';
 
 function writeFeature(repoRoot: string, feature: string, prd: string, issueStatus = 'done'): void {
   const featureDir = path.join(repoRoot, '.scratch', feature);
@@ -28,6 +28,15 @@ test('writes workspace execution graph with feature waves', () => {
   assert.equal(graph.concurrency, 4);
   assert.equal(graph.features.child.stackParent, 'parent');
   assert.match(readFileSync(path.join(repoRoot, '.scratch', 'execution.json'), 'utf8'), /"selectedFeatures"/);
+});
+
+test('orders selected features by dependency waves', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
+  writeFeature(repoRoot, 'parent', '# PRD\n');
+  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent\n---\n');
+  const graph = refreshWorkspaceExecutionGraph(repoRoot, ['child', 'parent'], 4);
+
+  assert.deepEqual(orderSelectedFeaturesByWaves(graph), ['parent', 'child']);
 });
 
 test('errors when selected downstream depends on incomplete unselected upstream', () => {
