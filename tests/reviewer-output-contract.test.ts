@@ -42,14 +42,26 @@ test('parses reviewer JSON output and normalizes severity fields', () => {
   ]);
 });
 
+test('parses raw JSON output without code fences', () => {
+  const review = parseReviewerOutput(
+    '{"summary":"No blockers","findings":[{"severity":"minor","title":"Small polish","detail":"Optional rename."}]}',
+  );
+
+  assert.equal(review.fallback, false);
+  assert.equal(review.summary, 'No blockers');
+  assert.equal(review.highestSeverity, 'minor');
+  assert.equal(review.findings.length, 1);
+});
+
 test('falls back safely when reviewer output cannot be parsed', () => {
   const review = parseReviewerOutput('this is not structured reviewer output');
 
   assert.equal(review.fallback, true);
   assert.equal(review.highestSeverity, 'major');
-  assert.equal(review.findings.length, 1);
-  assert.equal(review.findings[0]?.severity, 'major');
-  assert.match(review.findings[0]?.detail ?? '', /this is not structured reviewer output/);
+  assert.equal(review.summary, 'Malformed reviewer output');
+  assert.equal(review.failureKind, 'malformed-output');
+  assert.deepEqual(review.findings, []);
+  assert.match(review.raw, /this is not structured reviewer output/);
 });
 
 test('approves minor-only feedback and loops on high severity until the cap', () => {
@@ -65,4 +77,13 @@ test('approves minor-only feedback and loops on high severity until the cap', ()
   assert.equal(decideReviewOutcome(minorReview, { cycle: 1 }).decision, 'approve');
   assert.equal(decideReviewOutcome(majorReview, { cycle: 1, maxCycles: 3 }).decision, 'loop');
   assert.equal(decideReviewOutcome(majorReview, { cycle: 3, maxCycles: 3 }).decision, 'needs-human');
+});
+
+test('approves clean reviewer output with empty findings', () => {
+  const cleanReview = parseReviewerOutput({ summary: 'No issues found', findings: [] });
+
+  assert.equal(cleanReview.fallback, false);
+  assert.equal(cleanReview.highestSeverity, 'minor');
+  assert.deepEqual(cleanReview.findings, []);
+  assert.equal(decideReviewOutcome(cleanReview, { cycle: 1 }).decision, 'approve');
 });

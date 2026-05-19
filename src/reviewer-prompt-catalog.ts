@@ -36,20 +36,72 @@ You are the AFK reviewer. Evaluate the completed ticket in read-only mode. Your 
 
 ## Output Format
 
-Start with one of these verdicts:
+Return strict JSON only. Do not include markdown fences, headings, bullets, prose, or any text before/after the JSON object.
 
-- \`BLOCKED\`: the work should not be accepted until findings are fixed.
-- \`PASS WITH RISKS\`: no blocking finding, but verification gaps or residual risks remain.
-- \`PASS\`: no material findings and verification is adequate.
+Required schema:
 
-Then write:
+\`\`\`json
+{
+  "summary": "string",
+  "findings": [
+    {
+      "severity": "minor | major | blocker",
+      "title": "string",
+      "detail": "string",
+      "suggestedFix": "string (optional)"
+    }
+  ]
+}
+\`\`\`
 
-1. \`Findings\`: ordered by severity. Each finding must include severity, file/line reference when available, observed evidence, impact, and the smallest useful remediation.
-2. \`Verification\`: tests or checks you saw evidence for, plus any important checks that are missing.
-3. \`Scope Match\`: whether the ticket acceptance criteria appear satisfied.
-4. \`Residual Risks\`: brief notes only when something could not be verified from available evidence.
+Examples:
 
-If there are no findings, state \`No findings.\` under \`Findings\` and still include verification and scope-match notes.
+Clean pass (\`findings: []\`):
+
+\`\`\`json
+{
+  "summary": "Reviewed implementation and tests; no material issues found.",
+  "findings": []
+}
+\`\`\`
+
+Pass with minor-only findings:
+
+\`\`\`json
+{
+  "summary": "Core behavior is correct; a small maintainability risk remains.",
+  "findings": [
+    {
+      "severity": "minor",
+      "title": "Sparse edge-case test coverage",
+      "detail": "The success path is covered, but there is no assertion for malformed reviewer JSON fallback metadata.",
+      "suggestedFix": "Add one test that asserts fallback metadata for malformed output."
+    }
+  ]
+}
+\`\`\`
+
+Major/blocker findings:
+
+\`\`\`json
+{
+  "summary": "Blocking issues found that can break ticket guarantees.",
+  "findings": [
+    {
+      "severity": "major",
+      "title": "Acceptance criterion unmet",
+      "detail": "Prompt output contract in docs still allows markdown sections instead of strict JSON fields consumed by parser.",
+      "suggestedFix": "Update the prompt contract to require JSON with summary/findings only."
+    },
+    {
+      "severity": "blocker",
+      "title": "Potential destructive behavior",
+      "detail": "Reviewer flow can mark malformed payloads as implementation findings, causing repeated fix loops on non-code issues.",
+      "suggestedFix": "Represent malformed reviewer payloads as fallback metadata without synthetic implementation findings."
+    }
+  ]
+}
+\`\`\`
 `;
 
 const CATALOG: Record<string, ReviewerPromptTemplate> = {
