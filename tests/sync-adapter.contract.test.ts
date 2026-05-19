@@ -29,3 +29,8 @@ test('internal AFK prompt is not a syncable opencode artifact', async () => {
   await assert.rejects(access('artifacts/opencode/prompts/afk-prompt.md'));
   await assert.doesNotReject(access('src/prompts/afk-prompt.md'));
 });
+
+test('interview-me agent is a syncable opencode artifact', async () => {
+  await assert.doesNotReject(access('artifacts/opencode/agents/interview-me.md'));
+  await assert.doesNotReject(access('private_dot_config/opencode/agents/interview-me.md'));
+});

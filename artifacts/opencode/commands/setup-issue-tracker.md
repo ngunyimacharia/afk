@@ -18,23 +18,21 @@ If the user confirms the Boost branch:
 
 If the user declines or no signal is found, proceed to the upstream-lite branch.
 
-Interview the user one question at a time:
+Use only the local markdown issue tracker under `.scratch/`.
 
-1. Issue tracker: GitHub, Jira, or local markdown?
-2. Tracker-specific configuration:
-   - GitHub: infer from `git remote -v` or ask for `owner/repo`.
-   - Jira: ask for the Jira site URL, project key (for example `PROJ`), and default issue type.
-   - Local markdown: use the upstream `.scratch/<feature-slug>/` convention unless the user explicitly needs a different structure.
-3. Triage label vocabulary: map the five canonical roles to actual project labels or status strings:
+Interview the user one question at a time only for information that cannot be inferred from the repository:
+
+1. Local markdown structure: use the upstream `.scratch/<feature-slug>/` convention unless the user explicitly needs a different local structure.
+2. Triage label vocabulary: inspect existing project labels, status strings, issue docs, and agent docs. Map the five canonical roles to actual project labels or status strings when clear; otherwise use these canonical tags directly without asking for permission:
    - `needs-triage`
    - `needs-info`
    - `ready-for-agent`
    - `ready-for-human`
    - `wontfix`
 
-Use these detailed conventions when drafting the output files. For local markdown issue tracker output, generate conventions where issues and PRDs live as markdown files under `.scratch/`, one feature per directory, implementation issues live under `.scratch/<feature-slug>/issues/`, and comments append under `## Comments`.
+Use these detailed conventions when drafting the output files. Generate conventions where issues and PRDs live as markdown files under `.scratch/`, one feature per directory, implementation issues live under `.scratch/<feature-slug>/issues/`, and comments append under `## Comments`.
 
-For AFK-compatible local markdown trackers, include execution-order conventions:
+For AFK-compatible local markdown trackers under `.scratch/`, include execution-order conventions:
 
 - issue frontmatter may include `Depends-On` with same-feature issue basenames only, without paths or `.md`
 - PRD frontmatter may include `Depends-On-Features` with exact feature directory slugs
@@ -42,4 +40,4 @@ For AFK-compatible local markdown trackers, include execution-order conventions:
 - same-wave issues and independent features may run in parallel subject to global concurrency
 - first-pass stacked branch automation is linear; fan-in branch handling is deferred/manual unless a project explicitly supports it
 
-Draft the issue tracker and triage label files in chat but DO NOT write them yet. Show a diff of the proposed changes against the current file state. Ask "Write these files?" and only proceed if the user explicitly confirms.
+Once the `.scratch/` structure and triage vocabulary are determined, write the issue tracker and triage label files immediately. Do not draft them in chat first, do not ask for confirmation before writing files, and do not ask for confirmation before using or documenting the selected tags. After writing, summarize the files changed and the conventions selected.
