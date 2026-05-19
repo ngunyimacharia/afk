@@ -372,7 +372,7 @@ async function callSessionMessages(messages: (options?: unknown) => Promise<unkn
 }
 
 export function extractSessionOutputLines(payload: unknown): string[] {
-  const messages = Array.isArray(payload) ? payload : [];
+  const messages = normalizeSessionMessages(payload);
   const lines: string[] = [];
   for (const message of messages) {
     const item = message as { info?: unknown; parts?: unknown[] } | null;
@@ -384,6 +384,20 @@ export function extractSessionOutputLines(payload: unknown): string[] {
     }
   }
   return uniqueNonEmpty(lines);
+}
+
+function normalizeSessionMessages(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== 'object') return [];
+  const record = payload as Record<string, unknown>;
+  if (Array.isArray(record.messages)) return record.messages;
+  if (Array.isArray(record.items)) return record.items;
+  if (record.data && typeof record.data === 'object') {
+    const nested = record.data as Record<string, unknown>;
+    if (Array.isArray(nested.messages)) return nested.messages;
+    if (Array.isArray(nested.items)) return nested.items;
+  }
+  return [];
 }
 
 function formatMessageError(error: unknown): string | null {

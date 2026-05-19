@@ -53,6 +53,18 @@ test('extracts durable session output from assistant message errors and text par
   ]);
 });
 
+test('extracts session output when messages are nested under payload keys', () => {
+  const output = extractSessionOutputLines({
+    messages: [
+      {
+        parts: [{ type: 'text', text: 'Nested response line' }],
+      },
+    ],
+  });
+
+  assert.deepEqual(output, ['Nested response line']);
+});
+
 test('formats session-level opencode progress events from real event stream shape', () => {
   assert.equal(formatOpenCodeEvent({ type: 'session.status', properties: { sessionID: 'session-1', status: { type: 'busy' } } }, 'session-1'), 'opencode session busy');
   assert.equal(formatOpenCodeEvent({ type: 'session.idle', properties: { sessionID: 'session-1' } }, 'session-1'), 'opencode session idle');
