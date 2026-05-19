@@ -12,6 +12,8 @@ import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import { isInteractiveLaunchAllowed, runInteractiveLaunchWizard, type PromptIO } from './interactive-launch.js';
 import { createProgressLine } from './progress-line.js';
+import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
+import { refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
 import type { LaunchModel, ReviewTerminalOutcome, TicketRecord } from './types.js';
 
 function commandArg(): string | undefined {
@@ -76,6 +78,7 @@ export async function runAfk(
   let reviewerModel: LaunchModel | undefined;
   let reviewerPrompt: { id: string; label: string; path: string } | undefined;
   let selectedTickets: TicketRecord[] = [];
+  let concurrency = 3;
   try {
     const models = await discoverOpenCodeModels();
     if (!models.length) {
@@ -90,7 +93,8 @@ export async function runAfk(
     reviewerModel = wizard.reviewerModel;
     reviewerPrompt = wizard.reviewerPrompt;
     selectedTickets = wizard.tickets ?? [];
-    runtimeStore.writeLaunchPreferences({ harness: wizard.harness, modelId: model?.id, reviewerModelId: reviewerModel?.id });
+    concurrency = wizard.concurrency ?? concurrency;
+    runtimeStore.writeLaunchPreferences({ harness: wizard.harness, modelId: model?.id, reviewerModelId: reviewerModel?.id, concurrency });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown OpenCode discovery error';
     return {
@@ -101,11 +105,25 @@ export async function runAfk(
   if (!model) return { code: 0, message: 'Launch cancelled' };
   if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
   if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
+  const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
+  const refresh = new FeatureExecutionRefreshService(repoRoot);
+  for (const feature of selectedFeatures) refresh.refresh(feature);
+  const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
   const firstTicket = selectedTickets[0];
-  const checkout = worktreePreparationService.prepare({ repoRoot, featureSlug: firstTicket.feature });
+  for (const feature of selectedFeatures) {
+    if ((workspaceGraph.features[feature]?.dependsOnFeatures.length ?? 0) > 1) {
+      return { code: 1, message: `Fan-in branch automation deferred for ${feature}: multiple Depends-On-Features entries are not supported for automatic stacked branch preparation.` };
+    }
+  }
+  const checkouts = Object.fromEntries(selectedFeatures.map((feature) => {
+    const stackParent = workspaceGraph.features[feature]?.stackParent;
+    return [feature, worktreePreparationService.prepare({ repoRoot, featureSlug: feature, baseRef: stackParent ? `afk/${stackParent}` : undefined })];
+  }));
+  const checkout = checkouts[firstTicket.feature];
   const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt });
+  plan.checkouts = checkouts;
   const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(new SDKOpenCodeSessionExecutor()));
-  const scheduler = new Scheduler(runner);
+  const scheduler = new Scheduler(runner, concurrency);
   const progressLine = createProgressLine(io.stdout);
   try {
     await scheduler.launch(plan, { onProgress: (event) => progressLine.update(event) });
@@ -119,6 +137,8 @@ export async function runAfk(
       `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
       `Reviewer prompt: ${plan.reviewerPrompt?.id ?? 'unknown'}`,
       `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
+      `Selected features (${selectedFeatures.length}): ${selectedFeatures.join(', ')}`,
+      `Concurrency: ${concurrency}`,
       `Repo root: ${path.resolve(plan.repoRoot)}`,
       `Worktree: ${plan.checkout.effectiveWorktreeName}`,
       `Branch: ${plan.checkout.effectiveBranchName}`,

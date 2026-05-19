@@ -7,7 +7,7 @@ import { RuntimeStore } from '../src/runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
 import type { LaunchPlan } from '../src/types.js';
 
-test('starts the next ticket for a feature after completion', async () => {
+test('starts ready tickets without feature serialization', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-runtime-'));
   const store = new RuntimeStore({ repoRoot });
   const started: string[] = [];
@@ -36,6 +36,6 @@ test('starts the next ticket for a feature after completion', async () => {
 
   const result = await scheduler.launch(plan as never);
   assert.equal(result.scheduled, true);
-  assert.deepEqual(started, ['feat-a/001', 'feat-b/001', 'feat-a/002']);
+  assert.deepEqual(started, ['feat-a/001', 'feat-a/002', 'feat-b/001']);
   void store;
 });

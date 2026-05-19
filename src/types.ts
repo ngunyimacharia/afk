@@ -5,6 +5,7 @@ export interface TicketRecord {
   label: string;
   status?: string;
   executorAfk: boolean;
+  dependsOn?: string[];
 }
 
 export interface LaunchModel {
@@ -16,6 +17,7 @@ export interface LaunchPreferences {
   harness?: 'OpenCode';
   modelId?: string;
   reviewerModelId?: string;
+  concurrency?: number;
 }
 
 export interface ReviewerPromptTemplate {
@@ -45,6 +47,7 @@ export interface LaunchPlan {
   repoRoot: string;
   gitContext: GitContext;
   checkout: CheckoutContext;
+  checkouts?: Record<string, CheckoutContext>;
 }
 
 export interface ReviewFindingSnapshot {

@@ -14,6 +14,7 @@ export interface LaunchWizardResult {
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
+  concurrency?: number;
 }
 
 export function isInteractiveLaunchAllowed(io: PromptIO, env: NodeJS.ProcessEnv): { ok: boolean; reason?: string } {
@@ -50,10 +51,12 @@ export async function runInteractiveLaunchWizard(input: {
 
   const reviewerPrompt = resolveReviewerPromptTemplate();
 
-  const selectedTickets = await promptTicketMultiSelect(input.io, input.tickets);
+  const selectedTickets = await promptFeatureMultiSelect(input.io, input.tickets);
   if (!selectedTickets) return { cancelled: true };
+  const concurrency = await promptConcurrency(input.io, input.preferences?.concurrency ?? 3);
+  if (!concurrency) return { cancelled: true };
 
-  return { cancelled: false, harness: 'OpenCode', model, reviewerModel, reviewerPrompt, tickets: selectedTickets };
+  return { cancelled: false, harness: 'OpenCode', model, reviewerModel, reviewerPrompt, tickets: selectedTickets, concurrency };
 }
 
 interface PromptChoice {
@@ -99,16 +102,17 @@ async function promptSingleSelect(io: PromptIO, title: string, options: string[]
   return typeof result.value === 'string' ? result.value : null;
 }
 
-async function promptTicketMultiSelect(io: PromptIO, tickets: TicketRecord[]): Promise<TicketRecord[] | null> {
+async function promptFeatureMultiSelect(io: PromptIO, tickets: TicketRecord[]): Promise<TicketRecord[] | null> {
+  const features = [...new Set(tickets.map((ticket) => ticket.feature))].sort();
   while (true) {
     const result = await prompts(
       {
         type: 'autocompleteMultiselect',
         name: 'values',
-        message: 'Select tickets to implement',
-        choices: tickets.map((ticket) => {
-          const status = ticket.status?.trim() ? ` [${ticket.status}]` : '';
-          return { title: `${ticket.label}${status}`, value: ticket.path };
+        message: 'Select features to implement',
+        choices: features.map((feature) => {
+          const count = tickets.filter((ticket) => ticket.feature === feature).length;
+          return { title: `${feature} (${count} eligible tickets)`, value: feature };
         }),
         instructions: true,
         min: 0,
@@ -125,10 +129,29 @@ async function promptTicketMultiSelect(io: PromptIO, tickets: TicketRecord[]): P
 
     if (!Array.isArray(result.values)) return null;
     if (!result.values.length) {
-      io.stdout.write('Validation error: select at least one ticket.\n');
+      io.stdout.write('Validation error: select at least one feature.\n');
       continue;
     }
-    const selectedPaths = new Set<string>(result.values as string[]);
-    return tickets.filter((ticket) => selectedPaths.has(ticket.path));
+    const selectedFeatures = new Set<string>(result.values as string[]);
+    return tickets.filter((ticket) => selectedFeatures.has(ticket.feature));
+  }
+}
+
+async function promptConcurrency(io: PromptIO, initial: number): Promise<number | null> {
+  while (true) {
+    const result = await prompts(
+      {
+        type: 'number',
+        name: 'value',
+        message: 'Global ticket concurrency',
+        initial,
+        min: 1,
+        validate: (value: number) => (Number.isInteger(value) && value > 0 ? true : 'Enter a positive integer'),
+      },
+      { onCancel: () => true },
+    );
+    if (typeof result.value !== 'number') return null;
+    if (Number.isInteger(result.value) && result.value > 0) return result.value;
+    io.stdout.write('Validation error: enter a positive integer.\n');
   }
 }

@@ -7,7 +7,7 @@ import { RuntimeStore } from '../src/runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
 import type { LaunchPlan } from '../src/types.js';
 
-test('serializes tickets within a feature and caps cross-feature concurrency', async () => {
+test('runs ready tickets in parallel and caps global concurrency', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-'));
   const store = new RuntimeStore({ repoRoot });
   const active = new Set<string>();
@@ -18,12 +18,11 @@ test('serializes tickets within a feature and caps cross-feature concurrency', a
     launch: async (plan: LaunchPlan) => {
       const ticket = plan.tickets[0];
       assert.ok(ticket);
-      assert.equal(active.has(ticket.feature), false);
-      active.add(ticket.feature);
+      active.add(ticket.label);
       peak = Math.max(peak, active.size);
       launches.push(ticket.label);
       await new Promise((resolve) => setTimeout(resolve, ticket.feature === 'feat-a' ? 20 : 5));
-      active.delete(ticket.feature);
+      active.delete(ticket.label);
       return { scheduled: true, message: ticket.label };
     },
   } as never);
@@ -50,8 +49,8 @@ test('serializes tickets within a feature and caps cross-feature concurrency', a
   assert.equal(launches[0], 'feat-a/001');
   assert.equal(launches[1], 'feat-b/001');
   assert.equal(launches[2], 'feat-c/001');
-  assert.equal(launches.indexOf('feat-a/002') > launches.indexOf('feat-a/001'), true);
-  assert.equal(launches.indexOf('feat-b/002') > launches.indexOf('feat-b/001'), true);
+  assert.equal(launches.includes('feat-a/002'), true);
+  assert.equal(launches.includes('feat-b/002'), true);
   void store;
 });
 
@@ -82,4 +81,34 @@ test('continues independent queues when one ticket fails', async () => {
   const result = await scheduler.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.match(result.message, /boom/);
+});
+
+test('waits for dependency completion before launching dependent ticket', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-deps-'));
+  const started: string[] = [];
+  const scheduler = new Scheduler({
+    launch: async (plan: LaunchPlan) => {
+      const ticket = plan.tickets[0];
+      assert.ok(ticket);
+      started.push(ticket.label);
+      return { scheduled: true, message: ticket.label };
+    },
+  } as never);
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'reviewer-model-1' },
+    reviewerPrompt: { id: 'reviewer-default', path: '/tmp/reviewer-default.md' },
+    tickets: [
+      { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true, dependsOn: ['001'] },
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' },
+  };
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
 });

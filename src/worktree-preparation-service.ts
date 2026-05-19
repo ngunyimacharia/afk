@@ -15,6 +15,7 @@ export interface WorktreePreparationInput {
   repoRoot: string;
   featureSlug: string;
   ticketOverrides?: { afk_worktree?: string; afk_branch?: string };
+  baseRef?: string;
 }
 
 function runGit(repoRoot: string, args: string[]): string {
@@ -60,9 +61,9 @@ function branchWorktreePath(repoRoot: string, branchName: string): string | null
   }
 }
 
-function ensureBranch(repoRoot: string, branchName: string): void {
+function ensureBranch(repoRoot: string, branchName: string, baseRef = 'HEAD'): void {
   if (branchExists(repoRoot, branchName)) return;
-  runGit(repoRoot, ['branch', '--no-track', branchName, 'HEAD']);
+  runGit(repoRoot, ['branch', '--no-track', branchName, baseRef]);
 }
 
 function ensureIgnoredWorktreeRoot(repoRoot: string): string {
@@ -86,7 +87,7 @@ export class WorktreePreparationService {
     const effectiveBranchName = input.ticketOverrides?.afk_branch?.trim() || defaultBranchName;
     const worktreePath = path.join(ensureIgnoredWorktreeRoot(input.repoRoot), effectiveWorktreeName);
 
-    ensureBranch(input.repoRoot, effectiveBranchName);
+    ensureBranch(input.repoRoot, effectiveBranchName, input.baseRef);
 
     const existingWorktreePath = branchWorktreePath(input.repoRoot, effectiveBranchName);
     const registeredWorktree = worktreeExists(input.repoRoot, worktreePath);

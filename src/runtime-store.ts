@@ -41,11 +41,13 @@ export class RuntimeStore {
     try {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-      return {
+      const preferences: LaunchPreferences = {
         harness: value.harness === 'OpenCode' ? 'OpenCode' : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
       };
+      if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0) preferences.concurrency = value.concurrency;
+      return preferences;
     } catch (_error) {
       return {};
     }

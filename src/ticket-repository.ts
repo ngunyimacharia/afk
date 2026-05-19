@@ -9,11 +9,11 @@ function normalize(value: string | undefined): string | undefined {
   return value?.trim().toLowerCase();
 }
 
-function parseFrontmatter(content: string): Record<string, string | undefined> {
+function parseFrontmatter(content: string): Record<string, unknown> {
   if (!content.startsWith('---\n')) return {};
   const end = content.indexOf('\n---\n', 4);
   if (end === -1) return {};
-  return (YAML.parse(content.slice(4, end)) ?? {}) as Record<string, string | undefined>;
+  return (YAML.parse(content.slice(4, end)) ?? {}) as Record<string, unknown>;
 }
 
 function parseLegacyStatus(content: string): string | undefined {
@@ -22,6 +22,44 @@ function parseLegacyStatus(content: string): string | undefined {
   const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|\Z)/im);
   const headingBody = headingMatch?.[1]?.trim();
   return headingBody ? headingBody.split(/\r?\n/)[0].trim() : undefined;
+}
+
+function readFrontmatterValue(frontmatter: Record<string, unknown>, key: string): unknown {
+  const normalized = key.toLowerCase().replace(/[-_]/g, '');
+  for (const [entryKey, value] of Object.entries(frontmatter)) {
+    if (entryKey.toLowerCase().replace(/[-_]/g, '') === normalized) return value;
+  }
+  return undefined;
+}
+
+function parseDependsOn(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  if (typeof value === 'number') return [String(value)];
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((entry) => (typeof entry === 'string' || typeof entry === 'number' ? String(entry).trim() : ''))
+    .filter((entry) => entry.length > 0);
+}
+
+function parseRawDependsOn(content: string): string[] | undefined {
+  if (!content.startsWith('---\n')) return undefined;
+  const end = content.indexOf('\n---\n', 4);
+  if (end === -1) return undefined;
+  const lines = content.slice(4, end).split(/\r?\n/);
+  const index = lines.findIndex((line) => /^Depends-On\s*:/i.test(line));
+  if (index === -1) return undefined;
+  const first = lines[index].replace(/^Depends-On\s*:/i, '').trim();
+  if (first && first !== '[]') return [first.replace(/^['"]|['"]$/g, '')];
+  if (first === '[]') return [];
+  const values: string[] = [];
+  for (const line of lines.slice(index + 1)) {
+    if (/^\S[^:]*:/.test(line)) break;
+    const match = line.match(/^\s*-\s*(.+?)\s*$/);
+    if (match?.[1]) values.push(match[1].replace(/^['"]|['"]$/g, ''));
+  }
+  return values;
 }
 
 export class TicketRepository {
@@ -43,11 +81,12 @@ export class TicketRepository {
   readTicket(filePath: string, featureFallback?: string): TicketRecord {
     const content = readFileSync(filePath, 'utf8');
     const frontmatter = parseFrontmatter(content);
-    const feature = frontmatter.feature ?? featureFallback ?? path.basename(path.dirname(path.dirname(filePath)));
+    const feature = (readFrontmatterValue(frontmatter, 'feature') as string | undefined) ?? featureFallback ?? path.basename(path.dirname(path.dirname(filePath)));
     const issueName = path.basename(filePath, '.md');
-    const status = frontmatter.status ?? parseLegacyStatus(content);
-    const executorAfk = normalize(frontmatter.executor) === 'afk' || /(^|\n)Executor:\s*AFK\b/i.test(content);
-    return { path: filePath, feature, issueName, label: `${feature}/${issueName}`, status, executorAfk };
+    const status = (readFrontmatterValue(frontmatter, 'status') as string | undefined) ?? parseLegacyStatus(content);
+    const executorAfk = normalize(readFrontmatterValue(frontmatter, 'executor') as string | undefined) === 'afk' || /(^|\n)Executor:\s*AFK\b/i.test(content);
+    const dependsOn = parseRawDependsOn(content) ?? parseDependsOn(readFrontmatterValue(frontmatter, 'Depends-On'));
+    return { path: filePath, feature, issueName, label: `${feature}/${issueName}`, status, executorAfk, dependsOn };
   }
 
   isEligible(ticket: TicketRecord): boolean {
