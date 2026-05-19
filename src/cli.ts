@@ -12,9 +12,11 @@ import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import { isInteractiveLaunchAllowed, runInteractiveLaunchWizard, type PromptIO } from './interactive-launch.js';
 import { createProgressLine } from './progress-line.js';
+import type { OpenCodeSessionExecutor } from './opencode.js';
+import { classifyProviderFailure } from './provider-failure.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
-import type { LaunchModel, ReviewTerminalOutcome, TicketRecord } from './types.js';
+import type { LaunchModel, TicketRecord } from './types.js';
 
 function commandArg(): string | undefined {
   const command = process.argv[2];
@@ -105,6 +107,9 @@ export async function runAfk(
   if (!model) return { code: 0, message: 'Launch cancelled' };
   if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
   if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
+  const sessionExecutor = new SDKOpenCodeSessionExecutor();
+  const preflight = await preflightSelectedModels(sessionExecutor, model, reviewerModel);
+  if (preflight) return { code: 1, message: preflight };
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
   const refresh = new FeatureExecutionRefreshService(repoRoot);
   for (const feature of selectedFeatures) refresh.refresh(feature);
@@ -122,7 +127,7 @@ export async function runAfk(
   const checkout = checkouts[firstTicket.feature];
   const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt });
   plan.checkouts = checkouts;
-  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(new SDKOpenCodeSessionExecutor()));
+  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor));
   const scheduler = new Scheduler(runner, concurrency);
   const progressLine = createProgressLine(io.stdout);
   try {
@@ -143,24 +148,76 @@ export async function runAfk(
       `Worktree: ${plan.checkout.effectiveWorktreeName}`,
       `Branch: ${plan.checkout.effectiveBranchName}`,
       `Recent git: ${plan.gitContext.commits.join(' | ')}`,
-      `Final review outcome: ${readFinalReviewOutcome(runtimeStore, repoRoot, firstTicket.feature, firstTicket.issueName)}`,
+      ...readRunOutcomeLines(runtimeStore, repoRoot, firstTicket.feature, firstTicket.issueName),
     ].join('\n'),
   };
 }
 
-function readFinalReviewOutcome(runtimeStore: RuntimeStore, repoRoot: string, featureSlug: string, issueName: string): ReviewTerminalOutcome {
+async function preflightSelectedModels(executor: OpenCodeSessionExecutor, model: LaunchModel, reviewerModel: LaunchModel): Promise<string | null> {
+  const implementationFailure = await preflightModel(executor, model, 'implementation');
+  if (implementationFailure) return implementationFailure;
+  if (reviewerModel.id === model.id) return null;
+  return preflightModel(executor, reviewerModel, 'reviewer');
+}
+
+async function preflightModel(executor: OpenCodeSessionExecutor, model: LaunchModel, role: 'implementation' | 'reviewer'): Promise<string | null> {
+  try {
+    const result = await executor.run({
+      model,
+      title: `afk preflight: ${model.id}`,
+      agent: role === 'reviewer' ? 'review' : 'build',
+      prompt: 'AFK model availability preflight. Reply OK.',
+    });
+    const reason = result.output.find((line) => classifyProviderFailure(line));
+    return reason ? formatPreflightFailure(model.id, role, reason) : null;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'OpenCode model preflight failed';
+    return formatPreflightFailure(model.id, role, reason);
+  }
+}
+
+export function formatPreflightFailure(modelId: string, role: 'implementation' | 'reviewer', reason: string): string {
+  const classification = classifyProviderFailure(reason);
+  const roleLabel = role === 'implementation' ? 'Implementation model' : 'Reviewer model';
+  const title = classification?.kind === 'model-unavailable' ? `${roleLabel} unavailable` : `${roleLabel} preflight failed`;
+  const provider = modelId.includes('/') ? modelId.slice(0, modelId.indexOf('/')) : 'unknown';
+  const lines = [
+    title,
+    '',
+    `Selected ${role} model: ${modelId}`,
+    `Provider: ${provider}`,
+    `Reason: ${classification?.reason ?? reason}`,
+  ];
+  if (classification?.availableModels.length) {
+    lines.push('', 'Available models from provider error:', ...classification.availableModels.map((item) => `- ${item}`));
+  }
+  const nextStep = classification?.kind === 'model-unavailable'
+    ? 'No tickets were started. Re-run `afk` and select an available model.'
+    : 'No tickets were started. Fix the OpenCode provider issue and re-run `afk`.';
+  lines.push('', nextStep);
+  return lines.join('\n');
+}
+
+function readRunOutcomeLines(runtimeStore: RuntimeStore, repoRoot: string, featureSlug: string, issueName: string): string[] {
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${featureSlug}-${issueName}.json`);
 
   try {
     const metadata = runtimeStore.readMetadata(metadataPath);
     if (metadata.FINAL_REVIEW_OUTCOME === 'approved' || metadata.FINAL_REVIEW_OUTCOME === 'needs-human') {
-      return metadata.FINAL_REVIEW_OUTCOME;
+      return [`Final review outcome: ${metadata.FINAL_REVIEW_OUTCOME}`];
     }
-    if (metadata.STATUS === 'blocked' || metadata.STATUS === 'failed' || metadata.STATUS === 'interrupted') return 'needs-human';
-    if (metadata.STATUS === 'completed') return 'approved';
+    if (metadata.STATUS === 'blocked') return ['Run outcome: blocked before final review'];
+    if (metadata.STATUS === 'failed' || metadata.STATUS === 'interrupted') {
+      return [
+        'Run outcome: failed before review',
+        `Failure category: ${metadata.FAILURE_KIND ?? 'unknown'}`,
+        `First failure: ${metadata.UNSAFE_REASON ?? 'unknown'}`,
+      ];
+    }
+    if (metadata.STATUS === 'completed') return ['Run outcome: completed without reviewer'];
   } catch {
-    return 'needs-human';
+    return ['Run outcome: unknown'];
   }
 
-  return 'needs-human';
+  return ['Run outcome: unknown'];
 }
