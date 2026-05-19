@@ -24,6 +24,7 @@ export interface ReviewerPromptTemplate {
   id: string;
   label: string;
   path: string;
+  content?: string;
 }
 
 export interface GitContext {
@@ -99,6 +100,7 @@ export interface RuntimeMetadataRecord {
   PROVIDER_SESSION_REMOVABLE: boolean;
   INSPECTION_PROVIDER: string | null;
   INSPECTION_TARGET_IDENTIFIER: string | null;
+  FAILURE_KIND?: string | null;
   UNSAFE_REASON: string | null;
 }
 
@@ -115,7 +117,7 @@ export interface AgentExecutionProgressEvent {
   ticketLabel: string;
   message: string;
   sessionId?: string | null;
-  kind?: 'message' | 'permission';
+  kind?: 'message' | 'permission' | 'failure';
   permissionId?: string | null;
   permissionPatterns?: string[];
   permissionType?: string | null;
