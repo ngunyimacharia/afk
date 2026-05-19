@@ -34,4 +34,12 @@ Interview the user one question at a time:
 
 Use these detailed conventions when drafting the output files. For local markdown issue tracker output, generate conventions where issues and PRDs live as markdown files under `.scratch/`, one feature per directory, implementation issues live under `.scratch/<feature-slug>/issues/`, and comments append under `## Comments`.
 
+For AFK-compatible local markdown trackers, include execution-order conventions:
+
+- issue frontmatter may include `Depends-On` with same-feature issue basenames only, without paths or `.md`
+- PRD frontmatter may include `Depends-On-Features` with exact feature directory slugs
+- `.scratch/<feature-slug>/execution.json` and `.scratch/execution.json` are derived CLI-managed scheduler files, not hand-authored issue content
+- same-wave issues and independent features may run in parallel subject to global concurrency
+- first-pass stacked branch automation is linear; fan-in branch handling is deferred/manual unless a project explicitly supports it
+
 Draft the issue tracker and triage label files in chat but DO NOT write them yet. Show a diff of the proposed changes against the current file state. Ask "Write these files?" and only proceed if the user explicitly confirms.

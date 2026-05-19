@@ -37,7 +37,7 @@ Your job is synthesis first. Do not start an open-ended interview. Use what is a
 - Never publish to an issue tracker, run implementation commands, or start implementation.
 - Ask at most 1-2 focused questions at a time, and only if the current context is incomplete, ambiguous, or contradictory.
 
-## AFK Frontmatter
+## AFK Frontmatter And Feature Dependencies
 
 When a PRD or spec needs a non-default AFK worktree or branch name, include optional frontmatter so downstream issue writers can carry the same execution context:
 
@@ -46,10 +46,14 @@ afk_worktree: custom-name
 afk_branch: afk/custom-name
 ```
 
-- `afk_worktree` is a name, not an absolute path, and maps to `.git/worktrees/<name>`.
+- `afk_worktree` is a name, not an absolute path, and maps to repo-local `.worktree/<name>`.
 - If these fields are omitted, infer the worktree and branch from the feature slug for the PRD and any generated issue set under `.scratch/<feature-slug>/issues/*.md`.
 - The default branch expectation is `afk/<feature-slug-or-override>`.
 - Keep the effective worktree and branch stable for the same feature unless the work is intentionally split into separate feature folders.
+- When a PRD depends on another feature PRD, include `Depends-On-Features` in PRD frontmatter using exact `.scratch/<feature-slug>` directory slugs.
+- Use feature dependencies only for true blockers between feature outcomes, not preferred sequencing.
+- Call out whether the dependency is a linear stack or fan-in. First-pass AFK branch automation supports linear stacks only; fan-in/multiple-parent branch preparation is deferred/manual unless a PRD explicitly scopes it.
+- Same-feature issue dependencies are added later by `to-issues` as `Depends-On` issue frontmatter using issue basenames.
 
 ## Repo Grounding
 
@@ -60,6 +64,7 @@ During exploration, look for:
 - docs such as `README`, `CONTEXT.md`, `CONTEXT-MAP.md`, ADRs, feature specs, and glossary docs
 - existing test patterns and nearby prior art
 - agent index docs or planning guidance, if relevant to PRD structure
+- local issue tracker dependency conventions in `docs/agents/issue-tracker.md`
 
 ## Output Contract
 

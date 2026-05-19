@@ -39,6 +39,8 @@ This agent fits the workflow:
 - Determine the configured issue tracker from repo docs before publishing, starting with `AGENTS.md` and `docs/agents/issue-tracker.md`.
 - Publish issues to the configured tracker by default without asking for an approval round first.
 - If configured tracker is Local Markdown, create issue files under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`.
+- For Local Markdown, add blocker dependencies to issue YAML frontmatter as `Depends-On` using same-feature issue basenames only, without paths or `.md`.
+- If one feature PRD depends on another feature PRD, add `Depends-On-Features` to the dependent `.scratch/<feature-slug>/PRD.md` using exact feature slugs.
 - If configured tracker is GitHub, publish issues via `gh` using the repository's label/status conventions from docs.
 - Set `Status: ready-for-agent` near the top for AFK-executable issues unless the conversation explicitly requires a different canonical status.
 - Ask at most 1-2 focused questions at a time, and only when missing information would materially change the issue structure.
@@ -50,7 +52,7 @@ This agent fits the workflow:
 - Do not invent tracker commands, label names, or status strings.
 - Create a parent tracking issue when possible and when the tracker supports it cleanly.
 
-## AFK Frontmatter
+## AFK Frontmatter And Dependencies
 
 When the source PRD/spec includes AFK override frontmatter, preserve it into implementation issues when present or required for AFK execution:
 
@@ -59,12 +61,14 @@ afk_worktree: custom-name
 afk_branch: afk/custom-name
 ```
 
-- `afk_worktree` is a name, not an absolute path, and maps to `.git/worktrees/<name>`.
+- `afk_worktree` is a name, not an absolute path, and maps to repo-local `.worktree/<name>`.
 - If overrides are omitted, infer the effective worktree and branch from the issue set under `.scratch/<feature-slug>/issues/*.md`.
 - The default branch expectation is `afk/<feature-slug-or-override>`.
-- Issues from the same feature folder should share one effective worktree and branch.
-- If a different worktree or branch is needed, split the work into separate feature folders intentionally.
-- The AFK launcher should serialize same-feature issues so only one issue targets a given effective worktree and branch at a time.
+- Issues from the same feature folder share one effective feature checkout, but may run in parallel when no `Depends-On` relationship blocks them.
+- If a different independent branch is needed, split the work into separate feature folders intentionally.
+- AFK derives `.scratch/<feature-slug>/execution.json` from issue markdown and `.scratch/execution.json` from selected feature PRDs; do not hand-author these derived files as issue content.
+- Use `Depends-On` only for true same-feature issue blockers, not preferred ordering.
+- Use `Depends-On-Features` in PRD frontmatter for true feature blockers. First-pass AFK branch automation supports linear stacks only; fan-in/multiple feature parents should be called out as deferred/manual unless explicitly in scope.
 
 ## Repo Grounding
 
