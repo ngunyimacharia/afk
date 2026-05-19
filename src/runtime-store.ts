@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
-import type { LaunchPreferences, ReviewCycleHistoryEntry, ReviewTerminalOutcomeRecord, RuntimeMetadataRecord } from './types.js';
+import type { LaunchPreferences, PhaseHistoryEntry, ReviewCycleHistoryEntry, ReviewTerminalOutcomeRecord, RuntimeMetadataRecord } from './types.js';
 
 export interface RuntimeStoreInput {
   repoRoot: string;
+  now?: () => number;
 }
 
 export interface RuntimeTicketContext {
@@ -19,8 +20,15 @@ export interface RuntimeRecordHandle {
   failedSentinelPath: string;
 }
 
-function isoNow(): string {
-  return new Date().toISOString();
+interface RuntimePhase {
+  name: string;
+  startEpoch: number;
+  startTime: string;
+  cycle?: number;
+}
+
+function isoFromEpoch(epochMs: number): string {
+  return new Date(epochMs).toISOString();
 }
 
 export class RuntimeStore {
@@ -28,12 +36,14 @@ export class RuntimeStore {
   private readonly metadataRoot: string;
   private readonly sentinelRoot: string;
   private readonly launchPreferencesPath: string;
+  private readonly now: () => number;
 
   constructor(input: RuntimeStoreInput) {
     this.logRoot = path.join(input.repoRoot, '.scratch', '.opencode-afk-logs');
     this.metadataRoot = path.join(this.logRoot, 'runtime-metadata');
     this.sentinelRoot = path.join(this.logRoot, 'sentinels');
     this.launchPreferencesPath = path.join(this.logRoot, 'launch-preferences.json');
+    this.now = input.now ?? Date.now;
   }
 
   readLaunchPreferences(): LaunchPreferences {
@@ -66,13 +76,14 @@ export class RuntimeStore {
     const metadataPath = path.join(this.metadataRoot, `${context.featureSlug}-${context.issueName}.json`);
     const doneSentinelPath = path.join(this.sentinelRoot, `${context.featureSlug}-${context.issueName}.done`);
     const failedSentinelPath = path.join(this.sentinelRoot, `${context.featureSlug}-${context.issueName}.failed`);
+    const startEpoch = this.now();
     this.writeMetadata(metadataPath, {
       TICKET_PATH: context.ticketPath,
       FEATURE_SLUG: context.featureSlug,
       ISSUE_NAME: context.issueName,
       LOG_PATH: logPath,
-      START_TIME: isoNow(),
-      START_EPOCH: Date.now(),
+      START_TIME: isoFromEpoch(startEpoch),
+      START_EPOCH: startEpoch,
       DONE_SENTINEL_PATH: doneSentinelPath,
       FAILED_SENTINEL_PATH: failedSentinelPath,
       STATUS: 'running',
@@ -83,12 +94,51 @@ export class RuntimeStore {
       INSPECTION_TARGET_IDENTIFIER: null,
       FAILURE_KIND: null,
       REVIEW_CYCLE_HISTORY: [],
+      PHASE_HISTORY: [],
       FINAL_REVIEW_OUTCOME: null,
       FINAL_REVIEW_REASON: null,
       FINAL_REVIEW_CYCLE: null,
       UNSAFE_REASON: 'session capture pending',
     });
     return { metadataPath, logPath, doneSentinelPath, failedSentinelPath };
+  }
+
+  startPhase(name: string, cycle?: number): RuntimePhase {
+    const startEpoch = this.now();
+    return {
+      name,
+      startEpoch,
+      startTime: isoFromEpoch(startEpoch),
+      cycle,
+    };
+  }
+
+  completePhase(metadataPath: string, logPath: string, phase: RuntimePhase): RuntimeMetadataRecord {
+    const endEpoch = this.now();
+    const entry: PhaseHistoryEntry = {
+      name: phase.name,
+      startTime: phase.startTime,
+      endTime: isoFromEpoch(endEpoch),
+      durationMs: Math.max(0, endEpoch - phase.startEpoch),
+      ...(phase.cycle ? { cycle: phase.cycle } : {}),
+    };
+    const current = this.readMetadata(metadataPath);
+    const history = [...(current.PHASE_HISTORY ?? []), entry];
+    const next = this.writeMetadataAndReturn(metadataPath, {
+      ...current,
+      PHASE_HISTORY: history,
+    });
+    this.appendLog(logPath, JSON.stringify({ event: 'phase', ...entry }));
+    return next;
+  }
+
+  async runPhase<T>(metadataPath: string, logPath: string, name: string, action: () => Promise<T> | T, cycle?: number): Promise<T> {
+    const phase = this.startPhase(name, cycle);
+    try {
+      return await action();
+    } finally {
+      this.completePhase(metadataPath, logPath, phase);
+    }
   }
 
   appendLog(logPath: string, line: string): void {
@@ -132,12 +182,12 @@ export class RuntimeStore {
 
   markDone(handle: RuntimeRecordHandle): void {
     mkdirSync(path.dirname(handle.doneSentinelPath), { recursive: true });
-    writeFileSync(handle.doneSentinelPath, `${isoNow()} done\n`, 'utf8');
+    writeFileSync(handle.doneSentinelPath, `${isoFromEpoch(this.now())} done\n`, 'utf8');
   }
 
   markFailed(handle: RuntimeRecordHandle, reason: string): void {
     mkdirSync(path.dirname(handle.failedSentinelPath), { recursive: true });
-    writeFileSync(handle.failedSentinelPath, `${isoNow()} ${reason}\n`, 'utf8');
+    writeFileSync(handle.failedSentinelPath, `${isoFromEpoch(this.now())} ${reason}\n`, 'utf8');
   }
 
   private writeMetadata(metadataPath: string, record: RuntimeMetadataRecord): void {

@@ -77,6 +77,14 @@ export interface ReviewTerminalOutcomeRecord {
   cycle: number;
 }
 
+export interface PhaseHistoryEntry {
+  name: string;
+  startTime: string;
+  endTime: string;
+  durationMs: number;
+  cycle?: number;
+}
+
 export interface RuntimeMetadataRecord {
   TICKET_PATH: string;
   FEATURE_SLUG: string;
@@ -93,6 +101,7 @@ export interface RuntimeMetadataRecord {
   REVIEWER_PROMPT_ID?: string;
   REVIEWER_PROMPT_PATH?: string;
   REVIEW_CYCLE_HISTORY?: ReviewCycleHistoryEntry[];
+  PHASE_HISTORY?: PhaseHistoryEntry[];
   FINAL_REVIEW_OUTCOME?: ReviewTerminalOutcome | null;
   FINAL_REVIEW_REASON?: string | null;
   FINAL_REVIEW_CYCLE?: number | null;

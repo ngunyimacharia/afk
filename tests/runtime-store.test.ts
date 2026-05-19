@@ -47,3 +47,42 @@ test('round-trips launch preferences', () => {
     reviewerModelId: 'provider/review',
   });
 });
+
+test('records phase history with deterministic timing', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
+  let tick = 0;
+  const store = new RuntimeStore({ repoRoot, now: () => tick++ * 10 });
+  const record = store.createRecord({ featureSlug: 'feat', issueName: 'phase', ticketPath: '/tmp/ticket.md' });
+
+  await store.runPhase(record.metadataPath, record.logPath, 'execution', async () => {
+    await Promise.resolve();
+  }, 1);
+
+  const metadata = JSON.parse(readFileSync(record.metadataPath, 'utf8')) as Record<string, unknown>;
+  const phases = metadata.PHASE_HISTORY as Array<Record<string, unknown>>;
+  assert.equal(phases.length, 1);
+  assert.equal(phases[0].name, 'execution');
+  assert.equal(phases[0].durationMs, 10);
+  assert.equal(phases[0].cycle, 1);
+});
+
+test('records phase history when phase action throws', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
+  let tick = 0;
+  const store = new RuntimeStore({ repoRoot, now: () => tick++ * 5 });
+  const record = store.createRecord({ featureSlug: 'feat', issueName: 'phase-fail', ticketPath: '/tmp/ticket.md' });
+
+  await assert.rejects(
+    store.runPhase(record.metadataPath, record.logPath, 'review', async () => {
+      throw new Error('boom');
+    }, 2),
+    /boom/,
+  );
+
+  const metadata = JSON.parse(readFileSync(record.metadataPath, 'utf8')) as Record<string, unknown>;
+  const phases = metadata.PHASE_HISTORY as Array<Record<string, unknown>>;
+  assert.equal(phases.length, 1);
+  assert.equal(phases[0].name, 'review');
+  assert.equal(phases[0].durationMs, 5);
+  assert.equal(phases[0].cycle, 2);
+});

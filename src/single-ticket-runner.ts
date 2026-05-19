@@ -48,53 +48,67 @@ export class SingleTicketRunner {
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
+    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('launch-preparation'));
+    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('worktree-preparation'));
+    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('readiness'));
     let sessionId: string | null = null;
     let reviewCycle = 0;
 
     try {
       while (true) {
-        const executionResult = await this.provider.execute({ plan, ticketIndex: 0, prompt, invocationMode: 'execution', sessionId, onProgress: this.progressLogger(record.logPath, options.onProgress) });
+        const executionResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({
+          plan,
+          ticketIndex: 0,
+          prompt,
+          invocationMode: 'execution',
+          sessionId,
+          onProgress: this.progressLogger(record.logPath, options.onProgress),
+        }), reviewCycle + 1);
         sessionId = executionResult.sessionId ?? sessionId;
         this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
         if (executionResult.status !== 'completed') {
-          this.runtimeStore.markFailed(record, executionResult.status);
-          this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
-          options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionResult.status}`, sessionId });
-          return { scheduled: true, message: `Scheduled ${ticket.label}` };
+          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+            this.runtimeStore.markFailed(record, executionResult.status);
+            this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
+            options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionResult.status}`, sessionId });
+            return { scheduled: true, message: `Scheduled ${ticket.label}` };
+          });
         }
 
-        const reviewResult = await this.provider.execute({
+        const reviewResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'review', () => this.provider.execute({
           plan,
           ticketIndex: 0,
           prompt: this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionResult),
           invocationMode: 'reviewer',
           sessionId,
           onProgress: this.progressLogger(record.logPath, options.onProgress),
-        });
+        }), reviewCycle + 1);
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         const review = parseReviewerOutput((reviewResult.output ?? []).join('\n'));
         const decision = decideReviewOutcome(review, { cycle: reviewCycle + 1, maxCycles: MAX_REVIEW_CYCLES });
         this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, this.buildReviewCycleEntry(reviewCycle + 1, decision));
 
         if (decision.decision === 'approve') {
-          const ticketContent = this.readTicketContent(ticket.path);
-          const terminalOutcome = this.summaryPresenceGate.hasSummary(ticketContent ?? '') ? 'approved' : 'needs-human';
-          const terminalReason = terminalOutcome === 'approved' ? decision.reason : 'ready-for-human gate blocked: missing ## AFK Summary';
-          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
-            outcome: terminalOutcome,
-            reason: terminalReason,
-            cycle: reviewCycle + 1,
+          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+            const ticketContent = this.readTicketContent(ticket.path);
+            const terminalOutcome = this.summaryPresenceGate.hasSummary(ticketContent ?? '') ? 'approved' : 'needs-human';
+            const terminalReason = terminalOutcome === 'approved' ? decision.reason : 'ready-for-human gate blocked: missing ## AFK Summary';
+            this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+              outcome: terminalOutcome,
+              reason: terminalReason,
+              cycle: reviewCycle + 1,
+            });
+            if (this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
+              this.runtimeStore.markDone(record);
+              this.runtimeStore.appendLog(record.logPath, 'run completed');
+              options.onProgress?.({ ticketLabel: ticket.label, message: 'run completed', sessionId });
+            } else {
+              this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
+              this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
+              options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked: missing ## AFK Summary', sessionId });
+            }
+            return { scheduled: true, message: `Scheduled ${ticket.label}` };
           });
-          if (this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
-            this.runtimeStore.markDone(record);
-            this.runtimeStore.appendLog(record.logPath, 'run completed');
-            options.onProgress?.({ ticketLabel: ticket.label, message: 'run completed', sessionId });
-          } else {
-            this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
-            this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
-            options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked: missing ## AFK Summary', sessionId });
-          }
-          return { scheduled: true, message: `Scheduled ${ticket.label}` };
         }
 
         if (decision.decision === 'needs-human') {
@@ -107,15 +121,17 @@ export class SingleTicketRunner {
             reason: decision.reason,
             cycle: reviewCycle + 1,
           });
-          this.runtimeStore.markFailed(record, 'needs-human handoff required');
-          this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
-          this.runtimeStore.appendLog(record.logPath, 'run blocked');
-          options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked', sessionId });
-          return { scheduled: true, message: `Scheduled ${ticket.label}` };
+          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+            this.runtimeStore.markFailed(record, 'needs-human handoff required');
+            this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
+            this.runtimeStore.appendLog(record.logPath, 'run blocked');
+            options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked', sessionId });
+            return { scheduled: true, message: `Scheduled ${ticket.label}` };
+          });
         }
 
         reviewCycle += 1;
-        prompt = this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review);
+        prompt = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'fixup', () => this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review), reviewCycle);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'provider execution failed';
@@ -163,22 +179,27 @@ export class SingleTicketRunner {
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
+    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('launch-preparation'));
+    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('worktree-preparation'));
+    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('readiness'));
 
     try {
-      const result = await this.provider.execute({ plan, ticketIndex: 0, prompt, onProgress: this.progressLogger(record.logPath, options.onProgress) });
+      const result = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({ plan, ticketIndex: 0, prompt, onProgress: this.progressLogger(record.logPath, options.onProgress) }), 1);
       this.recordExecutionResult(record.metadataPath, record.logPath, result, result.sessionId ?? null);
-      if (result.status === 'completed') {
-        const updatedTicketContent = this.readTicketContent(ticket.path) ?? '';
-        if (this.summaryPresenceGate.hasSummary(updatedTicketContent)) {
-          this.runtimeStore.markDone(record);
-          this.runtimeStore.appendLog(record.logPath, 'run completed');
+      await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+        if (result.status === 'completed') {
+          const updatedTicketContent = this.readTicketContent(ticket.path) ?? '';
+          if (this.summaryPresenceGate.hasSummary(updatedTicketContent)) {
+            this.runtimeStore.markDone(record);
+            this.runtimeStore.appendLog(record.logPath, 'run completed');
+          } else {
+            this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
+          }
         } else {
-          this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
+          this.runtimeStore.markFailed(record, result.status);
         }
-      } else {
-        this.runtimeStore.markFailed(record, result.status);
-      }
-      this.runtimeStore.appendLog(record.logPath, `run ${result.status}`);
+        this.runtimeStore.appendLog(record.logPath, `run ${result.status}`);
+      });
       options.onProgress?.({ ticketLabel: ticket.label, message: `run ${result.status}`, sessionId: result.sessionId ?? null });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'provider execution failed';

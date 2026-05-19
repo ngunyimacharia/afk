@@ -91,6 +91,16 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
   assert.deepEqual(modes, ['execution', 'reviewer']);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-007.json');
   assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "approved"/);
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { PHASE_HISTORY?: Array<{ name: string; durationMs: number }> };
+  assert.deepEqual(metadata.PHASE_HISTORY?.map((phase) => phase.name), [
+    'launch-preparation',
+    'worktree-preparation',
+    'readiness',
+    'execution',
+    'review',
+    'finalization',
+  ]);
+  assert.equal((metadata.PHASE_HISTORY ?? []).every((phase) => phase.durationMs >= 0), true);
 });
 
 test('does not promote completed runs without an AFK summary', async () => {
@@ -128,7 +138,15 @@ test('records failed state when the provider throws', async () => {
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, true);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-002.json');
-  assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "failed"/);
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { STATUS: string; PHASE_HISTORY?: Array<{ name: string; durationMs: number }> };
+  assert.equal(metadata.STATUS, 'failed');
+  assert.deepEqual(metadata.PHASE_HISTORY?.map((phase) => phase.name), [
+    'launch-preparation',
+    'worktree-preparation',
+    'readiness',
+    'execution',
+  ]);
+  assert.equal((metadata.PHASE_HISTORY ?? []).every((phase) => phase.durationMs >= 0), true);
 });
 
 test('persists failed provider output for later inspection', async () => {
