@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, LaunchPlan, ReviewCycleHistoryEntry } from './types.js';
+import type { AgentExecutionProgressCallback, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { buildPrompt } from './prompt-builder.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
+import { classifyProviderFailure } from './provider-failure.js';
 
 const MAX_REVIEW_CYCLES = 3;
 const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
@@ -39,7 +40,7 @@ export class SingleTicketRunner {
       REVIEWER_PROMPT_PATH: plan.reviewerPrompt.path,
     });
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
-    const reviewerPromptText = this.readReviewerPrompt(plan.reviewerPrompt.path);
+    const reviewerPromptText = this.readReviewerPrompt(plan.reviewerPrompt);
     let prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
@@ -122,11 +123,7 @@ export class SingleTicketRunner {
       this.runtimeStore.updateMetadata(record.metadataPath, {
         STATUS: 'failed',
         UNSAFE_REASON: message,
-      });
-      this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
-        outcome: 'needs-human',
-        reason: message,
-        cycle: reviewCycle + 1,
+        FAILURE_KIND: classifyProviderFailure(message)?.kind ?? 'unknown',
       });
       this.runtimeStore.markFailed(record, 'failed');
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
@@ -150,8 +147,8 @@ export class SingleTicketRunner {
     }
   }
 
-  private readReviewerPrompt(promptPath: string): string {
-    return readFileSync(promptPath, 'utf8');
+  private readReviewerPrompt(prompt: ReviewerPromptTemplate): string {
+    return prompt.content ?? readFileSync(prompt.path, 'utf8');
   }
 
   private async launchWithoutReviewer(plan: LaunchPlan, record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string }, options: { onProgress?: AgentExecutionProgressCallback }): Promise<SingleTicketRunResult> {
@@ -186,7 +183,11 @@ export class SingleTicketRunner {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'provider execution failed';
       options.onProgress?.({ ticketLabel: ticket.label, message: `run failed: ${message}` });
-      this.runtimeStore.updateMetadata(record.metadataPath, { STATUS: 'failed', UNSAFE_REASON: message });
+      this.runtimeStore.updateMetadata(record.metadataPath, {
+        STATUS: 'failed',
+        UNSAFE_REASON: message,
+        FAILURE_KIND: classifyProviderFailure(message)?.kind ?? 'unknown',
+      });
       this.runtimeStore.markFailed(record, 'failed');
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
     }
@@ -197,6 +198,7 @@ export class SingleTicketRunner {
   private progressLogger(logPath: string, onProgress: AgentExecutionProgressCallback | undefined): AgentExecutionProgressCallback {
     return (event) => {
       if (event.kind === 'permission') this.runtimeStore.appendLog(logPath, `permission required: ${event.message}`);
+      else if (event.kind === 'failure') this.runtimeStore.appendLog(logPath, event.message);
       else if (event.permissionId) this.runtimeStore.appendLog(logPath, `permission event: ${event.message}`);
       onProgress?.(event);
     };
@@ -209,6 +211,7 @@ export class SingleTicketRunner {
       PROVIDER_SESSION_ID: sessionId,
       PROVIDER_SESSION_REMOVABLE: result.removable ?? false,
       UNSAFE_REASON: result.unsafeReason ?? null,
+      FAILURE_KIND: result.status === 'completed' ? null : classifyProviderFailure(result.unsafeReason ?? (result.output ?? []).join('\n'))?.kind ?? 'unknown',
       INSPECTION_PROVIDER: result.inspectionTargetIdentifier ? 'tmux' : null,
       INSPECTION_TARGET_IDENTIFIER: result.inspectionTargetIdentifier ?? null,
     });

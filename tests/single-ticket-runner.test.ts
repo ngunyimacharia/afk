@@ -7,12 +7,13 @@ import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { SingleTicketRunner } from '../src/single-ticket-runner.js';
 import { Scheduler } from '../src/scheduler.js';
+import { resolveReviewerPromptTemplate } from '../src/reviewer-prompt-catalog.js';
 
 test('launches one ticket and writes runtime artifacts before exit', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-'));
   const store = new RuntimeStore({ repoRoot });
   const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-1', removable: true, output: ['worker started'] }));
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.match(result.message, /Scheduled feat\/001/);
@@ -63,6 +64,33 @@ test('sends ticket file summary instructions to the execution provider', async (
   assert.match(capturedPrompt, /Do not put the final AFK summary only in the assistant response, runtime log, or commit message/);
   assert.match(capturedPrompt, /Status: ready-for-agent/);
   assert.match(capturedPrompt, /Reviewer prompt: reviewer-default/);
+});
+
+test('uses bundled reviewer prompt when launched from a repo without AFK prompt files', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-bundled-prompt-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '007.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  const modes: string[] = [];
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      modes.push(invocationMode ?? 'execution');
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ summary: 'No findings.', findings: [] })] };
+      }
+      writeFileSync(ticketPath, 'Status: done\n\n## Title\n\nImplement the thing\n\n## AFK Summary\n\nStatus: completed\n');
+      return { status: 'completed', sessionId: 'session-execution', removable: true, output: ['worker finished'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: '007', label: 'feat/007', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(modes, ['execution', 'reviewer']);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-007.json');
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "approved"/);
 });
 
 test('does not promote completed runs without an AFK summary', async () => {
