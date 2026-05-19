@@ -86,6 +86,10 @@ export class RuntimeStore {
       FINAL_REVIEW_OUTCOME: null,
       FINAL_REVIEW_REASON: null,
       FINAL_REVIEW_CYCLE: null,
+      FINAL_REVIEW_CLASSIFICATION: null,
+      FINAL_REVIEW_MALFORMED: null,
+      FINAL_REVIEW_FINDINGS: [],
+      FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET: null,
       UNSAFE_REASON: 'session capture pending',
     });
     return { metadataPath, logPath, doneSentinelPath, failedSentinelPath };
@@ -125,6 +129,10 @@ export class RuntimeStore {
       FINAL_REVIEW_OUTCOME: outcome.outcome,
       FINAL_REVIEW_REASON: outcome.reason,
       FINAL_REVIEW_CYCLE: outcome.cycle,
+      FINAL_REVIEW_CLASSIFICATION: outcome.classification ?? null,
+      FINAL_REVIEW_MALFORMED: outcome.malformed ?? false,
+      FINAL_REVIEW_FINDINGS: outcome.findings ?? [],
+      FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET: outcome.malformedOutputSnippet ?? null,
     });
     this.appendLog(logPath, JSON.stringify({ event: 'review-terminal', ...outcome }));
     return next;

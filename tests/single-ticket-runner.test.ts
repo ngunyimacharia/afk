@@ -91,6 +91,55 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
   assert.deepEqual(modes, ['execution', 'reviewer']);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-007.json');
   assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "approved"/);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
+});
+
+test('records minor-risk approval metadata for minor-only findings', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-minor-risk-approval-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ summary: 'Minor polish', findings: [{ severity: 'minor', title: 'Polish copy', detail: 'Tighten phrasing' }] })] };
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'minor-risk', label: 'feat/minor-risk', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-minor-risk.json');
+  const metadata = readFileSync(metadataPath, 'utf8');
+  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "approved"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "minor-risk-approval"/);
+  assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[/);
+});
+
+test('records real-finding loop and handoff metadata for unresolved major findings', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-real-finding-handoff-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ summary: 'Needs more work', findings: [{ severity: 'major', title: 'Fix behavior', detail: 'Condition is wrong' }] })] };
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'real-finding', label: 'feat/real-finding', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-real-finding.json');
+  const metadata = readFileSync(metadataPath, 'utf8');
+  assert.match(metadata, /"classification": "real-finding-loop"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "real-finding-handoff"/);
+  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
 });
 
 test('does not promote completed runs without an AFK summary', async () => {
@@ -289,6 +338,9 @@ test('hands off after repeated malformed reviewer output without implementation 
   const metadata = readFileSync(metadataPath, 'utf8');
   assert.match(metadata, /"STATUS": "blocked"/);
   assert.match(metadata, /"FAILURE_KIND": "reviewer-output-malformed"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "malformed-output-handoff"/);
+  assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[\]/);
+  assert.match(metadata, /"FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET":/);
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-malformed-handoff.log');
   const log = readFileSync(logPath, 'utf8');
   assert.match(log, /malformed reviewer output retry 1\/1/);

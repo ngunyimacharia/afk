@@ -63,18 +63,31 @@ export type ReviewCycleOutcome = 'approve' | 'loop-required' | 'handoff-required
 
 export type ReviewTerminalOutcome = 'approved' | 'needs-human';
 
+export type ReviewOutcomeClassification =
+  | 'clean-approval'
+  | 'minor-risk-approval'
+  | 'real-finding-loop'
+  | 'real-finding-handoff'
+  | 'malformed-output-handoff';
+
 export interface ReviewCycleHistoryEntry {
   cycle: number;
   outcome: ReviewCycleOutcome;
   reason: string;
   malformed: boolean;
   findings: ReviewFindingSnapshot[];
+  classification?: ReviewOutcomeClassification;
+  malformedOutputSnippet?: string;
 }
 
 export interface ReviewTerminalOutcomeRecord {
   outcome: ReviewTerminalOutcome;
   reason: string;
   cycle: number;
+  classification?: ReviewOutcomeClassification;
+  malformed?: boolean;
+  findings?: ReviewFindingSnapshot[];
+  malformedOutputSnippet?: string;
 }
 
 export interface RuntimeMetadataRecord {
@@ -96,6 +109,10 @@ export interface RuntimeMetadataRecord {
   FINAL_REVIEW_OUTCOME?: ReviewTerminalOutcome | null;
   FINAL_REVIEW_REASON?: string | null;
   FINAL_REVIEW_CYCLE?: number | null;
+  FINAL_REVIEW_CLASSIFICATION?: ReviewOutcomeClassification | null;
+  FINAL_REVIEW_MALFORMED?: boolean | null;
+  FINAL_REVIEW_FINDINGS?: ReviewFindingSnapshot[];
+  FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET?: string | null;
   PROVIDER_SESSION_ID: string | null;
   PROVIDER_SESSION_REMOVABLE: boolean;
   INSPECTION_PROVIDER: string | null;

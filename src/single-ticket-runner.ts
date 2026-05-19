@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
+import type { AgentExecutionProgressCallback, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry, ReviewOutcomeClassification, ReviewTerminalOutcomeRecord } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { buildPrompt } from './prompt-builder.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
@@ -16,6 +16,7 @@ const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
   'Return JSON only with this exact shape: {"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string"}]}.',
   'Do not include markdown fences, commentary, or extra fields.',
 ].join(' ');
+const MAX_MALFORMED_OUTPUT_SNIPPET_CHARS = 500;
 
 export interface SingleTicketRunResult {
   scheduled: boolean;
@@ -106,6 +107,7 @@ export class SingleTicketRunner {
           }
 
           const malformedHandoffReason = 'Malformed reviewer output repeated after format-repair retry';
+          const malformedOutputSnippet = this.boundSnippet(review.raw);
           this.runtimeStore.updateMetadata(record.metadataPath, {
             STATUS: 'blocked',
             UNSAFE_REASON: malformedHandoffReason,
@@ -117,12 +119,18 @@ export class SingleTicketRunner {
             reason: malformedHandoffReason,
             malformed: true,
             findings: [],
+            classification: 'malformed-output-handoff',
+            malformedOutputSnippet,
           });
-          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
+            cycle: reviewCycle + 1,
             outcome: 'needs-human',
             reason: malformedHandoffReason,
-            cycle: reviewCycle + 1,
-          });
+            classification: 'malformed-output-handoff',
+            malformed: true,
+            findings: [],
+            malformedOutputSnippet,
+          }));
           this.runtimeStore.markFailed(record, 'needs-human handoff required');
           this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
           this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -138,11 +146,15 @@ export class SingleTicketRunner {
           const ticketContent = this.readTicketContent(ticket.path);
           const terminalOutcome = this.summaryPresenceGate.hasSummary(ticketContent ?? '') ? 'approved' : 'needs-human';
           const terminalReason = terminalOutcome === 'approved' ? decision.reason : 'ready-for-human gate blocked: missing ## AFK Summary';
-          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+          const classification: ReviewOutcomeClassification = review.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval';
+          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
+            cycle: reviewCycle + 1,
             outcome: terminalOutcome,
             reason: terminalReason,
-            cycle: reviewCycle + 1,
-          });
+            classification,
+            malformed: false,
+            findings: review.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
+          }));
           if (this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
             this.runtimeStore.markDone(record);
             this.runtimeStore.appendLog(record.logPath, 'run completed');
@@ -164,6 +176,9 @@ export class SingleTicketRunner {
             outcome: 'needs-human',
             reason: decision.reason,
             cycle: reviewCycle + 1,
+            classification: 'real-finding-handoff',
+            malformed: false,
+            findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
           });
           this.runtimeStore.markFailed(record, 'needs-human handoff required');
           this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
@@ -311,13 +326,30 @@ export class SingleTicketRunner {
   }
 
   private buildReviewCycleEntry(cycle: number, decision: ReturnType<typeof decideReviewOutcome>): ReviewCycleHistoryEntry {
+    const hasRealFindings = decision.findings.some((finding) => finding.severity === 'major' || finding.severity === 'blocker');
     return {
       cycle,
       outcome: decision.decision === 'approve' ? 'approve' : decision.decision === 'needs-human' ? 'handoff-required' : 'loop-required',
       reason: decision.reason,
       malformed: decision.fallback,
       findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
+      classification: decision.decision === 'approve'
+        ? (decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval')
+        : hasRealFindings
+          ? (decision.decision === 'needs-human' ? 'real-finding-handoff' : 'real-finding-loop')
+          : undefined,
     };
+  }
+
+  private buildFinalOutcomeRecord(outcome: ReviewTerminalOutcomeRecord): ReviewTerminalOutcomeRecord {
+    return {
+      ...outcome,
+      malformedOutputSnippet: outcome.malformedOutputSnippet ? this.boundSnippet(outcome.malformedOutputSnippet) : outcome.malformedOutputSnippet,
+    };
+  }
+
+  private boundSnippet(raw: string): string {
+    return raw.slice(0, MAX_MALFORMED_OUTPUT_SNIPPET_CHARS);
   }
 }
 
