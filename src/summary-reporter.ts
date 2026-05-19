@@ -42,6 +42,13 @@ interface SummaryGroupItem {
   metadata?: RuntimeMetadataRecord;
 }
 
+interface SlowPhaseRecord {
+  ticket: string;
+  phase: string;
+  cycle?: number;
+  durationMs: number;
+}
+
 function normalize(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? '';
 }
@@ -135,7 +142,11 @@ function readRuntimeMetadata(repoRoot: string): RuntimeMetadataRecord[] {
 
 function formatAttempt(item: SummaryGroupItem): string {
   const { issue, attempt, metadata } = item;
-    const session = fieldValue(attempt?.fields ?? {}, 'session or run id', 'session/run id', 'session id') ?? metadata?.PROVIDER_SESSION_ID ?? undefined;
+  const session = fieldValue(attempt?.fields ?? {}, 'session or run id', 'session/run id', 'session id') ?? metadata?.PROVIDER_SESSION_ID ?? undefined;
+  const malformedReviewerCount = (metadata?.REVIEW_CYCLE_HISTORY ?? []).filter((entry) => entry.malformed).length;
+  const reviewCycleCount = metadata?.REVIEW_CYCLE_HISTORY?.length;
+  const fixupCycleCount = (metadata?.PHASE_HISTORY ?? []).filter((entry) => entry.name === 'fixup').length;
+  const readinessBlocker = metadata?.STATUS === 'blocked' ? metadata.FAILURE_KIND ?? metadata.UNSAFE_REASON ?? undefined : undefined;
   const bits = [
     `- ${issue.feature}/${issue.issueName}`,
     issue.status ? `status: ${issue.status}` : null,
@@ -148,11 +159,46 @@ function formatAttempt(item: SummaryGroupItem): string {
     fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes') ? `changes: ${fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes')}` : null,
     fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched') ? `touched: ${fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched')}` : null,
     fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run') ? `verification: ${fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run')}` : null,
+    typeof reviewCycleCount === 'number' ? `review cycles: ${reviewCycleCount}` : null,
+    metadata?.FAILURE_KIND ? `failure kind: ${metadata.FAILURE_KIND}` : null,
+    typeof malformedReviewerCount === 'number' && malformedReviewerCount > 0 ? `malformed reviewer outputs: ${malformedReviewerCount}` : null,
+    typeof fixupCycleCount === 'number' && fixupCycleCount > 0 ? `fixup cycles: ${fixupCycleCount}` : null,
+    readinessBlocker ? `readiness blocker: ${readinessBlocker}` : null,
     fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors') ? `blockers: ${fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors')}` : null,
     fieldValue(attempt?.fields ?? {}, 'next action', 'next step') ? `next: ${fieldValue(attempt?.fields ?? {}, 'next action', 'next step')}` : null,
     attempt?.text ? attempt.text : null,
   ].filter(Boolean);
   return bits.join('\n');
+}
+
+function summarizeSlowPhases(metadata: RuntimeMetadataRecord[]): string[] {
+  const slowPhases: SlowPhaseRecord[] = metadata.flatMap((entry) => {
+    const ticket = `${entry.FEATURE_SLUG}/${entry.ISSUE_NAME}`;
+    return (entry.PHASE_HISTORY ?? []).map((phase) => ({
+      ticket,
+      phase: phase.name,
+      cycle: phase.cycle,
+      durationMs: phase.durationMs,
+    }));
+  });
+  if (!slowPhases.length) return ['- none'];
+
+  const byPhase = new Map<string, SlowPhaseRecord>();
+  for (const item of slowPhases) {
+    const existing = byPhase.get(item.phase);
+    if (!existing || item.durationMs > existing.durationMs) byPhase.set(item.phase, item);
+  }
+
+  const topOverall = [...slowPhases]
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .slice(0, 3)
+    .map((item) => `- ${item.ticket} ${item.phase}${typeof item.cycle === 'number' ? `#${item.cycle}` : ''}: ${item.durationMs}ms`);
+
+  const byPhaseLines = [...byPhase.values()]
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .map((item) => `- ${item.phase}: ${item.ticket}${typeof item.cycle === 'number' ? `#${item.cycle}` : ''} (${item.durationMs}ms)`);
+
+  return ['Overall slowest phases', ...(topOverall.length ? topOverall : ['- none']), '', 'Slowest by phase category', ...(byPhaseLines.length ? byPhaseLines : ['- none'])];
 }
 
 export class SummaryReporter {
@@ -201,6 +247,9 @@ export class SummaryReporter {
       '',
       'Repeated attempts',
       ...(repeated.length ? repeated : ['- none']),
+      '',
+      'Phase timing highlights',
+      ...summarizeSlowPhases(metadata),
     ];
 
     const permission = this.input.permission;
