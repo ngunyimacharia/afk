@@ -81,6 +81,7 @@ export class RuntimeStore {
       PROVIDER_SESSION_REMOVABLE: false,
       INSPECTION_PROVIDER: null,
       INSPECTION_TARGET_IDENTIFIER: null,
+      FAILURE_KIND: null,
       REVIEW_CYCLE_HISTORY: [],
       FINAL_REVIEW_OUTCOME: null,
       FINAL_REVIEW_REASON: null,
