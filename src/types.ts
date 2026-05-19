@@ -49,6 +49,43 @@ export interface CheckoutContext {
   worktreePath: string;
 }
 
+export interface DependencySnapshot {
+  label: string;
+  issueName: string;
+  status: string;
+  doneSentinel: 'present' | 'missing' | 'unknown';
+  failedSentinel: 'present' | 'missing' | 'unknown';
+  runtimeStatus: string;
+}
+
+export interface ReadinessSnapshot {
+  sourcePath: string;
+  dependencyCopy: string;
+  envTesting: string;
+  disabledTests: string;
+  smokeTest: string;
+  staticReadiness: string;
+  styleReadiness: string;
+}
+
+export interface AfkStateSnapshot {
+  generatedAt: string;
+  ticketLabel: string;
+  ticketStatus: string;
+  ticketIssueName: string;
+  featureSlug: string;
+  ticketPath: string;
+  repoRoot: string;
+  worktreePath: string;
+  worktreeName: string;
+  branchName: string;
+  head: string;
+  gitStatusShort: string[];
+  ticketOutsideWorktree: boolean;
+  dependencies: DependencySnapshot[];
+  readiness: ReadinessSnapshot | null;
+}
+
 export interface LaunchPlan {
   model: LaunchModel;
   reviewerModel?: LaunchModel;
@@ -58,6 +95,7 @@ export interface LaunchPlan {
   gitContext: GitContext;
   checkout: CheckoutContext;
   checkouts?: Record<string, CheckoutContext>;
+  snapshots?: Record<string, AfkStateSnapshot>;
 }
 
 export interface ReviewFindingSnapshot {
@@ -111,6 +149,20 @@ export interface RuntimeMetadataRecord {
   INSPECTION_TARGET_IDENTIFIER: string | null;
   FAILURE_KIND?: string | null;
   UNSAFE_REASON: string | null;
+  SNAPSHOT_GENERATED_AT?: string;
+  SNAPSHOT_SAFE_FIELDS?: {
+    ticketLabel: string;
+    featureSlug: string;
+    ticketPath: string;
+    repoRoot: string;
+    worktreePath: string;
+    worktreeName: string;
+    branchName: string;
+    head: string;
+    ticketOutsideWorktree: boolean;
+    dependencyCount: number;
+    readinessSourcePath: string | null;
+  };
 }
 
 export interface AgentExecutionResult {

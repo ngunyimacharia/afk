@@ -45,10 +45,13 @@ export class SingleTicketRunner {
     });
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
     const reviewerPromptText = this.readReviewerPrompt(plan.reviewerPrompt);
+    const snapshot = plan.snapshots?.[ticket.label];
+    if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
     let prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
       ticketContent,
+      snapshot,
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
@@ -160,10 +163,13 @@ export class SingleTicketRunner {
     if (!ticket) return { scheduled: false, message: 'No ticket available for launch' };
     if (plan.reviewerPrompt) this.runtimeStore.appendLog(record.logPath, `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`);
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
+    const snapshot = plan.snapshots?.[ticket.label];
+    if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
     const prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
       ticketContent,
+      snapshot,
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
@@ -256,6 +262,25 @@ export class SingleTicketRunner {
       malformed: decision.fallback,
       findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
     };
+  }
+
+  private recordSnapshotMetadata(metadataPath: string, snapshot: NonNullable<LaunchPlan['snapshots']>[string]): void {
+    this.runtimeStore.updateMetadata(metadataPath, {
+      SNAPSHOT_GENERATED_AT: snapshot.generatedAt,
+      SNAPSHOT_SAFE_FIELDS: {
+        ticketLabel: snapshot.ticketLabel,
+        featureSlug: snapshot.featureSlug,
+        ticketPath: snapshot.ticketPath,
+        repoRoot: snapshot.repoRoot,
+        worktreePath: snapshot.worktreePath,
+        worktreeName: snapshot.worktreeName,
+        branchName: snapshot.branchName,
+        head: snapshot.head,
+        ticketOutsideWorktree: snapshot.ticketOutsideWorktree,
+        dependencyCount: snapshot.dependencies.length,
+        readinessSourcePath: snapshot.readiness?.sourcePath ?? null,
+      },
+    });
   }
 }
 
