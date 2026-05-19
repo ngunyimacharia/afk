@@ -9,7 +9,7 @@ import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 async function makeFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'afk-opencode-sync-'));
   const artifacts = path.join(root, 'artifacts', 'opencode');
-  const opencode = path.join(root, 'private_dot_config', 'opencode');
+  const opencode = path.join(root, '.config', 'opencode');
   await mkdir(path.join(artifacts, 'agents'), { recursive: true });
   await mkdir(path.join(artifacts, 'prompts'), { recursive: true });
   await mkdir(path.join(artifacts, 'commands'), { recursive: true });
@@ -26,11 +26,11 @@ test('syncs initial opencode asset categories into the destination tree', async 
     id: 'opencode',
     assetCategories: () => OpenCodeSyncAdapter.assetCategories().map((category) => {
       const relativeSource = category.sourceRoot.replace('artifacts/opencode/', '');
-      const relativeDestination = category.destinationRoot.replace('private_dot_config/opencode/', '');
+      const relativeDestination = path.basename(category.destinationRoot);
       return {
         ...category,
         sourceRoot: path.join(artifacts, relativeSource),
-        destinationRoot: path.join(opencode, relativeDestination),
+        destinationRoot: path.join(opencode, relativeDestination === 'command' ? 'command' : relativeDestination),
         destinationBase: opencode,
       };
     }),
