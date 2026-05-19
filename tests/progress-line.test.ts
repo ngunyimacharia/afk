@@ -75,6 +75,21 @@ test('progress line resumes after permission is resolved', () => {
   assert.match(output, /tool bash running: bun test/);
 });
 
+test('progress line prints durable provider failures', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'opencode session busy', sessionId: 'session-1' });
+  progressLine.update({ ticketLabel: 'feat/001', kind: 'failure', message: 'provider failure: selected implementation model github-copilot/claude-sonnet-4.6 is unavailable', sessionId: 'session-1' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /Provider failure for feat\/001/);
+  assert.match(output, /claude-sonnet-4\.6 is unavailable/);
+  assert.match(output, /\[opencode: session-1\]/);
+});
+
 function fakeStdout(isTTY: boolean, writes: string[]): NodeJS.WriteStream {
   return {
     isTTY,

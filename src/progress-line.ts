@@ -35,6 +35,10 @@ class LogUpdateProgressLine implements ProgressLine {
       this.renderPermission(event);
       return;
     }
+    if (event.kind === 'failure') {
+      this.renderFailure(event);
+      return;
+    }
     if (this.activePermissionKey && event.message === 'opencode session busy') return;
     this.activePermissionKey = undefined;
     this.latestByTicket.set(event.ticketLabel, event.message);
@@ -82,6 +86,15 @@ class LogUpdateProgressLine implements ProgressLine {
     if (this.hasRendered) this.logUpdate.done();
     const session = event.sessionId && !event.message.includes(event.sessionId) ? ` [opencode: ${event.sessionId}]` : '';
     this.stdout.write(`Permission required for ${event.ticketLabel}: ${event.message}${session}\n`);
+    this.hasRendered = false;
+  }
+
+  private renderFailure(event: AgentExecutionProgressEvent): void {
+    if (this.spinnerTimer) clearInterval(this.spinnerTimer);
+    this.spinnerTimer = undefined;
+    if (this.hasRendered) this.logUpdate.done();
+    const session = event.sessionId && !event.message.includes(event.sessionId) ? ` [opencode: ${event.sessionId}]` : '';
+    this.stdout.write(`Provider failure for ${event.ticketLabel}: ${event.message}${session}\n`);
     this.hasRendered = false;
   }
 }
