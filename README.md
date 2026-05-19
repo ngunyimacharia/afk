@@ -12,7 +12,7 @@ It currently provides four core behaviors:
 
 ## Current Surface Area
 
-- `afk`: interactive launch wizard (harness, model, ticket multiselect) followed by scheduled work
+- `afk`: interactive launch wizard (harness, model, feature multiselect, concurrency) followed by dependency-aware scheduled work
 - `afk summary`: read-only summary of AFK work from ticket files plus runtime metadata
 - `afk cleanup`: dry-run-first cleanup for terminal AFK tickets and attributable runtime artifacts
 - `afk sync`: sync vendored OpenCode assets from `artifacts/opencode/` into `private_dot_config/opencode/`
@@ -78,8 +78,10 @@ AFK uses the local markdown tracker under `.scratch/`:
 
 ```text
 .scratch/
+  execution.json
   <feature-slug>/
     PRD.md
+    execution.json
     issues/
       01-some-issue.md
 ```
@@ -90,16 +92,22 @@ Key conventions:
 - implementation issues live under `.scratch/<feature-slug>/issues/`
 - `Status:` near the top of the issue file is the operational status
 - YAML frontmatter is the canonical machine-readable source when present
+- issue frontmatter may include `Depends-On` with same-feature issue basenames
+- PRD frontmatter may include `Depends-On-Features` with feature slugs
+- `execution.json` files are derived AFK scheduler state and may be regenerated
 
 Eligible launch tickets are discovered from `.scratch/*/issues/*.md`. Terminal tickets, including `ready-for-human`, are excluded from relaunch.
 
 Launch behavior notes:
 
 - `afk` launch is interactive-only and requires a TTY (no CI/non-interactive launch mode in this pass).
-- prompt order is harness -> model -> ticket multiselect.
+- prompt order is harness -> model -> reviewer model -> feature multiselect -> global concurrency.
 - the only harness currently supported is `OpenCode`.
 - no prompt preselects a default option.
 - canceling any prompt exits without creating worktrees or runtime artifacts.
+- global concurrency defaults to `3` and is persisted as a launch preference.
+- selected features run through dependency-aware ticket waves; independent tickets may run in parallel.
+- dependent feature branches use a linear stack from `afk/<upstream-feature>`; fan-in branch automation is deferred.
 
 ## Runtime Artifacts
 

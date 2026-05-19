@@ -5,7 +5,7 @@
 AFK is implemented as one coordinated local workflow:
 
 1. Discover eligible tickets from `.scratch/*/issues/*.md`
-2. Select a model and one or more tickets
+2. Select a model and one or more feature directories
 3. Prepare deterministic worktree and branch state in TypeScript
 4. Launch one run per selected ticket
 5. Persist logs and runtime metadata
@@ -21,6 +21,7 @@ Behavior:
 - prefers YAML frontmatter for machine-readable fields
 - falls back to legacy `Status:` and `## Status` parsing
 - excludes terminal tickets from relaunch
+- parses same-feature `Depends-On` issue frontmatter
 
 Terminal statuses currently include:
 
@@ -31,6 +32,16 @@ Terminal statuses currently include:
 - `ready-for-human`
 
 Tickets are treated as AFK-eligible when they are explicitly AFK-owned or marked `ready-for-agent`.
+
+## Dependency State
+
+AFK derives execution state instead of treating `.scratch` markdown as mutable scheduler state:
+
+- `.scratch/<feature>/execution.json` contains per-feature issue graph state, topological waves, ticket states, and blocking reasons.
+- `.scratch/execution.json` contains the selected workspace feature graph, feature waves, concurrency, blocked feature reasons, and stack parent metadata.
+- Both files are CLI-managed and can be regenerated from ticket/PRD markdown.
+- Issue dependencies use `Depends-On` in issue frontmatter.
+- Feature dependencies use `Depends-On-Features` in PRD frontmatter.
 
 ## Launch Planning
 
@@ -78,10 +89,13 @@ Execution is split between:
 
 Current scheduler behavior:
 
-- preserves selected order within each feature queue
-- allows only one active ticket per feature
-- caps cross-feature concurrency at `3`
+- schedules ready tickets by dependency state
+- allows same-feature tickets to run in parallel when no dependency relationship blocks them
+- caps global ticket concurrency at the selected value, defaulting to `3`
 - keeps unrelated queues moving when one ticket fails or is interrupted
+- auto-advances later issue or feature waves as dependencies complete
+
+First-pass feature stacks are linear. A dependent feature branch is created from `afk/<upstream-feature>` once the upstream AFK tickets are complete; multiple feature parents fail automatic branch preparation with a clear fan-in deferred message.
 
 ## Completion Gate
 
