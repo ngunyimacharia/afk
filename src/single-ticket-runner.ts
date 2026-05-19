@@ -8,7 +8,14 @@ import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-cont
 import { classifyProviderFailure } from './provider-failure.js';
 
 const MAX_REVIEW_CYCLES = 3;
+const MAX_MALFORMED_REVIEW_ATTEMPTS = 2;
 const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
+const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
+const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
+  'The previous reviewer response was malformed.',
+  'Return JSON only with this exact shape: {"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string"}]}.',
+  'Do not include markdown fences, commentary, or extra fields.',
+].join(' ');
 
 export interface SingleTicketRunResult {
   scheduled: boolean;
@@ -50,29 +57,80 @@ export class SingleTicketRunner {
     });
     let sessionId: string | null = null;
     let reviewCycle = 0;
+    let malformedReviewAttempts = 0;
+    let retryReviewerOnly = false;
+    let useReviewerRepairPrompt = false;
+    let lastExecutionResult: { status: string; output?: string[] } | null = null;
 
     try {
       while (true) {
-        const executionResult = await this.provider.execute({ plan, ticketIndex: 0, prompt, invocationMode: 'execution', sessionId, onProgress: this.progressLogger(record.logPath, options.onProgress) });
-        sessionId = executionResult.sessionId ?? sessionId;
-        this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
-        if (executionResult.status !== 'completed') {
-          this.runtimeStore.markFailed(record, executionResult.status);
-          this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
-          options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionResult.status}`, sessionId });
-          return { scheduled: true, message: `Scheduled ${ticket.label}` };
+        let executionResult = lastExecutionResult;
+        if (!retryReviewerOnly || !executionResult) {
+          const executionInvocationResult = await this.provider.execute({ plan, ticketIndex: 0, prompt, invocationMode: 'execution', sessionId, onProgress: this.progressLogger(record.logPath, options.onProgress) });
+          sessionId = executionInvocationResult.sessionId ?? sessionId;
+          this.recordExecutionResult(record.metadataPath, record.logPath, executionInvocationResult, sessionId);
+          if (executionInvocationResult.status !== 'completed') {
+            this.runtimeStore.markFailed(record, executionInvocationResult.status);
+            this.runtimeStore.appendLog(record.logPath, `run ${executionInvocationResult.status}`);
+            options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionInvocationResult.status}`, sessionId });
+            return { scheduled: true, message: `Scheduled ${ticket.label}` };
+          }
+          executionResult = executionInvocationResult;
+          lastExecutionResult = executionInvocationResult;
         }
+
+        retryReviewerOnly = false;
 
         const reviewResult = await this.provider.execute({
           plan,
           ticketIndex: 0,
-          prompt: this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionResult),
+          prompt: useReviewerRepairPrompt
+            ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionResult)
+            : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionResult),
           invocationMode: 'reviewer',
           sessionId,
           onProgress: this.progressLogger(record.logPath, options.onProgress),
         });
+        useReviewerRepairPrompt = false;
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         const review = parseReviewerOutput((reviewResult.output ?? []).join('\n'));
+        if (review.fallback) {
+          malformedReviewAttempts += 1;
+          if (malformedReviewAttempts < MAX_MALFORMED_REVIEW_ATTEMPTS) {
+            const malformedRetryMessage = `malformed reviewer output retry ${malformedReviewAttempts}/${MAX_MALFORMED_REVIEW_ATTEMPTS - 1}`;
+            this.runtimeStore.appendLog(record.logPath, malformedRetryMessage);
+            options.onProgress?.({ ticketLabel: ticket.label, message: malformedRetryMessage, sessionId });
+            retryReviewerOnly = true;
+            useReviewerRepairPrompt = true;
+            continue;
+          }
+
+          const malformedHandoffReason = 'Malformed reviewer output repeated after format-repair retry';
+          this.runtimeStore.updateMetadata(record.metadataPath, {
+            STATUS: 'blocked',
+            UNSAFE_REASON: malformedHandoffReason,
+            FAILURE_KIND: REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND,
+          });
+          this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, {
+            cycle: reviewCycle + 1,
+            outcome: 'handoff-required',
+            reason: malformedHandoffReason,
+            malformed: true,
+            findings: [],
+          });
+          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+            outcome: 'needs-human',
+            reason: malformedHandoffReason,
+            cycle: reviewCycle + 1,
+          });
+          this.runtimeStore.markFailed(record, 'needs-human handoff required');
+          this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
+          this.runtimeStore.appendLog(record.logPath, 'run blocked');
+          options.onProgress?.({ ticketLabel: ticket.label, message: 'malformed reviewer output handoff', sessionId });
+          return { scheduled: true, message: `Scheduled ${ticket.label}` };
+        }
+
+        malformedReviewAttempts = 0;
         const decision = decideReviewOutcome(review, { cycle: reviewCycle + 1, maxCycles: MAX_REVIEW_CYCLES });
         this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, this.buildReviewCycleEntry(reviewCycle + 1, decision));
 
@@ -226,6 +284,14 @@ export class SingleTicketRunner {
       `Execution session: ${sessionId ?? 'unknown'}`,
       `Execution status: ${executionResult.status}`,
       ...(executionResult.output?.length ? ['', 'Execution output:', ...executionResult.output] : []),
+    ].join('\n');
+  }
+
+  private buildReviewerRepairPrompt(ticketLabel: string, reviewerPromptText: string, sessionId: string | null, executionResult: { status: string; output?: string[] }): string {
+    return [
+      this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult),
+      '',
+      REVIEWER_FORMAT_REPAIR_INSTRUCTIONS,
     ].join('\n');
   }
 
