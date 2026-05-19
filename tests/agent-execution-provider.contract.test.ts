@@ -33,7 +33,7 @@ test('opencode provider maps successful execution to completed result', async ()
     },
   });
   const result = await provider.execute({
-    plan: { tickets: [{ label: 'feat/01' }] } as never,
+    plan: { model: { id: 'github-copilot/claude-sonnet-4.6' }, tickets: [{ label: 'feat/01' }] } as never,
     ticketIndex: 0,
     prompt: 'run',
     onProgress: (event) => progress.push(`${event.ticketLabel}: ${event.message}`),
@@ -57,7 +57,7 @@ test('opencode provider maps executor failures to failed status', async () => {
     },
   });
   const result = await provider.execute({
-    plan: { tickets: [{ label: 'feat/01' }] } as never,
+    plan: { model: { id: 'github-copilot/claude-sonnet-4.6' }, tickets: [{ label: 'feat/01' }] } as never,
     ticketIndex: 0,
     prompt: 'run',
   });
@@ -66,6 +66,7 @@ test('opencode provider maps executor failures to failed status', async () => {
 });
 
 test('opencode provider maps model availability output to failed status', async () => {
+  const progress: string[] = [];
   const provider = new OpenCodeAgentExecutionProvider({
     run: async () => ({
       sessionId: 'session-model-error',
@@ -74,9 +75,10 @@ test('opencode provider maps model availability output to failed status', async 
   });
 
   const result = await provider.execute({
-    plan: { tickets: [{ label: 'feat/01' }] } as never,
+    plan: { model: { id: 'github-copilot/claude-sonnet-4.6' }, tickets: [{ label: 'feat/01' }] } as never,
     ticketIndex: 0,
     prompt: 'run',
+    onProgress: (event) => progress.push(`${event.kind ?? 'message'}:${event.message}`),
   });
 
   assert.equal(result.status, 'failed');
@@ -84,6 +86,7 @@ test('opencode provider maps model availability output to failed status', async 
   assert.equal(result.removable, false);
   assert.match(result.unsafeReason ?? '', /requested model is not available/);
   assert.deepEqual(result.output, ['The requested model is not available for integrator "copilot-language-server".']);
+  assert.match(progress.join('\n'), /failure:provider failure: selected implementation model/);
 });
 
 test('opencode provider forwards permission progress events', async () => {

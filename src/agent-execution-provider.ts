@@ -1,5 +1,6 @@
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
+import { classifyProviderFailure, formatProviderFailureMessage } from './provider-failure.js';
 
 export type AgentInvocationMode = 'execution' | 'reviewer';
 
@@ -118,6 +119,14 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         decidePermission: decideAfkPermission,
       });
       const failureReason = detectOpenCodeFailure(result.output ?? []);
+      if (failureReason) {
+        request.onProgress?.({
+          ticketLabel: ticket.label,
+          kind: 'failure',
+          message: formatProviderFailureMessage({ modelId: model?.id ?? 'unknown', mode: invocationMode, reason: failureReason }),
+          sessionId: result.sessionId ?? null,
+        });
+      }
       request.onProgress?.({
         ticketLabel: ticket.label,
         message: failureReason
@@ -133,12 +142,16 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         unsafeReason: failureReason ?? (result.sessionId ? null : 'session id unavailable from opencode'),
       };
     } catch (error) {
-      request.onProgress?.({ ticketLabel: ticket.label, message: `opencode execution failed: ${error instanceof Error ? error.message : 'unknown error'}` });
+      const reason = error instanceof Error ? error.message : 'opencode execution failed';
+      const invocationMode = request.invocationMode ?? 'execution';
+      const model = invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
+      request.onProgress?.({ ticketLabel: ticket.label, kind: 'failure', message: formatProviderFailureMessage({ modelId: model?.id ?? 'unknown', mode: invocationMode, reason }) });
+      request.onProgress?.({ ticketLabel: ticket.label, message: `opencode execution failed: ${reason}` });
       return {
         status: 'failed',
         sessionId: null,
         removable: false,
-        unsafeReason: error instanceof Error ? error.message : 'opencode execution failed',
+        unsafeReason: reason,
         output: ['opencode execution failed'],
       };
     }
