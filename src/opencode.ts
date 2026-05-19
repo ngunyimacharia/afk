@@ -112,7 +112,12 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
 }
 
 async function createAfkOpencode(): ReturnType<typeof createOpencode> {
-  return createOpencode({ port: OPENCODE_EPHEMERAL_PORT });
+  return createAfkOpencodeWith(createOpencode);
+}
+
+export function createAfkOpencodeWith(factory: (options: { port: number }) => ReturnType<typeof createOpencode>): ReturnType<typeof createOpencode> {
+  process.env.OPENCODE_PURE = 'true';
+  return factory({ port: OPENCODE_EPHEMERAL_PORT });
 }
 
 function composePermissionDecisionProvider(

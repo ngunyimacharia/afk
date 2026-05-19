@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractModelsFromProvidersPayload, extractSessionOutputLines, formatOpenCodeEvent, parseOpenCodeEvent } from '../src/opencode.js';
+import { createAfkOpencodeWith, extractModelsFromProvidersPayload, extractSessionOutputLines, formatOpenCodeEvent, parseOpenCodeEvent } from '../src/opencode.js';
 
 test('extracts models when provider models are object maps', () => {
   const models = extractModelsFromProvidersPayload({
@@ -92,4 +92,29 @@ test('formats opencode permission replies', () => {
     formatOpenCodeEvent({ type: 'permission.replied', properties: { sessionID: 'session-1', permissionID: 'per_123', response: 'once' } }, 'session-1'),
     'opencode permission once (per_123)',
   );
+});
+
+test('sets OPENCODE_PURE before creating opencode sdk server', async () => {
+  const previousPure = process.env.OPENCODE_PURE;
+  try {
+    process.env.OPENCODE_PURE = 'false';
+    let observedPure: string | undefined;
+    let observedPort: number | undefined;
+
+    await createAfkOpencodeWith(async ({ port }) => {
+      observedPure = process.env.OPENCODE_PURE;
+      observedPort = port;
+      return {} as Awaited<ReturnType<typeof createAfkOpencodeWith>>;
+    });
+
+    assert.equal(observedPure, 'true');
+    assert.equal(observedPort, 0);
+    assert.equal(process.env.OPENCODE_PURE, 'true');
+  } finally {
+    if (previousPure === undefined) {
+      delete process.env.OPENCODE_PURE;
+    } else {
+      process.env.OPENCODE_PURE = previousPure;
+    }
+  }
 });
