@@ -102,7 +102,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
       });
       input.onProgress?.({ message: 'opencode prompt completed', sessionId: sessionId || null });
       const output = sessionId ? await readSessionOutput(sdk.client, sessionId) : [];
-      return { sessionId: sessionId || null, output: output.length ? output : ['opencode session prompt completed'] };
+      return { sessionId: sessionId || null, output };
     } finally {
       abortController.abort();
       await settleEventTask(eventTask);
@@ -372,7 +372,7 @@ async function callSessionMessages(messages: (options?: unknown) => Promise<unkn
 }
 
 export function extractSessionOutputLines(payload: unknown): string[] {
-  const messages = Array.isArray(payload) ? payload : [];
+  const messages = normalizeSessionMessages(payload);
   const lines: string[] = [];
   for (const message of messages) {
     const item = message as { info?: unknown; parts?: unknown[] } | null;
@@ -384,6 +384,21 @@ export function extractSessionOutputLines(payload: unknown): string[] {
     }
   }
   return uniqueNonEmpty(lines);
+}
+
+function normalizeSessionMessages(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  const objectPayload = readObject(payload);
+  if (!objectPayload) return [];
+
+  const directMessages = objectPayload.messages;
+  if (Array.isArray(directMessages)) return directMessages;
+
+  const nestedData = readObject(objectPayload.data);
+  if (!nestedData) return [];
+  const nestedMessages = nestedData.messages;
+  if (Array.isArray(nestedMessages)) return nestedMessages;
+  return [];
 }
 
 function formatMessageError(error: unknown): string | null {

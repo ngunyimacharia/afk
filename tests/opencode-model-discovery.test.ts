@@ -53,6 +53,19 @@ test('extracts durable session output from assistant message errors and text par
   ]);
 });
 
+test('extracts session output when messages are wrapped in an object payload', () => {
+  const output = extractSessionOutputLines({
+    messages: [
+      {
+        info: { role: 'assistant' },
+        parts: [{ type: 'text', text: 'Wrapped response line' }],
+      },
+    ],
+  });
+
+  assert.deepEqual(output, ['Wrapped response line']);
+});
+
 test('formats session-level opencode progress events from real event stream shape', () => {
   assert.equal(formatOpenCodeEvent({ type: 'session.status', properties: { sessionID: 'session-1', status: { type: 'busy' } } }, 'session-1'), 'opencode session busy');
   assert.equal(formatOpenCodeEvent({ type: 'session.idle', properties: { sessionID: 'session-1' } }, 'session-1'), 'opencode session idle');
