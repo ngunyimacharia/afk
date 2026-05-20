@@ -1,23 +1,12 @@
 ---
-description: Turn conversation context, a PRD, spec, or plan into a canonical Local Markdown scratch package with a PRD and AFK-ready implementation issues.
-mode: subagent
-permission:
-  read: allow
-  glob: allow
-  grep: allow
-  webfetch: allow
-  question: allow
-  edit: allow
-  bash: deny
-  task: deny
-  skill: deny
+description: Turn conversation context, a PRD, spec, or plan into a canonical Local Markdown scratch package with a PRD and AFK-ready implementation issues
 ---
 
 # To Scratch
 
-You turn the current conversation context, an existing PRD, a spec, or an implementation plan into one or more canonical Local Markdown feature packages under `.scratch/`.
+Turn the current conversation context, an existing PRD, a spec, or an implementation plan into one or more canonical Local Markdown feature packages under `.scratch/`.
 
-Your default output is a complete scratch package:
+The default output is a complete scratch package:
 
 ```text
 .scratch/
@@ -44,7 +33,7 @@ The PRD captures the product intent for review and handoff. The issues break tha
 - Before drafting, inspect the repo and relevant docs if you have not already.
 - Use the project's domain glossary and naming conventions throughout.
 - Respect ADRs, design docs, and other architecture guidance in the area you touch.
-- Determine local issue tracker conventions from repo docs, starting with `AGENTS.md` and `docs/agents/issue-tracker.md`.
+- Use the Local Markdown conventions in this command as the source of truth for scratch package layout, triage statuses, dependencies, comments, and verification expectations.
 - Produce multiple feature packages when the request naturally contains multiple products, user outcomes, deep modules, or independently testable feature slices.
 - Choose deterministic, human-readable folder slugs derived from each PRD title or scope.
 - Keep PRDs user-facing where possible. Do not drift into a low-level design doc.
@@ -74,6 +63,9 @@ Rules:
 - Issue files are always placed under `.scratch/<feature-slug>/issues/`.
 - Issue files are numbered from `01` and use stable slug basenames.
 - Never publish implementation issue files directly under `.scratch/<feature-slug>/`.
+- Triage state is recorded as a `Status:` line near the top of each issue file.
+- Machine-readable ticket metadata should use YAML frontmatter when present.
+- Comments and conversation history append under a `## Comments` heading.
 - If the repo contains a non-canonical feature folder, such as `.scratch/<feature-slug>/prd.md` or `.scratch/<feature-slug>/01-slice.md`, normalize future output to the canonical layout and report the mismatch.
 - Each issue must begin with `Status: ready-for-agent` before the title or any other body content unless the conversation explicitly requires a different canonical status.
 - AFK derives `.scratch/<feature-slug>/execution.json` from issue markdown and `.scratch/execution.json` from selected feature PRDs; do not hand-author these derived files.
@@ -95,7 +87,7 @@ When a PRD or issue needs a non-default AFK worktree or branch name, include opt
 
 ```yaml
 afk_worktree: custom-name
-afk_branch: afk/custom-name
+afk_branch: custom-name
 ```
 
 - `afk_worktree` is a name, not an absolute path, and maps to repo-local `.worktree/<name>`.
@@ -110,6 +102,36 @@ afk_branch: afk/custom-name
 - Add same-feature issue dependencies to issue YAML frontmatter as `Depends-On` using issue basenames only, without paths or `.md`.
 - Use `Depends-On` only for true same-feature issue blockers, not preferred ordering.
 
+Dependency frontmatter examples:
+
+```md
+---
+status: ready-for-agent
+Depends-On:
+  - 01-foundation
+  - 02-shared-types
+---
+```
+
+```md
+---
+Depends-On-Features:
+  - auth-core
+---
+```
+
+## Triage Status Semantics
+
+Use these canonical Local Markdown status strings unless the conversation explicitly requires a different status:
+
+| Triage role | Status value | Meaning |
+| ----------- | ------------ | ------- |
+| `needs-triage` | `needs-triage` | Maintainer needs to evaluate this issue |
+| `needs-info` | `needs-info` | Waiting on reporter for more information |
+| `ready-for-agent` | `ready-for-agent` | Fully specified, ready for an AFK agent |
+| `ready-for-human` | `ready-for-human` | Requires human implementation |
+| `wontfix` | `wontfix` | Will not be actioned |
+
 ## Repo Grounding
 
 During exploration, look for:
@@ -119,8 +141,6 @@ During exploration, look for:
 - docs such as `README`, `CONTEXT.md`, `CONTEXT-MAP.md`, ADRs, feature specs, and glossary docs
 - existing test patterns and nearby prior art
 - agent index docs or planning guidance, if relevant to scratch package structure
-- local issue tracker dependency conventions in `docs/agents/issue-tracker.md`
-- triage status conventions in `docs/agents/triage-labels.md`
 
 ## PRD Guidance
 
@@ -141,7 +161,7 @@ Do not include file paths unless the user explicitly asks for them or a path is 
 
 ## Issue Breakdown Guidance
 
-Your default style is tracer-bullet vertical slicing:
+Use tracer-bullet vertical slicing:
 
 - prefer end-to-end slices over horizontal layers
 - make each issue small enough to grab and finish
@@ -193,6 +213,14 @@ Rules:
 - Do not mark an issue `HITL` just because it is important, risky, or large.
 - If an issue can be split into AFK pre-work plus a smaller HITL decision point, prefer that split.
 - Map `AFK` and `HITL` to the repo's configured local status or label conventions when present.
+
+## Automated Code Test Expectations
+
+Every implementation issue must include automated code test expectations in its Verification section:
+
+- Name the automated code tests to add or run.
+- If no automated code test is appropriate, explicitly say so and provide fallback verification such as manual steps, demo output, logs, or screenshots.
+- Distinguish automated code tests from manual checks or non-code verification.
 
 ## Issue Template
 

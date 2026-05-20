@@ -7,11 +7,6 @@ This directory documents the AFK implementation that exists in this repository t
 - `workflow.md`: launch flow, ticket lifecycle, and execution boundaries
 - `operations.md`: summary, cleanup, sync, and runtime artifact behavior
 
-## Agent Docs
-
-- `agents/issue-tracker.md`: local markdown issue-tracker conventions
-- `agents/triage-labels.md`: canonical AFK triage vocabulary
-
 ## Source Landmarks
 
 - `artifacts/`: tracked syncable harness assets

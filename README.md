@@ -135,7 +135,6 @@ bun run build
 - `src/prompts/`: internal AFK runner prompt templates, not synced into OpenCode
 - `tests/`: Node test runner coverage for AFK behavior
 - `docs/`: repo documentation
-- `docs/agents/`: issue-tracker and triage conventions for agents
 - `artifacts/`: tracked harness assets used by `afk sync`
 - `.scratch/`: local issue tracker and AFK runtime workspace
 
@@ -144,8 +143,6 @@ bun run build
 - `docs/README.md`
 - `docs/workflow.md`
 - `docs/operations.md`
-- `docs/agents/issue-tracker.md`
-- `docs/agents/triage-labels.md`
 
 ## Credits
 
