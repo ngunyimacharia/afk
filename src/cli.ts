@@ -78,6 +78,7 @@ export async function runAfk(
   if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
   const worktreePreparationService = new WorktreePreparationService();
   const runtimeStore = new RuntimeStore({ repoRoot });
+  const launchPreferences = runtimeStore.readLaunchPreferences();
   let model: LaunchModel | undefined;
   let reviewerModel: LaunchModel | undefined;
   let reviewerPrompt: { id: string; label: string; path: string } | undefined;
@@ -91,7 +92,7 @@ export async function runAfk(
         message: 'No OpenCode models available. Configure models in OpenCode and run `afk` again.',
       };
     }
-    const wizard = await runInteractiveLaunchWizard({ io, repoRoot, models, tickets, preferences: runtimeStore.readLaunchPreferences() });
+    const wizard = await runInteractiveLaunchWizard({ io, repoRoot, models, tickets, preferences: launchPreferences });
     if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
     model = wizard.model;
     reviewerModel = wizard.reviewerModel;
@@ -131,7 +132,7 @@ export async function runAfk(
   const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt });
   plan.checkouts = checkouts;
   const permissionCoordinator = new PermissionCoordinator({ ticketLabel: selectedTickets[0]?.label });
-  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator));
+  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator), undefined, launchPreferences.budgets);
   const scheduler = new Scheduler(runner, concurrency);
   const progressLine = createProgressLine(io.stdout, { isPromptActive: () => permissionCoordinator.promptActive });
   try {

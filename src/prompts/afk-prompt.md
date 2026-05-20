@@ -12,6 +12,9 @@ You are running in fully autonomous AFK mode. Your job is to implement the attac
    feature selection, execution ordering, and stacked branch base selection.
 3. **Execute fully**: Implement the ticket completely. Write code, tests, and
    documentation as needed.
+   - Do not create fixup commits unless the reviewer reported concrete findings tied to this ticket.
+   - Do not run or repair disabled test suites unless the selected ticket explicitly requires that work.
+   - Do not rediscover or retry known readiness failures unless the selected ticket explicitly requires fixing them.
 4. **Verify**: Run any existing tests or verification steps mentioned in the
    ticket. If tests fail, fix them.
 5. **Commit**: When the work is complete, commit the changes using

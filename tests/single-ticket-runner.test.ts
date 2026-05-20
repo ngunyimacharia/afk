@@ -91,6 +91,16 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
   assert.deepEqual(modes, ['execution', 'reviewer']);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-007.json');
   assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "approved"/);
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { PHASE_HISTORY?: Array<{ name: string; durationMs: number }> };
+  assert.deepEqual(metadata.PHASE_HISTORY?.map((phase) => phase.name), [
+    'launch-preparation',
+    'worktree-preparation',
+    'readiness',
+    'execution',
+    'review',
+    'finalization',
+  ]);
+  assert.equal((metadata.PHASE_HISTORY ?? []).every((phase) => phase.durationMs >= 0), true);
 });
 
 test('does not promote completed runs without an AFK summary', async () => {
@@ -128,7 +138,15 @@ test('records failed state when the provider throws', async () => {
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, true);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-002.json');
-  assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "failed"/);
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { STATUS: string; PHASE_HISTORY?: Array<{ name: string; durationMs: number }> };
+  assert.equal(metadata.STATUS, 'failed');
+  assert.deepEqual(metadata.PHASE_HISTORY?.map((phase) => phase.name), [
+    'launch-preparation',
+    'worktree-preparation',
+    'readiness',
+    'execution',
+  ]);
+  assert.equal((metadata.PHASE_HISTORY ?? []).every((phase) => phase.durationMs >= 0), true);
 });
 
 test('persists failed provider output for later inspection', async () => {
@@ -219,4 +237,133 @@ test('scheduler forwards progress events from queued tickets', async () => {
     'feat-a/001: starting ticket run',
     'feat-b/001: starting ticket run',
   ]);
+});
+
+test('retries malformed reviewer once without starting another execution', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-malformed-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  let executionCalls = 0;
+  let reviewCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewCalls += 1;
+        if (reviewCalls === 1) return { status: 'completed', sessionId: 's-review', output: ['not json'] };
+        return { status: 'completed', sessionId: 's-review', output: [JSON.stringify({ summary: 'ok', findings: [] })] };
+      }
+      executionCalls += 1;
+      return { status: 'completed', sessionId: 's-exec' };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'm1', label: 'feat/m1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  assert.equal(executionCalls, 1);
+  assert.equal(reviewCalls, 2);
+});
+
+test('hands off when malformed reviewer retry budget is exceeded', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-malformed-cap-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => invocationMode === 'reviewer'
+      ? { status: 'completed', sessionId: 's-review', output: ['not json'] }
+      : { status: 'completed', sessionId: 's-exec' },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'm2', label: 'feat/m2', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-m2.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { STATUS: string; BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }> };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'malformed-reviewer-retries');
+});
+
+test('applies real fixup cap to major findings and then hands off', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-fixup-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  let executionCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 's-review', output: [JSON.stringify({ summary: 'still broken', findings: [{ severity: 'major', title: 'x', detail: 'y' }] })] };
+      }
+      executionCalls += 1;
+      return { status: 'completed', sessionId: 's-exec' };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'fx', label: 'feat/fx', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+  assert.equal(executionCalls, 3);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-fx.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }> };
+  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'fixup-cycle-cap');
+});
+
+test('does not retry implementation when provider fails by default', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-provider-'));
+  const store = new RuntimeStore({ repoRoot });
+  let calls = 0;
+  const runner = new SingleTicketRunner(store, { execute: async () => { calls += 1; throw new Error('provider down'); } });
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'pf', label: 'feat/pf', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+  assert.equal(calls, 1);
+});
+
+test('hands off when per-phase wall clock budget is exceeded', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-phase-'));
+  let tick = 0;
+  const store = new RuntimeStore({ repoRoot, now: () => tick++ * 10 });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => invocationMode === 'reviewer'
+      ? { status: 'completed', sessionId: 's-review', output: [JSON.stringify({ summary: 'ok', findings: [] })] }
+      : { status: 'completed', sessionId: 's-exec' },
+  }, undefined, { phaseWallClockMs: { execution: 5 } });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'p1', label: 'feat/p1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-p1.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { STATUS: string; BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }> };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'phase-execution-wall-clock-ms');
+});
+
+test('hands off when per-ticket wall clock budget is exceeded', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-ticket-'));
+  let nowValue = 0;
+  const realDateNow = Date.now;
+  Date.now = () => nowValue;
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      nowValue += 20;
+      return invocationMode === 'reviewer'
+        ? { status: 'completed', sessionId: 's-review', output: [JSON.stringify({ summary: 'ok', findings: [] })] }
+        : { status: 'completed', sessionId: 's-exec' };
+    },
+  }, undefined, { ticketWallClockMs: 10 });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 't1', label: 'feat/t1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  try {
+    await runner.launch(plan as never);
+  } finally {
+    Date.now = realDateNow;
+  }
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-t1.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { STATUS: string; BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }> };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'ticket-wall-clock-ms');
 });

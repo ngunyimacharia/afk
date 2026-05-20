@@ -36,20 +36,30 @@ You are the AFK reviewer. Evaluate the completed ticket in read-only mode. Your 
 
 ## Output Format
 
-Start with one of these verdicts:
+Return strict JSON only (no prose, no markdown fences). Use this shape:
 
-- \`BLOCKED\`: the work should not be accepted until findings are fixed.
-- \`PASS WITH RISKS\`: no blocking finding, but verification gaps or residual risks remain.
-- \`PASS\`: no material findings and verification is adequate.
+\`{"verdict":"BLOCKED|PASS WITH RISKS|PASS","summary":"...","findings":[...],"verification":["..."],"scopeMatch":"...","residualRisks":["..."]}\`
 
-Then write:
+Set \`verdict\` to one of these values:
 
-1. \`Findings\`: ordered by severity. Each finding must include severity, file/line reference when available, observed evidence, impact, and the smallest useful remediation.
-2. \`Verification\`: tests or checks you saw evidence for, plus any important checks that are missing.
-3. \`Scope Match\`: whether the ticket acceptance criteria appear satisfied.
-4. \`Residual Risks\`: brief notes only when something could not be verified from available evidence.
+- \`BLOCKED\`: one or more major/blocking findings mean the work should not be accepted yet.
+- \`PASS WITH RISKS\`: no blocking finding, but meaningful verification gaps or residual risks remain.
+- \`PASS\`: clean pass with no material findings and adequate verification.
 
-If there are no findings, state \`No findings.\` under \`Findings\` and still include verification and scope-match notes.
+Required fields:
+
+1. \`findings\`: ordered by severity. Each finding must include severity, file/line reference when available, observed evidence, impact, and the smallest useful remediation.
+2. \`verification\`: tests or checks you saw evidence for, plus any important checks that are missing.
+3. \`scopeMatch\`: whether the ticket acceptance criteria appear satisfied.
+4. \`residualRisks\`: brief notes only when something could not be verified from available evidence.
+
+If there are no findings, return \`"findings": []\` and summarize as \`No findings.\`.
+
+Examples:
+
+- Clean pass: \`{"verdict":"PASS","summary":"No findings.","findings":[]}\`
+- Minor-risk pass: \`{"verdict":"PASS WITH RISKS","summary":"No blocking findings; verification gap remains.","findings":[{"severity":"low","title":"Missing regression test"}]}\`
+- Major/blocker: \`{"verdict":"BLOCKED","summary":"Blocking requirement gap found.","findings":[{"severity":"high","title":"Acceptance criterion not implemented"}]}\`
 `;
 
 const CATALOG: Record<string, ReviewerPromptTemplate> = {

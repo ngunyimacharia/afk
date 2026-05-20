@@ -391,13 +391,13 @@ function normalizeSessionMessages(payload: unknown): unknown[] {
   const objectPayload = readObject(payload);
   if (!objectPayload) return [];
 
-  const directMessages = objectPayload.messages;
-  if (Array.isArray(directMessages)) return directMessages;
+  if (Array.isArray(objectPayload.messages)) return objectPayload.messages;
+  if (Array.isArray(objectPayload.items)) return objectPayload.items;
 
   const nestedData = readObject(objectPayload.data);
   if (!nestedData) return [];
-  const nestedMessages = nestedData.messages;
-  if (Array.isArray(nestedMessages)) return nestedMessages;
+  if (Array.isArray(nestedData.messages)) return nestedData.messages;
+  if (Array.isArray(nestedData.items)) return nestedData.items;
   return [];
 }
 

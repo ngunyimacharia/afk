@@ -18,6 +18,26 @@ export interface LaunchPreferences {
   modelId?: string;
   reviewerModelId?: string;
   concurrency?: number;
+  budgets?: Partial<BudgetPolicy>;
+}
+
+export interface BudgetPolicy {
+  malformedReviewerRetries: number;
+  fixupCycleLimit: number;
+  providerFailureRetries: number;
+  ticketWallClockMs?: number;
+  phaseWallClockMs?: Partial<Record<BudgetPhaseName, number>>;
+}
+
+export type BudgetPhaseName = 'execution' | 'review' | 'fixup';
+
+export interface BudgetExceededEvent {
+  budgetName: string;
+  limit: number;
+  observed: number;
+  phase: string;
+  cycle: number;
+  evidence: string;
 }
 
 export interface ReviewerPromptTemplate {
@@ -77,6 +97,14 @@ export interface ReviewTerminalOutcomeRecord {
   cycle: number;
 }
 
+export interface PhaseHistoryEntry {
+  name: string;
+  startTime: string;
+  endTime: string;
+  durationMs: number;
+  cycle?: number;
+}
+
 export interface RuntimeMetadataRecord {
   TICKET_PATH: string;
   FEATURE_SLUG: string;
@@ -93,9 +121,12 @@ export interface RuntimeMetadataRecord {
   REVIEWER_PROMPT_ID?: string;
   REVIEWER_PROMPT_PATH?: string;
   REVIEW_CYCLE_HISTORY?: ReviewCycleHistoryEntry[];
+  PHASE_HISTORY?: PhaseHistoryEntry[];
   FINAL_REVIEW_OUTCOME?: ReviewTerminalOutcome | null;
   FINAL_REVIEW_REASON?: string | null;
   FINAL_REVIEW_CYCLE?: number | null;
+  EFFECTIVE_BUDGETS?: BudgetPolicy;
+  BUDGET_EXCEEDED_EVENTS?: BudgetExceededEvent[];
   PROVIDER_SESSION_ID: string | null;
   PROVIDER_SESSION_REMOVABLE: boolean;
   INSPECTION_PROVIDER: string | null;
