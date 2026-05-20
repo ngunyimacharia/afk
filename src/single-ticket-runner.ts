@@ -284,6 +284,7 @@ export class SingleTicketRunner {
       outcome: 'needs-human',
       reason,
       cycle: event.cycle,
+      classification: event.budgetName === 'fixup-cycle-cap' ? 'real-finding-handoff' : undefined,
     }));
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
       this.runtimeStore.markFailed(record, reason);

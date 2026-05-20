@@ -30,11 +30,11 @@ test('embedded reviewer prompt matches the markdown prompt source', () => {
   assert.equal(resolveReviewerPromptTemplate().content, source);
 });
 
-test('reviewer prompt enforces strict json and verdict examples', () => {
+test('reviewer prompt enforces strict json and schema examples', () => {
   const source = readFileSync(new URL('../src/prompts/reviewer-default.md', import.meta.url), 'utf8');
-  assert.match(source, /Return strict JSON only \(no prose, no markdown fences\)\./);
-  assert.match(source, /"verdict":"BLOCKED\|PASS WITH RISKS\|PASS"/);
-  assert.match(source, /Clean pass:/);
-  assert.match(source, /Minor-risk pass:/);
-  assert.match(source, /Major\/blocker:/);
+  assert.match(source, /Return strict JSON only\. Do not include markdown fences/);
+  assert.match(source, /"severity": "minor \| major \| blocker"/);
+  assert.match(source, /Clean pass \(`findings: \[]`\):/);
+  assert.match(source, /Pass with minor-only findings:/);
+  assert.match(source, /Major\/blocker findings:/);
 });
