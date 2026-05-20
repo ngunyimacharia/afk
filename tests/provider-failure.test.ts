@@ -46,3 +46,18 @@ test('detects concrete provider failures during preflight', () => {
     'The requested model is not available for integrator "copilot-language-server".',
   );
 });
+
+test('classifies path-not-found failures', () => {
+  const classification = classifyProviderFailure('Tool failed: ENOENT: no such file or directory, open \"/tmp/missing.md\"');
+  assert.equal(classification?.kind, 'path-not-found');
+});
+
+test('classifies patch-context-mismatch failures', () => {
+  const classification = classifyProviderFailure('apply_patch verification failed: Failed to find expected lines in src/example.ts (context mismatch)');
+  assert.equal(classification?.kind, 'patch-context-mismatch');
+});
+
+test('classifies missing dependency failures', () => {
+  const classification = classifyProviderFailure('PHP Warning: require(vendor/autoload.php): Failed to open stream: No such file or directory');
+  assert.equal(classification?.kind, 'dependency-missing');
+});

@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, AgentExecutionResult, BudgetExceededEvent, BudgetPhaseName, BudgetPolicy, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
+import type { AgentExecutionProgressCallback, AgentExecutionResult, BudgetExceededEvent, BudgetPhaseName, BudgetPolicy, LaunchBlockEvidence, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { buildPrompt } from './prompt-builder.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import { classifyProviderFailure } from './provider-failure.js';
+import { validateSelectedTicketPath } from './path-validation.js';
 
 const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
 const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
@@ -17,6 +18,7 @@ const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
 export interface SingleTicketRunResult {
   scheduled: boolean;
   message: string;
+  launchBlock?: LaunchBlockEvidence;
 }
 
 export class SingleTicketRunner {
@@ -30,6 +32,8 @@ export class SingleTicketRunner {
   async launch(plan: LaunchPlan, options: { onProgress?: AgentExecutionProgressCallback } = {}): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
     if (!ticket) return { scheduled: false, message: 'No ticket available for launch' };
+    const ticketPathValidation = validateSelectedTicketPath(plan.repoRoot, ticket);
+    if (ticketPathValidation) return { scheduled: false, message: ticketPathValidation.message, launchBlock: ticketPathValidation };
     options.onProgress?.({ ticketLabel: ticket.label, message: 'starting ticket run' });
     const record = this.runtimeStore.createRecord({ featureSlug: ticket.feature, issueName: ticket.issueName, ticketPath: ticket.path });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
@@ -49,10 +53,13 @@ export class SingleTicketRunner {
     const budgets = this.resolveBudgets();
     this.runtimeStore.updateMetadata(record.metadataPath, { EFFECTIVE_BUDGETS: budgets });
     this.runtimeStore.appendLog(record.logPath, `effective budgets: ${JSON.stringify(budgets)}`);
+    const snapshot = plan.snapshots?.[ticket.label];
+    if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
     let prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
       ticketContent,
+      snapshot,
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
@@ -297,10 +304,13 @@ export class SingleTicketRunner {
     if (!ticket) return { scheduled: false, message: 'No ticket available for launch' };
     if (plan.reviewerPrompt) this.runtimeStore.appendLog(record.logPath, `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`);
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
+    const snapshot = plan.snapshots?.[ticket.label];
+    if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
     const prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
       ticketContent,
+      snapshot,
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
@@ -398,6 +408,25 @@ export class SingleTicketRunner {
       malformed: decision.fallback,
       findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
     };
+  }
+
+  private recordSnapshotMetadata(metadataPath: string, snapshot: NonNullable<LaunchPlan['snapshots']>[string]): void {
+    this.runtimeStore.updateMetadata(metadataPath, {
+      SNAPSHOT_GENERATED_AT: snapshot.generatedAt,
+      SNAPSHOT_SAFE_FIELDS: {
+        ticketLabel: snapshot.ticketLabel,
+        featureSlug: snapshot.featureSlug,
+        ticketPath: snapshot.ticketPath,
+        repoRoot: snapshot.repoRoot,
+        worktreePath: snapshot.worktreePath,
+        worktreeName: snapshot.worktreeName,
+        branchName: snapshot.branchName,
+        head: snapshot.head,
+        ticketOutsideWorktree: snapshot.ticketOutsideWorktree,
+        dependencyCount: snapshot.dependencies.length,
+        readinessSourcePath: snapshot.readiness?.sourcePath ?? null,
+      },
+    });
   }
 }
 

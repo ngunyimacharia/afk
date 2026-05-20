@@ -1,9 +1,10 @@
-import type { AgentExecutionProgressCallback, LaunchPlan, TicketRecord } from './types.js';
+import type { AgentExecutionProgressCallback, LaunchBlockEvidence, LaunchPlan, TicketRecord } from './types.js';
 import type { SingleTicketRunner } from './single-ticket-runner.js';
 
 export interface SchedulerRunResult {
   scheduled: boolean;
   message: string;
+  launchBlocks?: LaunchBlockEvidence[];
 }
 
 export class Scheduler {
@@ -18,6 +19,7 @@ export class Scheduler {
     const completed = new Set(plan.tickets.filter((ticket) => isComplete(ticket.status)).map((ticket) => ticketKey(ticket)));
     const failed = new Set<string>();
     const failures: string[] = [];
+    const launchBlocks: LaunchBlockEvidence[] = [];
     let resolveIdle: (() => void) | null = null;
     const idle = new Promise<void>((resolve) => { resolveIdle = resolve; });
 
@@ -38,6 +40,7 @@ export class Scheduler {
           if (!result.scheduled) {
             failed.add(ticketKey(ticket));
             failures.push(result.message);
+            if (result.launchBlock) launchBlocks.push(result.launchBlock);
           } else {
             completed.add(ticketKey(ticket));
           }
@@ -60,6 +63,7 @@ export class Scheduler {
     return {
       scheduled: true,
       message: failures.length ? failures.join('\n') : `Scheduled ${plan.tickets.length} tickets`,
+      launchBlocks: launchBlocks.length ? launchBlocks : undefined,
     };
   }
 }

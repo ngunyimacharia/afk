@@ -1,4 +1,12 @@
-export type ProviderFailureKind = 'model-unavailable' | 'auth' | 'context-overflow' | 'tool-failed' | 'unknown';
+export type ProviderFailureKind =
+  | 'model-unavailable'
+  | 'auth'
+  | 'context-overflow'
+  | 'path-not-found'
+  | 'patch-context-mismatch'
+  | 'dependency-missing'
+  | 'tool-failed'
+  | 'unknown';
 
 export interface ProviderFailureClassification {
   kind: ProviderFailureKind;
@@ -18,6 +26,9 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
     return { kind: 'auth', reason: normalizedReason, availableModels: [] };
   }
   if (lower.includes('context overflow')) return { kind: 'context-overflow', reason: normalizedReason, availableModels: [] };
+  if (isDependencyMissing(lower)) return { kind: 'dependency-missing', reason: normalizedReason, availableModels: [] };
+  if (isPatchContextMismatch(lower)) return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
+  if (isPathNotFound(lower)) return { kind: 'path-not-found', reason: normalizedReason, availableModels: [] };
   if (lower.includes('tool failed:')) return { kind: 'tool-failed', reason: normalizedReason, availableModels: [] };
 
   return { kind: 'unknown', reason: normalizedReason, availableModels: [] };
@@ -43,4 +54,31 @@ function parseAvailableModels(reason: string): string[] {
     .split(/\s+/)
     .map((model) => model.trim().replace(/^['"]|['",]$/g, ''))
     .filter(Boolean);
+}
+
+function isPathNotFound(reason: string): boolean {
+  return (
+    reason.includes('no such file or directory') ||
+    reason.includes('enoent') ||
+    reason.includes('file not found') ||
+    reason.includes('path does not exist')
+  );
+}
+
+function isPatchContextMismatch(reason: string): boolean {
+  return (
+    reason.includes('patch does not apply') ||
+    reason.includes('hunk failed') ||
+    reason.includes('context mismatch') ||
+    reason.includes('apply_patch verification failed')
+  );
+}
+
+function isDependencyMissing(reason: string): boolean {
+  return (
+    reason.includes('vendor/autoload.php') ||
+    reason.includes('cannot find module') ||
+    reason.includes('module not found') ||
+    reason.includes('missing dependency')
+  );
 }
