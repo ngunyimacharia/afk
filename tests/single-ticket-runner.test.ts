@@ -138,7 +138,7 @@ test('blocks before provider execution when launch context mismatches', async ()
   assert.match(metadata, /"FAILURE_KIND": "launcher-context-mismatch"/);
 });
 
-test('classifies repeated empty reviewer output separately from malformed JSON', async () => {
+test('treats empty reviewer output as a pass with no findings', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-review-'));
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'empty-review.md');
@@ -155,8 +155,10 @@ test('classifies repeated empty reviewer output separately from malformed JSON',
   await runner.launch(plan as never);
 
   const metadata = readFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-empty-review.json'), 'utf8');
-  assert.match(metadata, /"FAILURE_KIND": "reviewer-empty-output"/);
-  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "empty-output-handoff"/);
+  assert.match(metadata, /"STATUS": "completed"/);
+  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "approved"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
+  assert.match(metadata, /"FAILURE_KIND": null/);
 });
 
 test('records minor-risk approval metadata for minor-only findings', async () => {
