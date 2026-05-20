@@ -1,6 +1,7 @@
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import { classifyProviderFailure, formatProviderFailureMessage } from './provider-failure.js';
+import type { PermissionCoordinator } from './permission-coordinator.js';
 
 export type AgentInvocationMode = 'execution' | 'reviewer';
 
@@ -101,7 +102,10 @@ export class FakeAgentExecutionProvider implements AgentExecutionProvider {
 }
 
 export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
-  constructor(private readonly executor: OpenCodeSessionExecutor) {}
+  constructor(
+    private readonly executor: OpenCodeSessionExecutor,
+    private readonly permissionCoordinator?: PermissionCoordinator,
+  ) {}
 
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
     const ticket = request.plan.tickets[request.ticketIndex];
@@ -116,7 +120,10 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         title: invocationMode === 'reviewer' ? `afk review: ${ticket.label}` : `afk: ${ticket.label}`,
         agent: invocationMode === 'reviewer' ? 'review' : 'build',
         onProgress: (event) => request.onProgress?.({ ticketLabel: ticket.label, ...event }),
-        decidePermission: decideAfkPermission,
+        decidePermission: (permissionRequest) => decideAfkPermission(permissionRequest, {
+          ticketLabel: ticket.label,
+          coordinator: this.permissionCoordinator,
+        }),
       });
       const failureReason = detectOpenCodeFailure(result.output ?? []);
       if (failureReason) {
@@ -158,8 +165,12 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
   }
 }
 
-export async function decideAfkPermission(request: OpenCodePermissionRequest): Promise<OpenCodePermissionDecision | null> {
+export async function decideAfkPermission(
+  request: OpenCodePermissionRequest,
+  options: { ticketLabel?: string; coordinator?: PermissionCoordinator } = {},
+): Promise<OpenCodePermissionDecision | null> {
   if (request.type === 'external_directory') return 'reject';
+  if (options.coordinator) return options.coordinator.submitForTicket(options.ticketLabel ?? 'unknown-ticket', request);
   return null;
 }
 

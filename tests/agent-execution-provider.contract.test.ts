@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { decideAfkPermission, FakeAgentExecutionProvider, OpenCodeAgentExecutionProvider } from '../src/agent-execution-provider.js';
+import { PermissionCoordinator } from '../src/permission-coordinator.js';
 
 test('normalizes execution outcomes and session ids', async () => {
   const provider = new FakeAgentExecutionProvider({ status: 'failed', sessionId: 'abc', removable: false, unsafeReason: 'sdk session id unavailable' });
@@ -130,6 +131,85 @@ test('opencode provider supplies AFK permission policy that rejects external dir
   assert.equal(decision, 'reject');
 });
 
+test('external directory auto-reject does not enter manual coordinator history', async () => {
+  const coordinator = new PermissionCoordinator({
+    promptAdapter: async () => 'once',
+  });
+
+  const decision = await decideAfkPermission(
+    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/tmp/worktree/*'] },
+    { ticketLabel: 'feat/01', coordinator },
+  );
+
+  assert.equal(decision, 'reject');
+  assert.equal(coordinator.history.length, 0);
+});
+
 test('AFK permission policy leaves non-external requests to OpenCode defaults', async () => {
   assert.equal(await decideAfkPermission({ sessionId: 'session-42', permissionId: 'per_2', type: 'bash', title: 'bash', patterns: ['bun test'] }), null);
 });
+
+test('shared permission coordinator serializes concurrent tickets FIFO', async () => {
+  const promptOrder: string[] = [];
+  const activeByPrompt: number[] = [];
+  let activePrompts = 0;
+  const releaseByPermission = new Map<string, () => void>();
+  const coordinator = new PermissionCoordinator({
+    promptAdapter: async ({ request, metadata }) => {
+      activePrompts += 1;
+      activeByPrompt.push(activePrompts);
+      promptOrder.push(`${metadata.ticketLabel}:${request.permissionId}`);
+      await new Promise<void>((resolve) => {
+        releaseByPermission.set(request.permissionId, resolve);
+      });
+      activePrompts -= 1;
+      return 'once';
+    },
+  });
+
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      const sessionId = input.title.includes('feat-a/001') ? 'session-a' : 'session-b';
+      const permissionId = sessionId === 'session-a' ? 'per-a' : 'per-b';
+      const decisionTask = input.decidePermission?.({
+        sessionId,
+        permissionId,
+        type: 'bash',
+        title: `bash-${permissionId}`,
+        patterns: ['bun test'],
+      });
+      await waitFor(() => releaseByPermission.has(permissionId));
+      releaseByPermission.get(permissionId)?.();
+      await decisionTask;
+      return { sessionId, output: ['ok'] };
+    },
+  }, coordinator);
+
+  const first = provider.execute({
+    plan: { model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat-a/001' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run-a',
+  });
+  const second = provider.execute({
+    plan: { model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat-b/001' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run-b',
+  });
+
+  await Promise.all([first, second]);
+
+  assert.deepEqual(promptOrder, ['feat-a/001:per-a', 'feat-b/001:per-b']);
+  assert.deepEqual(activeByPrompt, [1, 1]);
+  assert.deepEqual(coordinator.history.map((entry) => `${entry.metadata.ticketLabel}:${entry.request.permissionId}`), [
+    'feat-a/001:per-a',
+    'feat-b/001:per-b',
+  ]);
+});
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (condition()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail('condition not met before timeout');
+}

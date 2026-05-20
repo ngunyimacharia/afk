@@ -5,5 +5,6 @@ export { resolveLaunchModelSelection } from './launch-models.js';
 export { resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
 export { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 export { assertCommandAllowed, resolveAgentInvocationPolicy } from './agent-execution-provider.js';
+export { PermissionCoordinator, createManualPermissionPromptAdapter, formatPermissionHistorySummary, formatPermissionPromptMessage } from './permission-coordinator.js';
 export { buildLaunchPlan } from './launch-context-builder.js';
 export { runAfk } from './cli.js';

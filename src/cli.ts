@@ -17,6 +17,8 @@ import { classifyProviderFailure } from './provider-failure.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { orderSelectedFeaturesByWaves, refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
 import type { LaunchModel, TicketRecord } from './types.js';
+import { PermissionCoordinator } from './permission-coordinator.js';
+import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 
 function commandArg(): string | undefined {
   const command = process.argv[2];
@@ -128,9 +130,10 @@ export async function runAfk(
   const checkout = checkouts[firstTicket.feature];
   const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt });
   plan.checkouts = checkouts;
-  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor));
+  const permissionCoordinator = new PermissionCoordinator({ ticketLabel: selectedTickets[0]?.label });
+  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator));
   const scheduler = new Scheduler(runner, concurrency);
-  const progressLine = createProgressLine(io.stdout);
+  const progressLine = createProgressLine(io.stdout, { isPromptActive: () => permissionCoordinator.promptActive });
   try {
     await scheduler.launch(plan, { onProgress: (event) => progressLine.update(event) });
   } finally {
@@ -150,8 +153,32 @@ export async function runAfk(
       `Branch: ${plan.checkout.effectiveBranchName}`,
       `Recent git: ${plan.gitContext.commits.join(' | ')}`,
       ...readRunOutcomeLines(runtimeStore, repoRoot, firstTicket.feature, firstTicket.issueName),
+      ...formatManualPermissionReviewLines(permissionCoordinator.history),
     ].join('\n'),
   };
+}
+
+export function formatManualPermissionReviewLines(history: readonly PermissionDecisionHistoryEntry[]): string[] {
+  if (!history.length) return ['Manual permission review: none required.'];
+
+  return [
+    'Manual permission review summary:',
+    ...history.map((entry) => {
+      const patterns = entry.metadata.patterns.length ? entry.metadata.patterns.join(', ') : 'none';
+      const decision = entry.safeDefaultReason ? `${entry.decision} (${entry.safeDefaultReason})` : entry.decision;
+      return [
+        `#${entry.order}`,
+        `ticket=${entry.metadata.ticketLabel}`,
+        `session=${entry.metadata.sessionId}`,
+        `permission=${entry.metadata.permissionId}`,
+        `type=${entry.metadata.type}`,
+        `title=${entry.metadata.title}`,
+        `patterns=${patterns}`,
+        `decision=${decision}`,
+        `recordedAt=${entry.recordedAt}`,
+      ].join(' | ');
+    }),
+  ];
 }
 
 async function preflightSelectedModels(executor: OpenCodeSessionExecutor, model: LaunchModel, reviewerModel: LaunchModel): Promise<string | null> {

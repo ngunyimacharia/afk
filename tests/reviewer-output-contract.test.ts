@@ -47,9 +47,10 @@ test('falls back safely when reviewer output cannot be parsed', () => {
 
   assert.equal(review.fallback, true);
   assert.equal(review.highestSeverity, 'major');
-  assert.equal(review.findings.length, 1);
-  assert.equal(review.findings[0]?.severity, 'major');
-  assert.match(review.findings[0]?.detail ?? '', /this is not structured reviewer output/);
+  assert.equal(review.summary, 'Malformed reviewer output');
+  assert.equal(review.failureKind, 'malformed-output');
+  assert.deepEqual(review.findings, []);
+  assert.match(review.raw, /this is not structured reviewer output/);
 });
 
 test('parses JSON object embedded in plain-text reviewer output', () => {

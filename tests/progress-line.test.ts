@@ -75,6 +75,51 @@ test('progress line resumes after permission is resolved', () => {
   assert.match(output, /tool bash running: bun test/);
 });
 
+test('progress line suppresses normal writes while prompt is active', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  let promptActive = true;
+  const progressLine = createProgressLine(stdout, { isPromptActive: () => promptActive });
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'tool bash running: bun test' });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'opencode session busy' });
+  assert.equal(writes.length, 0);
+
+  promptActive = false;
+  progressLine.update({ ticketLabel: 'feat/001', message: 'tool bash completed: bun test' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /tool bash completed: bun test/);
+  assert.doesNotMatch(output, /tool bash running: bun test/);
+});
+
+test('progress line pauses spinner redraw while prompt is active', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  let promptActive = false;
+  const progressLine = createProgressLine(stdout, { isPromptActive: () => promptActive });
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  const writesBeforePrompt = writes.length;
+  await wait(160);
+  const writesAfterFirstTick = writes.length;
+  assert.ok(writesAfterFirstTick > writesBeforePrompt);
+
+  promptActive = true;
+  await wait(160);
+  const writesDuringPrompt = writes.length;
+  await wait(160);
+  assert.equal(writes.length, writesDuringPrompt);
+
+  promptActive = false;
+  progressLine.update({ ticketLabel: 'feat/001', message: 'resumed' });
+  await wait(160);
+  assert.ok(writes.length > writesDuringPrompt);
+
+  progressLine.done();
+});
+
 test('progress line prints durable provider failures', () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);
@@ -100,4 +145,8 @@ function fakeStdout(isTTY: boolean, writes: string[]): NodeJS.WriteStream {
       return true;
     },
   } as NodeJS.WriteStream;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
