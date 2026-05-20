@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { SyncAdapter, SyncReport, SyncActionStatus } from './types.js';
 
@@ -19,6 +20,10 @@ async function readIfFile(filePath: string): Promise<string | null> {
   return fs.readFile(filePath, 'utf8');
 }
 
+async function directoryExists(directoryPath: string): Promise<boolean> {
+  return fs.access(directoryPath, constants.R_OK).then(() => true, () => false);
+}
+
 export class AssetSyncEngine {
   constructor(private readonly adapter: SyncAdapter) {}
 
@@ -30,6 +35,7 @@ export class AssetSyncEngine {
       if (category.destinationBase) {
         ensureWithinRoot(normalizeRoot(category.destinationBase), destinationRoot);
       }
+      if (!(await directoryExists(sourceRoot))) continue;
       await fs.mkdir(destinationRoot, { recursive: true });
       const entries = await fs.readdir(sourceRoot, { withFileTypes: true });
       for (const entry of entries) {

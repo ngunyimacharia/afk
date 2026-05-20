@@ -41,6 +41,15 @@ test('creates missing destination directories', async () => {
   assert.equal(await readFile(path.join(nestedDst, 'a.md'), 'utf8'), '# A');
 });
 
+test('ignores missing source directories', async () => {
+  const { root, dst } = await fixture();
+  const missingSrc = path.join(root, 'missing');
+  const engine = new AssetSyncEngine({ id: 'test', assetCategories: () => [{ name: 'docs', sourceRoot: missingSrc, destinationRoot: dst, extensions: ['.md'] }] });
+  const report = await engine.execute();
+  assert.deepEqual(report.counts, { created: 0, updated: 0, unchanged: 0, skipped: 0 });
+  assert.deepEqual(report.actions, []);
+});
+
 test('leaves unchanged files untouched', async () => {
   const { src, dst } = await fixture();
   await writeFile(path.join(src, 'a.md'), '# A');
