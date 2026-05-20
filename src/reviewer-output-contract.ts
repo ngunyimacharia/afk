@@ -15,6 +15,7 @@ export interface ParsedReviewerOutput {
   findings: ReviewerFinding[];
   highestSeverity: ReviewerSeverity;
   fallback: boolean;
+  failureKind?: 'malformed-output';
   raw: string;
 }
 
@@ -154,17 +155,12 @@ function highestSeverityFromFindings(findings: ReviewerFinding[]): ReviewerSever
 }
 
 function fallbackParsedOutput(raw: string): ParsedReviewerOutput {
-  const fallbackFinding: ReviewerFinding = {
-    severity: 'major',
-    title: 'Malformed reviewer output',
-    detail: raw.trim() || 'Reviewer output could not be parsed into the expected contract.',
-  };
-
   return {
     summary: 'Malformed reviewer output',
-    findings: [fallbackFinding],
+    findings: [],
     highestSeverity: 'major',
     fallback: true,
+    failureKind: 'malformed-output',
     raw,
   };
 }
