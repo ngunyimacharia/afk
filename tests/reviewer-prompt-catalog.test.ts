@@ -8,6 +8,13 @@ test('loads the deterministic reviewer prompt', () => {
   assert.equal(template.id, 'reviewer-default');
   assert.equal(template.path, 'builtin:reviewer-default');
   assert.match(template.content ?? '', /# Reviewer Prompt/);
+  assert.match(template.content ?? '', /Return strict JSON only\./);
+  assert.match(template.content ?? '', /"summary"\s*:\s*"string"/);
+  assert.match(template.content ?? '', /"findings"\s*:\s*\[/);
+  assert.match(template.content ?? '', /"findings": \[\]/);
+  assert.match(template.content ?? '', /"severity": "minor"/);
+  assert.match(template.content ?? '', /"severity": "major"/);
+  assert.match(template.content ?? '', /"severity": "blocker"/);
 });
 
 test('resolves the embedded reviewer prompt outside the target repo', () => {

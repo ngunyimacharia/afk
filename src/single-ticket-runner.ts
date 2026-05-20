@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, AgentExecutionResult, BudgetExceededEvent, BudgetPhaseName, BudgetPolicy, LaunchBlockEvidence, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry } from './types.js';
+import type { AgentExecutionProgressCallback, AgentExecutionResult, BudgetExceededEvent, BudgetPhaseName, BudgetPolicy, LaunchBlockEvidence, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry, ReviewOutcomeClassification, ReviewTerminalOutcomeRecord } from './types.js';
 import { SummaryPresenceGate } from './summary-presence-gate.js';
 import { buildPrompt } from './prompt-builder.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
@@ -9,6 +9,13 @@ import { classifyProviderFailure } from './provider-failure.js';
 import { validateSelectedTicketPath } from './path-validation.js';
 
 const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
+const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
+const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
+  'The previous reviewer response was malformed.',
+  'Return JSON only with this exact shape: {"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string"}]}.',
+  'Do not include markdown fences, commentary, or extra fields.',
+].join(' ');
+const MAX_MALFORMED_OUTPUT_SNIPPET_CHARS = 500;
 const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
   malformedReviewerRetries: 1,
   fixupCycleLimit: 3,
@@ -72,6 +79,7 @@ export class SingleTicketRunner {
     let malformedAttempts = 0;
     let latestExecutionResult: AgentExecutionResult | null = null;
     let executeBeforeReview = true;
+    let useReviewerRepairPrompt = false;
     const ticketStartEpoch = Date.now();
 
     try {
@@ -117,17 +125,35 @@ export class SingleTicketRunner {
         const reviewResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'review', () => this.provider.execute({
           plan,
           ticketIndex: 0,
-          prompt: this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview),
+          prompt: useReviewerRepairPrompt
+            ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview)
+            : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview),
           invocationMode: 'reviewer',
           sessionId,
           onProgress: this.progressLogger(record.logPath, options.onProgress),
         }), reviewCycle + 1);
+        useReviewerRepairPrompt = false;
         const reviewBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'review', reviewCycle + 1);
         if (reviewBudget) return this.handoffForBudget(ticket.label, record, options, reviewBudget, sessionId);
         const afterReviewTicketBudget = this.checkTicketBudget(record.metadataPath, record.logPath, budgets, ticketStartEpoch, reviewCycle + 1);
         if (afterReviewTicketBudget) return this.handoffForBudget(ticket.label, record, options, afterReviewTicketBudget, sessionId);
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         const review = parseReviewerOutput((reviewResult.output ?? []).join('\n'));
+
+        if (review.fallback) {
+          malformedAttempts += 1;
+          if (malformedAttempts <= budgets.malformedReviewerRetries) {
+            const malformedRetryMessage = `malformed reviewer output retry ${malformedAttempts}/${budgets.malformedReviewerRetries}`;
+            this.runtimeStore.appendLog(record.logPath, malformedRetryMessage);
+            options.onProgress?.({ ticketLabel: ticket.label, message: malformedRetryMessage, sessionId });
+            executeBeforeReview = false;
+            useReviewerRepairPrompt = true;
+            continue;
+          }
+          return this.handoffForMalformedReview(ticket.label, record, options, review.raw, reviewCycle + 1, sessionId);
+        }
+
+        malformedAttempts = 0;
         const decision = decideReviewOutcome(review, { cycle: reviewCycle + 1, maxCycles: budgets.fixupCycleLimit + 1 });
         this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, this.buildReviewCycleEntry(reviewCycle + 1, decision));
 
@@ -136,11 +162,15 @@ export class SingleTicketRunner {
             const ticketContent = this.readTicketContent(ticket.path);
             const terminalOutcome = this.summaryPresenceGate.hasSummary(ticketContent ?? '') ? 'approved' : 'needs-human';
             const terminalReason = terminalOutcome === 'approved' ? decision.reason : 'ready-for-human gate blocked: missing ## AFK Summary';
-            this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+            const classification: ReviewOutcomeClassification = decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval';
+            this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
               outcome: terminalOutcome,
               reason: terminalReason,
               cycle: reviewCycle + 1,
-            });
+              classification,
+              malformed: false,
+              findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
+            }));
             if (this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
               this.runtimeStore.markDone(record);
               this.runtimeStore.appendLog(record.logPath, 'run completed');
@@ -154,32 +184,19 @@ export class SingleTicketRunner {
           });
         }
 
-        if (decision.fallback) {
-          malformedAttempts += 1;
-          if (malformedAttempts > budgets.malformedReviewerRetries) {
-            return this.handoffForBudget(ticket.label, record, options, {
-              budgetName: 'malformed-reviewer-retries',
-              limit: budgets.malformedReviewerRetries,
-              observed: malformedAttempts,
-              phase: 'review',
-              cycle: reviewCycle + 1,
-              evidence: decision.reason,
-            }, sessionId);
-          }
-          executeBeforeReview = false;
-          continue;
-        }
-
         if (decision.decision === 'needs-human') {
           this.runtimeStore.updateMetadata(record.metadataPath, {
             STATUS: 'blocked',
             UNSAFE_REASON: decision.reason,
           });
-          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
             outcome: 'needs-human',
             reason: decision.reason,
             cycle: reviewCycle + 1,
-          });
+            classification: 'real-finding-handoff',
+            malformed: false,
+            findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
+          }));
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
             this.runtimeStore.markFailed(record, 'needs-human handoff required');
             this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
@@ -223,7 +240,7 @@ export class SingleTicketRunner {
     if (!limit) return null;
     const observed = Date.now() - ticketStartEpoch;
     if (observed <= limit) return null;
-    const event: BudgetExceededEvent = {
+    return {
       budgetName: 'ticket-wall-clock-ms',
       limit,
       observed,
@@ -231,7 +248,6 @@ export class SingleTicketRunner {
       cycle,
       evidence: `Ticket runtime exceeded wall-clock budget (${observed}ms > ${limit}ms)`,
     };
-    return event;
   }
 
   private checkPhaseBudget(metadataPath: string, logPath: string, budgets: BudgetPolicy, phase: BudgetPhaseName, cycle: number): BudgetExceededEvent | null {
@@ -240,7 +256,7 @@ export class SingleTicketRunner {
     const metadata = this.runtimeStore.readMetadata(metadataPath);
     const latest = [...(metadata.PHASE_HISTORY ?? [])].reverse().find((entry) => entry.name === phase && entry.cycle === cycle);
     if (!latest || latest.durationMs <= limit) return null;
-    const event: BudgetExceededEvent = {
+    return {
       budgetName: `phase-${phase}-wall-clock-ms`,
       limit,
       observed: latest.durationMs,
@@ -248,7 +264,6 @@ export class SingleTicketRunner {
       cycle,
       evidence: `Phase ${phase} exceeded wall-clock budget (${latest.durationMs}ms > ${limit}ms)`,
     };
-    return event;
   }
 
   private handoffForBudget(
@@ -265,16 +280,58 @@ export class SingleTicketRunner {
       UNSAFE_REASON: reason,
       FAILURE_KIND: 'needs-human',
     });
-    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
       outcome: 'needs-human',
       reason,
       cycle: event.cycle,
-    });
+    }));
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${reason}`);
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
       options.onProgress?.({ ticketLabel, message: `budget handoff: ${reason}`, sessionId });
+      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+    });
+  }
+
+  private handoffForMalformedReview(
+    ticketLabel: string,
+    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
+    options: { onProgress?: AgentExecutionProgressCallback },
+    raw: string,
+    cycle: number,
+    sessionId: string | null,
+  ): Promise<SingleTicketRunResult> {
+    const malformedHandoffReason = 'Malformed reviewer output repeated after format-repair retry';
+    const malformedOutputSnippet = this.boundSnippet(raw);
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      STATUS: 'blocked',
+      UNSAFE_REASON: malformedHandoffReason,
+      FAILURE_KIND: REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND,
+    });
+    this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, {
+      cycle,
+      outcome: 'handoff-required',
+      reason: malformedHandoffReason,
+      malformed: true,
+      findings: [],
+      classification: 'malformed-output-handoff',
+      malformedOutputSnippet,
+    });
+    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
+      cycle,
+      outcome: 'needs-human',
+      reason: malformedHandoffReason,
+      classification: 'malformed-output-handoff',
+      malformed: true,
+      findings: [],
+      malformedOutputSnippet,
+    }));
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+      this.runtimeStore.markFailed(record, 'needs-human handoff required');
+      this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
+      this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      options.onProgress?.({ ticketLabel, message: 'malformed reviewer output handoff', sessionId });
       return { scheduled: true, message: `Scheduled ${ticketLabel}` };
     });
   }
@@ -385,6 +442,14 @@ export class SingleTicketRunner {
     ].join('\n');
   }
 
+  private buildReviewerRepairPrompt(ticketLabel: string, reviewerPromptText: string, sessionId: string | null, executionResult: { status: string; output?: string[] }): string {
+    return [
+      this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult),
+      '',
+      REVIEWER_FORMAT_REPAIR_INSTRUCTIONS,
+    ].join('\n');
+  }
+
   private buildFixupPrompt(ticketLabel: string, sessionId: string | null, cycleCount: number, review: ReturnType<typeof parseReviewerOutput>): string {
     return [
       `AFK follow-up for ${ticketLabel}`,
@@ -401,13 +466,30 @@ export class SingleTicketRunner {
   }
 
   private buildReviewCycleEntry(cycle: number, decision: ReturnType<typeof decideReviewOutcome>): ReviewCycleHistoryEntry {
+    const hasRealFindings = decision.findings.some((finding) => finding.severity === 'major' || finding.severity === 'blocker');
     return {
       cycle,
       outcome: decision.decision === 'approve' ? 'approve' : decision.decision === 'needs-human' ? 'handoff-required' : 'loop-required',
       reason: decision.reason,
       malformed: decision.fallback,
       findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
+      classification: decision.decision === 'approve'
+        ? (decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval')
+        : hasRealFindings
+          ? (decision.decision === 'needs-human' ? 'real-finding-handoff' : 'real-finding-loop')
+          : undefined,
     };
+  }
+
+  private buildFinalOutcomeRecord(outcome: ReviewTerminalOutcomeRecord): ReviewTerminalOutcomeRecord {
+    return {
+      ...outcome,
+      malformedOutputSnippet: outcome.malformedOutputSnippet ? this.boundSnippet(outcome.malformedOutputSnippet) : outcome.malformedOutputSnippet,
+    };
+  }
+
+  private boundSnippet(raw: string): string {
+    return raw.slice(0, MAX_MALFORMED_OUTPUT_SNIPPET_CHARS);
   }
 
   private recordSnapshotMetadata(metadataPath: string, snapshot: NonNullable<LaunchPlan['snapshots']>[string]): void {

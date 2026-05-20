@@ -101,6 +101,55 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
     'finalization',
   ]);
   assert.equal((metadata.PHASE_HISTORY ?? []).every((phase) => phase.durationMs >= 0), true);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
+});
+
+test('records minor-risk approval metadata for minor-only findings', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-minor-risk-approval-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ summary: 'Minor polish', findings: [{ severity: 'minor', title: 'Polish copy', detail: 'Tighten phrasing' }] })] };
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'minor-risk', label: 'feat/minor-risk', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-minor-risk.json');
+  const metadata = readFileSync(metadataPath, 'utf8');
+  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "approved"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "minor-risk-approval"/);
+  assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[/);
+});
+
+test('records real-finding loop and handoff metadata for unresolved major findings', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-real-finding-handoff-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ summary: 'Needs more work', findings: [{ severity: 'major', title: 'Fix behavior', detail: 'Condition is wrong' }] })] };
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'real-finding', label: 'feat/real-finding', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-real-finding.json');
+  const metadata = readFileSync(metadataPath, 'utf8');
+  assert.match(metadata, /"classification": "real-finding-loop"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "real-finding-handoff"/);
+  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
 });
 
 test('does not promote completed runs without an AFK summary', async () => {
@@ -329,9 +378,10 @@ test('hands off when malformed reviewer retry budget is exceeded', async () => {
 
   await runner.launch(plan as never);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-m2.json');
-  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { STATUS: string; BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }> };
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as { STATUS: string; FAILURE_KIND?: string; FINAL_REVIEW_CLASSIFICATION?: string };
   assert.equal(metadata.STATUS, 'blocked');
-  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'malformed-reviewer-retries');
+  assert.equal(metadata.FAILURE_KIND, 'reviewer-output-malformed');
+  assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, 'malformed-output-handoff');
 });
 
 test('applies real fixup cap to major findings and then hands off', async () => {
@@ -473,4 +523,85 @@ test('blocks launch when selected ticket path attempts traversal', async () => {
   assert.equal(result.scheduled, false);
   assert.equal(result.launchBlock?.kind, 'path-validation');
   assert.match(result.message, /Invalid selected issue path/);
+});
+
+test('retries malformed reviewer output once before implementation fixup', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-malformed-retry-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  const callOrder: string[] = [];
+  let malformedRetryPrompt = '';
+  let reviewerCalls = 0;
+  let executionCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode, prompt }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        callOrder.push(`reviewer-${reviewerCalls}`);
+        if (reviewerCalls === 1) {
+          return { status: 'completed', sessionId: 'session-review', removable: true, output: ['not json'] };
+        }
+        if (reviewerCalls === 2) {
+          malformedRetryPrompt = prompt;
+          return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ summary: 'Fix this', findings: [{ severity: 'major', title: 'Need fix', detail: 'Please update code' }] })] };
+        }
+        return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ summary: 'Looks good', findings: [] })] };
+      }
+
+      executionCalls += 1;
+      callOrder.push(`execution-${executionCalls}`);
+      if (executionCalls === 2) {
+        writeFileSync(ticketPath, 'Status: done\n\n## Title\n\nImplement the thing\n\n## AFK Summary\n\nDone\n');
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'malformed-retry', label: 'feat/malformed-retry', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  assert.deepEqual(callOrder, ['execution-1', 'reviewer-1', 'reviewer-2', 'execution-2', 'reviewer-3']);
+  assert.match(malformedRetryPrompt, /The previous reviewer response was malformed\./);
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-malformed-retry.log');
+  assert.match(readFileSync(logPath, 'utf8'), /malformed reviewer output retry 1\/1/);
+});
+
+test('hands off after repeated malformed reviewer output without implementation fixup', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-malformed-handoff-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  const callOrder: string[] = [];
+  const progress: string[] = [];
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        callOrder.push('reviewer');
+        return { status: 'completed', sessionId: 'session-review', removable: true, output: ['invalid reviewer output'] };
+      }
+      callOrder.push('execution');
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'malformed-handoff', label: 'feat/malformed-handoff', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never, { onProgress: (event) => progress.push(event.message) });
+
+  assert.deepEqual(callOrder, ['execution', 'reviewer', 'reviewer']);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-malformed-handoff.json');
+  const metadata = readFileSync(metadataPath, 'utf8');
+  assert.match(metadata, /"STATUS": "blocked"/);
+  assert.match(metadata, /"FAILURE_KIND": "reviewer-output-malformed"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "malformed-output-handoff"/);
+  assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[\]/);
+  assert.match(metadata, /"FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET":/);
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-malformed-handoff.log');
+  const log = readFileSync(logPath, 'utf8');
+  assert.match(log, /malformed reviewer output retry 1\/1/);
+  assert.match(log, /malformed reviewer output handoff: reviewer-output-malformed/);
+  assert.deepEqual(progress.filter((line) => line.startsWith('malformed reviewer output')), [
+    'malformed reviewer output retry 1/1',
+    'malformed reviewer output handoff',
+  ]);
 });

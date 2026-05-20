@@ -29,27 +29,69 @@ You are the AFK reviewer. Evaluate the completed ticket in read-only mode. Your 
 
 ## Output Format
 
-Return strict JSON only (no prose, no markdown fences). Use this shape:
+Return strict JSON only. Do not include markdown fences, headings, bullets, prose, or any text before/after the JSON object.
 
-`{"verdict":"BLOCKED|PASS WITH RISKS|PASS","summary":"...","findings":[...],"verification":["..."],"scopeMatch":"...","residualRisks":["..."]}`
+Required schema:
 
-Set `verdict` to one of these values:
-
-- `BLOCKED`: one or more major/blocking findings mean the work should not be accepted yet.
-- `PASS WITH RISKS`: no blocking finding, but meaningful verification gaps or residual risks remain.
-- `PASS`: clean pass with no material findings and adequate verification.
-
-Required fields:
-
-1. `findings`: ordered by severity. Each finding must include severity, file/line reference when available, observed evidence, impact, and the smallest useful remediation.
-2. `verification`: tests or checks you saw evidence for, plus any important checks that are missing.
-3. `scopeMatch`: whether the ticket acceptance criteria appear satisfied.
-4. `residualRisks`: brief notes only when something could not be verified from available evidence.
-
-If there are no findings, return `"findings": []` and summarize as `No findings.`.
+```json
+{
+  "summary": "string",
+  "findings": [
+    {
+      "severity": "minor | major | blocker",
+      "title": "string",
+      "detail": "string",
+      "suggestedFix": "string (optional)"
+    }
+  ]
+}
+```
 
 Examples:
 
-- Clean pass: `{"verdict":"PASS","summary":"No findings.","findings":[]}`
-- Minor-risk pass: `{"verdict":"PASS WITH RISKS","summary":"No blocking findings; verification gap remains.","findings":[{"severity":"low","title":"Missing regression test"}]}`
-- Major/blocker: `{"verdict":"BLOCKED","summary":"Blocking requirement gap found.","findings":[{"severity":"high","title":"Acceptance criterion not implemented"}]}`
+Clean pass (`findings: []`):
+
+```json
+{
+  "summary": "Reviewed implementation and tests; no material issues found.",
+  "findings": []
+}
+```
+
+Pass with minor-only findings:
+
+```json
+{
+  "summary": "Core behavior is correct; a small maintainability risk remains.",
+  "findings": [
+    {
+      "severity": "minor",
+      "title": "Sparse edge-case test coverage",
+      "detail": "The success path is covered, but there is no assertion for malformed reviewer JSON fallback metadata.",
+      "suggestedFix": "Add one test that asserts fallback metadata for malformed output."
+    }
+  ]
+}
+```
+
+Major/blocker findings:
+
+```json
+{
+  "summary": "Blocking issues found that can break ticket guarantees.",
+  "findings": [
+    {
+      "severity": "major",
+      "title": "Acceptance criterion unmet",
+      "detail": "Prompt output contract in docs still allows markdown sections instead of strict JSON fields consumed by parser.",
+      "suggestedFix": "Update the prompt contract to require JSON with summary/findings only."
+    },
+    {
+      "severity": "blocker",
+      "title": "Potential destructive behavior",
+      "detail": "Reviewer flow can mark malformed payloads as implementation findings, causing repeated fix loops on non-code issues.",
+      "suggestedFix": "Represent malformed reviewer payloads as fallback metadata without synthetic implementation findings."
+    }
+  ]
+}
+```

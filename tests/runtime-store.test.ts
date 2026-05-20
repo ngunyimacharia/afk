@@ -120,3 +120,62 @@ test('rejects runtime artifact path escapes outside log root', () => {
   assert.throws(() => store.markDone({ ...record, doneSentinelPath: path.join(repoRoot, '..', 'done.sentinel') }), /Invalid done sentinel path/);
   assert.throws(() => store.markFailed({ ...record, failedSentinelPath: path.join(repoRoot, '..', 'failed.sentinel') }, 'failed'), /Invalid failed sentinel path/);
 });
+
+test('records review outcome metadata with additive classification fields', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-review-metadata-'));
+  const store = new RuntimeStore({ repoRoot });
+  const record = store.createRecord({ featureSlug: 'feat', issueName: 'review', ticketPath: '/tmp/ticket.md' });
+
+  store.recordReviewCycle(record.metadataPath, record.logPath, {
+    cycle: 1,
+    outcome: 'approve',
+    reason: 'No findings',
+    malformed: false,
+    findings: [],
+    classification: 'clean-approval',
+  });
+  store.recordFinalReviewOutcome(record.metadataPath, record.logPath, {
+    outcome: 'approved',
+    reason: 'No findings',
+    cycle: 1,
+    classification: 'clean-approval',
+    malformed: false,
+    findings: [],
+  });
+
+  const metadata = JSON.parse(readFileSync(record.metadataPath, 'utf8')) as Record<string, unknown>;
+  assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, 'clean-approval');
+  assert.equal(metadata.FINAL_REVIEW_MALFORMED, false);
+  assert.deepEqual(metadata.FINAL_REVIEW_FINDINGS, []);
+});
+
+test('keeps metadata readers compatible when new review fields are absent', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-review-compat-'));
+  const store = new RuntimeStore({ repoRoot });
+  const record = store.createRecord({ featureSlug: 'feat', issueName: 'compat', ticketPath: '/tmp/ticket.md' });
+  const metadataPath = record.metadataPath;
+  const legacy = {
+    TICKET_PATH: '/tmp/ticket.md',
+    FEATURE_SLUG: 'feat',
+    ISSUE_NAME: 'compat',
+    LOG_PATH: record.logPath,
+    START_TIME: new Date().toISOString(),
+    START_EPOCH: Date.now(),
+    DONE_SENTINEL_PATH: record.doneSentinelPath,
+    FAILED_SENTINEL_PATH: record.failedSentinelPath,
+    STATUS: 'completed',
+    EXECUTION_PROVIDER: 'opencode',
+    PROVIDER_SESSION_ID: null,
+    PROVIDER_SESSION_REMOVABLE: false,
+    INSPECTION_PROVIDER: null,
+    INSPECTION_TARGET_IDENTIFIER: null,
+    FAILURE_KIND: null,
+    UNSAFE_REASON: null,
+  };
+  writeFileSync(metadataPath, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
+
+  const metadata = store.readMetadata(metadataPath);
+  assert.equal(metadata.STATUS, 'completed');
+  assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, undefined);
+  assert.equal(metadata.FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET, undefined);
+});
