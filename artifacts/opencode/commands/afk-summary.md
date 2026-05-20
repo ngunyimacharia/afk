@@ -1,8 +1,8 @@
 ---
-description: Summarize completed, failed, and interrupted AFK work from tickets and logs
+description: Run `afk summary` — read-only summary of AFK work from tickets and logs
 ---
 
-Read-only summary of AFK work. This command is strictly read-only and strictly informational. It must never clean up, delete, edit, stage, commit, or change anything.
+Run `afk summary`. Read-only summary of AFK work. This command is strictly read-only and strictly informational. It must never clean up, delete, edit, stage, commit, or change anything.
 
 ## Steps
 

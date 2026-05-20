@@ -1,8 +1,8 @@
 ---
-description: Clean completed AFK scratch tickets and related logs immediately
+description: Run `afk cleanup` — clean completed AFK scratch tickets and related logs immediately
 ---
 
-Automatic cleanup of completed AFK work. This command deletes terminal-status issue files, matching AFK logs, runtime metadata, sentinels, and workspace execution state while preserving all pending work.
+Run `afk cleanup`. Automatic cleanup of completed AFK work. This command deletes terminal-status issue files, matching AFK logs, runtime metadata, sentinels, and workspace execution state while preserving all pending work.
 
 ## Steps
 

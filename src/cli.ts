@@ -21,10 +21,17 @@ import { PermissionCoordinator } from './permission-coordinator.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 
 function commandArg(): string | undefined {
-  const command = process.argv[2];
-  if (command === 'summary') return 'afk-summary';
-  if (command === 'cleanup') return 'afk-cleanup';
-  return command;
+  const knownCommands = new Set(['summary', 'cleanup', 'afk-summary', 'afk-cleanup', 'sync']);
+  const arg1 = process.argv[1];
+  const arg2 = process.argv[2];
+  if (arg1 && knownCommands.has(arg1)) {
+    if (arg1 === 'summary' || arg1 === 'afk-summary') return 'afk-summary';
+    if (arg1 === 'cleanup' || arg1 === 'afk-cleanup') return 'afk-cleanup';
+    return arg1;
+  }
+  if (arg2 === 'summary' || arg2 === 'afk-summary') return 'afk-summary';
+  if (arg2 === 'cleanup' || arg2 === 'afk-cleanup') return 'afk-cleanup';
+  return arg2;
 }
 
 export async function runAfk(
