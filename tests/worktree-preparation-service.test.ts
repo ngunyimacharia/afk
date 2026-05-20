@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { buildPrompt } from '../src/prompt-builder.js';
-import { WorktreePreparationService } from '../src/worktree-preparation-service.js';
+import { needsDisabledTestsDecision, WorktreePreparationService, WorktreeReadinessBlockedError } from '../src/worktree-preparation-service.js';
+import { buildWorktreeReadiness, detectTestSuite, type ReadinessCommandExecutor } from '../src/readiness-service.js';
 import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
 
 function git(repoRoot: string, args: string[]): string {
@@ -85,4 +86,138 @@ test('preserves existing gitignore contents when adding worktree ignore', () => 
   new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'feature-b' });
 
   assert.equal(readFileSync(path.join(repoRoot, '.gitignore'), 'utf8'), '.scratch\n.worktree/\n');
+});
+
+test('copies allowlisted dependencies and .env.testing for new worktrees', () => {
+  const repoRoot = createRepo('afk-worktree-copy-');
+  mkdirSync(path.join(repoRoot, 'node_modules', 'pkg'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;\n');
+  mkdirSync(path.join(repoRoot, 'vendor', 'bin'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'vendor', 'bin', 'tool'), 'ok\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'TEST_VALUE=yes\n');
+  writeFileSync(path.join(repoRoot, '.env'), 'SECRET=never-copy\n');
+
+  const result = new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'copy-ready' });
+
+  assert.equal(existsSync(path.join(result.worktreePath, 'node_modules', 'pkg', 'index.js')), true);
+  assert.equal(existsSync(path.join(result.worktreePath, 'vendor', 'bin', 'tool')), true);
+  assert.equal(readFileSync(path.join(result.worktreePath, '.env.testing'), 'utf8'), 'TEST_VALUE=yes\n');
+  assert.equal(existsSync(path.join(result.worktreePath, '.env')), false);
+  assert.deepEqual(result.readiness?.dependencyCopies.filter((item) => item.name === 'node_modules').map((item) => item.decision), ['copied']);
+  assert.equal(result.readiness?.envTestingCopy.decision, 'copied');
+});
+
+test('does not overwrite existing target dependencies or env files', () => {
+  const repoRoot = createRepo('afk-worktree-no-overwrite-');
+  mkdirSync(path.join(repoRoot, 'venv', 'lib'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'venv', 'lib', 'from-source.txt'), 'source\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'SOURCE=yes\n');
+
+  const service = new WorktreePreparationService();
+  const first = service.prepare({ repoRoot, featureSlug: 'copy-existing' });
+  writeFileSync(path.join(first.worktreePath, 'venv', 'lib', 'from-target.txt'), 'target\n');
+  writeFileSync(path.join(first.worktreePath, '.env.testing'), 'TARGET=yes\n');
+
+  const second = service.prepare({ repoRoot, featureSlug: 'copy-existing' });
+  assert.equal(existsSync(path.join(second.worktreePath, 'venv', 'lib', 'from-source.txt')), true);
+  assert.equal(readFileSync(path.join(second.worktreePath, '.env.testing'), 'utf8'), 'TARGET=yes\n');
+  assert.equal(second.readiness?.dependencyCopies.find((item) => item.name === 'venv')?.decision, 'already-present');
+  assert.equal(second.readiness?.envTestingCopy.decision, 'already-present');
+});
+
+test('blocks copying symlinked dependency directories that point outside source checkout', () => {
+  const repoRoot = createRepo('afk-worktree-symlink-');
+  const outsideRoot = mkRepoLocalTempDir('afk-worktree-outside-');
+  mkdirSync(path.join(outsideRoot, 'dep'), { recursive: true });
+  writeFileSync(path.join(outsideRoot, 'dep', 'leak.txt'), 'outside\n');
+  symlinkSync(path.join(outsideRoot, 'dep'), path.join(repoRoot, 'node_modules'), 'dir');
+
+  const result = new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'symlink-guard' });
+
+  assert.equal(existsSync(path.join(result.worktreePath, 'node_modules')), false);
+  assert.equal(result.readiness?.dependencyCopies.find((item) => item.name === 'node_modules')?.decision, 'blocked-external-symlink');
+  assert.match(result.readiness?.dependencyCopies.find((item) => item.name === 'node_modules')?.note ?? '', /outside source checkout/);
+
+  rmSync(outsideRoot, { recursive: true, force: true });
+});
+
+test('detects configured test suites and blocks missing env without disabled confirmation', () => {
+  const repoRoot = createRepo('afk-worktree-missing-env-');
+  writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts' } }));
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'sample.test.ts'), 'test("x", () => {});\n');
+
+  assert.equal(detectTestSuite(repoRoot).detected, true);
+  assert.equal(needsDisabledTestsDecision(repoRoot), true);
+  assert.throws(
+    () => new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'missing-env' }),
+    WorktreeReadinessBlockedError,
+  );
+});
+
+test('records disabled tests decision when missing env is confirmed', () => {
+  const repoRoot = createRepo('afk-worktree-disabled-tests-');
+  writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts' } }));
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'sample.test.ts'), 'test("x", () => {});\n');
+
+  const result = new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'disabled-tests', testsDisabledByUser: true });
+
+  assert.equal(result.readiness?.checks?.terminalState, 'disabled-by-user');
+  assert.equal(result.readiness?.checks?.testSuite.envTesting, 'missing-disabled-by-user');
+  assert.equal(result.readiness?.checks?.smoke.status, 'skipped');
+});
+
+test('readiness checks preconditions and deterministic smoke/static commands', () => {
+  const repoRoot = createRepo('afk-readiness-checks-');
+  writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts', lint: 'eslint .' } }));
+  mkdirSync(path.join(repoRoot, 'tests', 'nested'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'b.test.ts'), 'b\n');
+  writeFileSync(path.join(repoRoot, 'tests', 'nested', 'a.test.ts'), 'a\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+  const worktreePath = path.join(repoRoot, '.worktree', 'ready');
+  git(repoRoot, ['branch', 'afk/ready']);
+  git(repoRoot, ['worktree', 'add', worktreePath, 'afk/ready']);
+  const commands: string[] = [];
+  const executor: ReadinessCommandExecutor = { run: (command) => { commands.push(command); return { exitCode: 0, output: 'ok' }; } };
+
+  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'afk/ready', selectedTicketPaths: [path.join(repoRoot, 'README.md')], envTestingDecision: 'present', dependencyCopyStatusKnown: true, executor });
+
+  assert.equal(readiness.terminalState, 'passed');
+  assert.match(readiness.smoke.command, /tests\/b\.test\.ts/);
+  assert.deepEqual(commands, [readiness.smoke.command, 'npm run lint --silent']);
+});
+
+test('readiness blocks failed smoke command with bounded output', () => {
+  const repoRoot = createRepo('afk-readiness-fail-');
+  writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts' } }));
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'a\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+  const worktreePath = path.join(repoRoot, '.worktree', 'fail');
+  git(repoRoot, ['branch', 'afk/fail']);
+  git(repoRoot, ['worktree', 'add', worktreePath, 'afk/fail']);
+  const executor: ReadinessCommandExecutor = { run: () => ({ exitCode: 2, output: 'x'.repeat(1200) }) };
+
+  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'afk/fail', envTestingDecision: 'present', dependencyCopyStatusKnown: true, executor });
+
+  assert.equal(readiness.terminalState, 'blocked');
+  assert.equal(readiness.smoke.status, 'failed');
+  assert.equal(readiness.smoke.outputSnippet?.length, 1000);
+});
+
+test('readiness detects stale git index lock in linked worktree git dir', () => {
+  const repoRoot = createRepo('afk-readiness-lock-');
+  const worktreePath = path.join(repoRoot, '.worktree', 'lock');
+  git(repoRoot, ['branch', 'afk/lock']);
+  git(repoRoot, ['worktree', 'add', worktreePath, 'afk/lock']);
+  const lockPath = git(worktreePath, ['rev-parse', '--git-path', 'index.lock']);
+  writeFileSync(lockPath, 'stale\n');
+
+  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'afk/lock', envTestingDecision: 'not-required', dependencyCopyStatusKnown: true });
+
+  assert.equal(readiness.terminalState, 'blocked');
+  assert.match(readiness.blockReason ?? '', /index lock/);
 });

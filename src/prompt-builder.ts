@@ -19,6 +19,20 @@ const DEFAULT_AFK_INSTRUCTIONS = [
 
 export function buildPrompt(input: PromptInput): string {
   const snapshotLines = buildSnapshotLines(input.snapshot);
+  const readinessLines = input.checkout.readiness
+    ? [
+      '',
+      'Readiness metadata:',
+      ...input.checkout.readiness.dependencyCopies.map((item) => `- ${item.name}: ${item.decision}`),
+      `- .env.testing: ${input.checkout.readiness.envTestingCopy.decision}`,
+      ...(input.checkout.readiness.checks ? [
+        `- terminal state: ${input.checkout.readiness.checks.terminalState}`,
+        `- tests: ${input.checkout.readiness.checks.testSuite.envTesting}${input.checkout.readiness.checks.testSuite.signals.length ? ` (${input.checkout.readiness.checks.testSuite.signals.join(', ')})` : ''}`,
+        `- smoke: ${input.checkout.readiness.checks.smoke.status}${input.checkout.readiness.checks.smoke.command ? ` (${input.checkout.readiness.checks.smoke.command})` : ''}`,
+        ...input.checkout.readiness.checks.staticStyleChecks.map((item) => `- static/style: ${item.status}${item.command ? ` (${item.command})` : ''}`),
+      ] : []),
+    ]
+    : [];
   return [
     input.afkInstructions?.trim() || DEFAULT_AFK_INSTRUCTIONS,
     '',
@@ -29,6 +43,7 @@ export function buildPrompt(input: PromptInput): string {
     `Worktree: ${input.checkout.effectiveWorktreeName}`,
     `Branch: ${input.checkout.effectiveBranchName}`,
     `Worktree path: ${input.checkout.worktreePath}`,
+    ...readinessLines,
     '',
     'Do not own worktree or branch setup in the prompt. The TypeScript orchestration has already prepared it.',
     '',

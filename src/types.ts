@@ -1,3 +1,5 @@
+import type { ReadinessCheckMetadata } from './readiness-service.js';
+
 export interface TicketRecord {
   path: string;
   feature: string;
@@ -67,6 +69,23 @@ export interface CheckoutContext {
   defaultBranchName: string;
   effectiveBranchName: string;
   worktreePath: string;
+  readiness?: CheckoutReadinessMetadata;
+}
+
+export type CheckoutReadinessDecision = 'copied' | 'missing-source' | 'already-present' | 'blocked-external-symlink';
+
+export interface CheckoutReadinessCopyRecord {
+  name: string;
+  decision: CheckoutReadinessDecision;
+  sourcePath: string;
+  targetPath: string;
+  note?: string;
+}
+
+export interface CheckoutReadinessMetadata {
+  dependencyCopies: CheckoutReadinessCopyRecord[];
+  envTestingCopy: CheckoutReadinessCopyRecord;
+  checks?: ReadinessCheckMetadata;
 }
 
 export interface DependencySnapshot {

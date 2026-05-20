@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { buildWorktreeReadiness, detectTestSuite, type ReadinessCheckMetadata, type ReadinessCommandExecutor } from './readiness-service.js';
 
 export interface PreparedCheckoutContext {
   featureSlug: string;
@@ -9,6 +10,25 @@ export interface PreparedCheckoutContext {
   defaultBranchName: string;
   effectiveBranchName: string;
   worktreePath: string;
+  readiness?: WorktreeReadinessMetadata;
+}
+
+export const DEPENDENCY_COPY_ALLOWLIST = ['vendor', 'node_modules', '.venv', 'venv'] as const;
+
+type ReadinessDecision = 'copied' | 'missing-source' | 'already-present' | 'blocked-external-symlink';
+
+export interface ReadinessCopyRecord {
+  name: string;
+  decision: ReadinessDecision;
+  sourcePath: string;
+  targetPath: string;
+  note?: string;
+}
+
+export interface WorktreeReadinessMetadata {
+  dependencyCopies: ReadinessCopyRecord[];
+  envTestingCopy: ReadinessCopyRecord;
+  checks?: ReadinessCheckMetadata;
 }
 
 export interface WorktreePreparationInput {
@@ -16,6 +36,101 @@ export interface WorktreePreparationInput {
   featureSlug: string;
   ticketOverrides?: { afk_worktree?: string; afk_branch?: string };
   baseRef?: string;
+  selectedTicketPaths?: string[];
+  testsDisabledByUser?: boolean;
+  readinessExecutor?: ReadinessCommandExecutor;
+}
+
+export class WorktreeReadinessBlockedError extends Error {
+  constructor(message: string, readonly readiness: ReadinessCheckMetadata) {
+    super(message);
+  }
+}
+
+export function needsDisabledTestsDecision(repoRoot: string): boolean {
+  return detectTestSuite(repoRoot).detected && !existsSync(path.join(repoRoot, '.env.testing'));
+}
+
+function pathWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function evaluateCopyCandidate(params: {
+  repoRootReal: string;
+  sourcePath: string;
+  targetPath: string;
+  name: string;
+  allowSymlink: boolean;
+}): ReadinessCopyRecord {
+  if (!existsSync(params.sourcePath)) {
+    return {
+      name: params.name,
+      decision: 'missing-source',
+      sourcePath: params.sourcePath,
+      targetPath: params.targetPath,
+    };
+  }
+  if (existsSync(params.targetPath)) {
+    return {
+      name: params.name,
+      decision: 'already-present',
+      sourcePath: params.sourcePath,
+      targetPath: params.targetPath,
+    };
+  }
+
+  const stat = lstatSync(params.sourcePath);
+  if (stat.isSymbolicLink()) {
+    const resolvedSource = realpathSync(params.sourcePath);
+    if (!pathWithin(params.repoRootReal, resolvedSource)) {
+      return {
+        name: params.name,
+        decision: 'blocked-external-symlink',
+        sourcePath: params.sourcePath,
+        targetPath: params.targetPath,
+        note: `Resolved symlink target outside source checkout: ${resolvedSource}`,
+      };
+    }
+    if (!params.allowSymlink) {
+      return {
+        name: params.name,
+        decision: 'blocked-external-symlink',
+        sourcePath: params.sourcePath,
+        targetPath: params.targetPath,
+        note: 'Symlinked source not allowlisted for this artifact type.',
+      };
+    }
+  }
+
+  cpSync(params.sourcePath, params.targetPath, { recursive: true });
+  return {
+    name: params.name,
+    decision: 'copied',
+    sourcePath: params.sourcePath,
+    targetPath: params.targetPath,
+  };
+}
+
+function copyReadinessArtifacts(repoRoot: string, worktreePath: string): WorktreeReadinessMetadata {
+  const repoRootReal = realpathSync(repoRoot);
+  const dependencyCopies = DEPENDENCY_COPY_ALLOWLIST.map((name) => evaluateCopyCandidate({
+    repoRootReal,
+    sourcePath: path.join(repoRoot, name),
+    targetPath: path.join(worktreePath, name),
+    name,
+    allowSymlink: true,
+  }));
+
+  const envTestingCopy = evaluateCopyCandidate({
+    repoRootReal,
+    sourcePath: path.join(repoRoot, '.env.testing'),
+    targetPath: path.join(worktreePath, '.env.testing'),
+    name: '.env.testing',
+    allowSymlink: false,
+  });
+
+  return { dependencyCopies, envTestingCopy };
 }
 
 function runGit(repoRoot: string, args: string[]): string {
@@ -98,6 +213,25 @@ export class WorktreePreparationService {
       runGit(input.repoRoot, ['worktree', 'add', worktreePath, effectiveBranchName]);
     }
 
+    const readiness = copyReadinessArtifacts(input.repoRoot, worktreePath);
+    const envTestingDecision = readiness.envTestingCopy.decision === 'copied' || readiness.envTestingCopy.decision === 'already-present'
+      ? 'present'
+      : needsDisabledTestsDecision(input.repoRoot)
+        ? input.testsDisabledByUser ? 'missing-disabled-by-user' : 'missing-blocking'
+        : 'not-required';
+    readiness.checks = buildWorktreeReadiness({
+      repoRoot: input.repoRoot,
+      worktreePath,
+      expectedBranch: effectiveBranchName,
+      selectedTicketPaths: input.selectedTicketPaths,
+      envTestingDecision,
+      dependencyCopyStatusKnown: Boolean(readiness.dependencyCopies.length && readiness.envTestingCopy),
+      executor: input.readinessExecutor,
+    });
+    if (readiness.checks.terminalState === 'blocked') {
+      throw new WorktreeReadinessBlockedError(readiness.checks.blockReason ?? 'Worktree readiness failed', readiness.checks);
+    }
+
     return {
       featureSlug: input.featureSlug,
       defaultWorktreeName,
@@ -105,6 +239,7 @@ export class WorktreePreparationService {
       defaultBranchName,
       effectiveBranchName,
       worktreePath,
+      readiness,
     };
   }
 }
