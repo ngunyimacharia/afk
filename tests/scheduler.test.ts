@@ -145,3 +145,42 @@ test('returns structured launch-block evidence for invalid selected paths', asyn
   assert.equal(result.launchBlocks?.[0]?.kind, 'path-validation');
   assert.equal(result.launchBlocks?.[0]?.ticketLabel, 'feat-a/001');
 });
+
+test('passes feature checkout and matching snapshot to runner', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-checkout-'));
+  const seen: string[] = [];
+  const scheduler = new Scheduler({
+    launch: async (plan: LaunchPlan) => {
+      const ticket = plan.tickets[0];
+      assert.ok(ticket);
+      seen.push(`${ticket.label}:${plan.checkout.worktreePath}:${plan.snapshots?.[ticket.label]?.worktreePath}`);
+      return { scheduled: true, message: ticket.label };
+    },
+  } as never, 1);
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/tree-a' },
+    checkouts: {
+      'feat-a': { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/tree-a' },
+      'feat-b': { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'feat-b', defaultBranchName: 'afk/feat-b', effectiveBranchName: 'afk/feat-b', worktreePath: '/tmp/tree-b' },
+    },
+    snapshots: {
+      'feat-a/001': { featureSlug: 'feat-a', worktreePath: '/tmp/tree-a' },
+      'feat-b/001': { featureSlug: 'feat-b', worktreePath: '/tmp/tree-b' },
+    },
+  };
+
+  await scheduler.launch(plan as never);
+
+  assert.deepEqual(seen, [
+    'feat-a/001:/tmp/tree-a:/tmp/tree-a',
+    'feat-b/001:/tmp/tree-b:/tmp/tree-b',
+  ]);
+});

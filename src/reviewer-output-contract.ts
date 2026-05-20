@@ -51,12 +51,21 @@ export function parseReviewerOutput(input: unknown): ParsedReviewerOutput {
     return fallbackParsedOutput(raw);
   }
 
-  const summary = normalizeText(parsed.summary);
-  if (!Array.isArray(parsed.findings)) {
+  const findingsPayload = Array.isArray(parsed.findings)
+    ? parsed.findings
+    : Array.isArray(parsed.issues)
+      ? parsed.issues
+      : Array.isArray(parsed.problems)
+        ? parsed.problems
+        : Array.isArray(parsed.comments)
+          ? parsed.comments
+          : null;
+  const summary = normalizeText(parsed.summary) || (findingsPayload ? 'Reviewer findings parsed.' : '');
+  if (!findingsPayload) {
     return fallbackParsedOutput(raw);
   }
 
-  const findings = parsed.findings.map(normalizeFinding);
+  const findings = findingsPayload.map(normalizeFinding);
   if (findings.some((finding) => finding === undefined)) {
     return fallbackParsedOutput(raw);
   }
@@ -100,12 +109,14 @@ export function decideReviewOutcome(
 
 function parsePayload(input: unknown): Record<string, unknown> | null {
   if (input && typeof input === 'object' && !Array.isArray(input)) return input as Record<string, unknown>;
+  if (Array.isArray(input) && input.length === 1 && input[0] && typeof input[0] === 'object' && !Array.isArray(input[0])) return input[0] as Record<string, unknown>;
   if (typeof input !== 'string') return null;
 
   for (const source of extractJsonCandidates(input)) {
     try {
       const value = JSON.parse(source) as unknown;
       if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+      if (Array.isArray(value) && value.length === 1 && value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])) return value[0] as Record<string, unknown>;
     } catch {
       continue;
     }
@@ -177,7 +188,7 @@ function normalizeFinding(value: unknown): ReviewerFinding | undefined {
   return {
     severity,
     title: normalizeText(record.title) || normalizeText(record.summary) || normalizeText(record.message) || normalizeText(record.finding),
-    detail: normalizeText(record.detail),
+    detail: normalizeText(record.detail) || normalizeText(record.description) || normalizeText(record.body) || normalizeText(record.message),
     ...(normalizeText(record.suggested_fix ?? record.suggestedFix) ? { suggestedFix: normalizeText(record.suggested_fix ?? record.suggestedFix) } : {}),
   };
 }

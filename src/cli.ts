@@ -149,8 +149,7 @@ export async function runAfk(
   }
   const checkoutsByFeature = Object.fromEntries(checkoutFeatures.map((feature, index) => [feature, checkouts[index]]));
   const checkout = checkoutsByFeature[firstTicket.feature];
-  const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt });
-  plan.checkouts = checkoutsByFeature;
+  const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt }, checkoutsByFeature);
   const permissionCoordinator = new PermissionCoordinator({ ticketLabel: selectedTickets[0]?.label });
   const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator), undefined, launchPreferences.budgets);
   const scheduler = new Scheduler(runner, concurrency);
@@ -172,7 +171,6 @@ export async function runAfk(
       `Repo root: ${path.resolve(plan.repoRoot)}`,
       `Worktree: ${plan.checkout.effectiveWorktreeName}`,
       `Branch: ${plan.checkout.effectiveBranchName}`,
-      `Recent git: ${plan.gitContext.commits.join(' | ')}`,
       ...readRunOutcomeLines(runtimeStore, repoRoot, firstTicket.feature, firstTicket.issueName),
       ...formatManualPermissionReviewLines(permissionCoordinator.history),
     ].join('\n'),

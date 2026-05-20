@@ -135,4 +135,6 @@ Outcome: blocked
   assert.match(report.message, /feat\/01 fixup#2: 22000ms/);
   assert.match(report.message, /Slowest by phase category/);
   assert.match(report.message, /fixup: feat\/01#2 \(22000ms\)/);
+  assert.match(report.message, /Failure kind totals/);
+  assert.match(report.message, /needs-human: 1 run, 60000ms/);
 });

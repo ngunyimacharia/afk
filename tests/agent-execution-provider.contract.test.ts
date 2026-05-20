@@ -113,22 +113,22 @@ test('opencode provider forwards permission progress events', async () => {
   ]);
 });
 
-test('opencode provider supplies AFK permission policy that rejects external directories', async () => {
+test('opencode provider supplies AFK permission policy that allows repo-root external directories', async () => {
   let decision = '';
   const provider = new OpenCodeAgentExecutionProvider({
     run: async (input) => {
-      decision = await input.decidePermission?.({ sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/tmp/worktree/*'] }) ?? '';
+      decision = await input.decidePermission?.({ sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.worktree/feature/*'] }) ?? '';
       return { sessionId: 'session-42', output: ['ok'] };
     },
   });
 
   await provider.execute({
-    plan: { model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat/01' }] } as never,
+    plan: { repoRoot: '/repo', model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat/01' }] } as never,
     ticketIndex: 0,
     prompt: 'run',
   });
 
-  assert.equal(decision, 'reject');
+  assert.equal(decision, 'always');
 });
 
 test('external directory auto-reject does not enter manual coordinator history', async () => {
@@ -138,10 +138,24 @@ test('external directory auto-reject does not enter manual coordinator history',
 
   const decision = await decideAfkPermission(
     { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/tmp/worktree/*'] },
-    { ticketLabel: 'feat/01', coordinator },
+    { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo' },
   );
 
   assert.equal(decision, 'reject');
+  assert.equal(coordinator.history.length, 0);
+});
+
+test('external directory inside repo root bypasses manual coordinator', async () => {
+  const coordinator = new PermissionCoordinator({
+    promptAdapter: async () => 'once',
+  });
+
+  const decision = await decideAfkPermission(
+    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.git/*', '/repo/.worktree/feature/*'] },
+    { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo' },
+  );
+
+  assert.equal(decision, 'always');
   assert.equal(coordinator.history.length, 0);
 });
 

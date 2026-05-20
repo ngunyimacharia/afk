@@ -106,3 +106,26 @@ test('approves clean reviewer output with empty findings', () => {
   assert.deepEqual(cleanReview.findings, []);
   assert.equal(decideReviewOutcome(cleanReview, { cycle: 1 }).decision, 'approve');
 });
+
+test('parses single-object arrays and common finding aliases', () => {
+  const review = parseReviewerOutput(JSON.stringify([
+    {
+      issues: [
+        { severity: 'major', title: 'Missing guard', description: 'The save path lacks an offline guard.' },
+      ],
+    },
+  ]));
+
+  assert.equal(review.fallback, false);
+  assert.equal(review.summary, 'Reviewer findings parsed.');
+  assert.deepEqual(review.findings, [
+    { severity: 'major', title: 'Missing guard', detail: 'The save path lacks an offline guard.' },
+  ]);
+});
+
+test('does not accept prompt-disallowed legacy severities', () => {
+  for (const severity of ['critical', 'high', 'medium', 'low']) {
+    const review = parseReviewerOutput({ summary: 'legacy severity', findings: [{ severity, title: 'Issue', detail: 'Detail' }] });
+    assert.equal(review.fallback, true);
+  }
+});

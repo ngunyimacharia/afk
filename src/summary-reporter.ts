@@ -49,6 +49,12 @@ interface SlowPhaseRecord {
   durationMs: number;
 }
 
+interface FailureKindGroup {
+  kind: string;
+  count: number;
+  durationMs: number;
+}
+
 function normalize(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? '';
 }
@@ -201,6 +207,21 @@ function summarizeSlowPhases(metadata: RuntimeMetadataRecord[]): string[] {
   return ['Overall slowest phases', ...(topOverall.length ? topOverall : ['- none']), '', 'Slowest by phase category', ...(byPhaseLines.length ? byPhaseLines : ['- none'])];
 }
 
+function summarizeFailureKinds(metadata: RuntimeMetadataRecord[]): string[] {
+  const groups = new Map<string, FailureKindGroup>();
+  for (const entry of metadata) {
+    const kind = entry.FAILURE_KIND?.trim();
+    if (!kind) continue;
+    const durationMs = (entry.PHASE_HISTORY ?? []).reduce((total, phase) => total + phase.durationMs, 0);
+    const existing = groups.get(kind) ?? { kind, count: 0, durationMs: 0 };
+    existing.count += 1;
+    existing.durationMs += durationMs;
+    groups.set(kind, existing);
+  }
+  const sorted = [...groups.values()].sort((a, b) => b.durationMs - a.durationMs || b.count - a.count || a.kind.localeCompare(b.kind));
+  return sorted.length ? sorted.map((group) => `- ${group.kind}: ${group.count} run${group.count === 1 ? '' : 's'}, ${group.durationMs}ms`) : ['- none'];
+}
+
 export class SummaryReporter {
   constructor(private readonly input: SummaryReporterInput) {}
 
@@ -250,6 +271,9 @@ export class SummaryReporter {
       '',
       'Phase timing highlights',
       ...summarizeSlowPhases(metadata),
+      '',
+      'Failure kind totals',
+      ...summarizeFailureKinds(metadata),
     ];
 
     const permission = this.input.permission;

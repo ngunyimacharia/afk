@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
 import type { AgentExecutionProgressCallback, AgentExecutionResult, BudgetExceededEvent, BudgetPhaseName, BudgetPolicy, LaunchBlockEvidence, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry, ReviewOutcomeClassification, ReviewTerminalOutcomeRecord } from './types.js';
@@ -10,6 +11,8 @@ import { validateSelectedTicketPath } from './path-validation.js';
 
 const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
 const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
+const REVIEWER_EMPTY_OUTPUT_FAILURE_KIND = 'reviewer-empty-output';
+const LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND = 'launcher-context-mismatch';
 const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
   'The previous reviewer response was malformed.',
   'Return JSON only with this exact shape: {"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string"}]}.',
@@ -62,6 +65,8 @@ export class SingleTicketRunner {
     this.runtimeStore.appendLog(record.logPath, `effective budgets: ${JSON.stringify(budgets)}`);
     const snapshot = plan.snapshots?.[ticket.label];
     if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
+    const contextMismatch = this.validateLaunchContext(plan, ticket.label);
+    if (contextMismatch) return this.handoffForLauncherContextMismatch(ticket.label, record, options, contextMismatch);
     let prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
@@ -138,19 +143,22 @@ export class SingleTicketRunner {
         const afterReviewTicketBudget = this.checkTicketBudget(record.metadataPath, record.logPath, budgets, ticketStartEpoch, reviewCycle + 1);
         if (afterReviewTicketBudget) return this.handoffForBudget(ticket.label, record, options, afterReviewTicketBudget, sessionId);
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
-        const review = parseReviewerOutput((reviewResult.output ?? []).join('\n'));
+        const rawReviewOutput = (reviewResult.output ?? []).join('\n');
+        const review = parseReviewerOutput(rawReviewOutput);
 
         if (review.fallback) {
           malformedAttempts += 1;
           if (malformedAttempts <= budgets.malformedReviewerRetries) {
-            const malformedRetryMessage = `malformed reviewer output retry ${malformedAttempts}/${budgets.malformedReviewerRetries}`;
+            const malformedRetryMessage = `${rawReviewOutput.trim() ? 'malformed reviewer output' : 'empty reviewer output'} retry ${malformedAttempts}/${budgets.malformedReviewerRetries}`;
             this.runtimeStore.appendLog(record.logPath, malformedRetryMessage);
             options.onProgress?.({ ticketLabel: ticket.label, message: malformedRetryMessage, sessionId });
             executeBeforeReview = false;
             useReviewerRepairPrompt = true;
             continue;
           }
-          return this.handoffForMalformedReview(ticket.label, record, options, review.raw, reviewCycle + 1, sessionId);
+          return rawReviewOutput.trim()
+            ? this.handoffForMalformedReview(ticket.label, record, options, review.raw, reviewCycle + 1, sessionId)
+            : this.handoffForEmptyReview(ticket.label, record, options, reviewCycle + 1, sessionId);
         }
 
         malformedAttempts = 0;
@@ -337,6 +345,78 @@ export class SingleTicketRunner {
     });
   }
 
+  private handoffForEmptyReview(
+    ticketLabel: string,
+    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
+    options: { onProgress?: AgentExecutionProgressCallback },
+    cycle: number,
+    sessionId: string | null,
+  ): Promise<SingleTicketRunResult> {
+    const reason = 'Reviewer returned empty output after format-repair retry';
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      STATUS: 'blocked',
+      UNSAFE_REASON: reason,
+      FAILURE_KIND: REVIEWER_EMPTY_OUTPUT_FAILURE_KIND,
+    });
+    this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, {
+      cycle,
+      outcome: 'handoff-required',
+      reason,
+      malformed: true,
+      findings: [],
+      classification: 'empty-output-handoff',
+      malformedOutputSnippet: '',
+    });
+    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
+      cycle,
+      outcome: 'needs-human',
+      reason,
+      classification: 'empty-output-handoff',
+      malformed: true,
+      findings: [],
+      malformedOutputSnippet: '',
+    }));
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+      this.runtimeStore.markFailed(record, 'needs-human handoff required');
+      this.runtimeStore.appendLog(record.logPath, 'empty reviewer output handoff: reviewer-empty-output');
+      this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      options.onProgress?.({ ticketLabel, message: 'empty reviewer output handoff', sessionId });
+      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+    });
+  }
+
+  private handoffForLauncherContextMismatch(
+    ticketLabel: string,
+    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
+    options: { onProgress?: AgentExecutionProgressCallback },
+    reason: string,
+  ): Promise<SingleTicketRunResult> {
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      STATUS: 'blocked',
+      UNSAFE_REASON: reason,
+      FAILURE_KIND: LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND,
+    });
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+      this.runtimeStore.markFailed(record, reason);
+      this.runtimeStore.appendLog(record.logPath, `launcher context mismatch: ${reason}`);
+      this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      options.onProgress?.({ ticketLabel, message: 'launcher context mismatch' });
+      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+    });
+  }
+
+  private validateLaunchContext(plan: LaunchPlan, ticketLabel: string): string | null {
+    const ticket = plan.tickets[0];
+    const snapshot = plan.snapshots?.[ticketLabel];
+    if (!ticket || !snapshot) return null;
+    if (snapshot.featureSlug !== ticket.feature) return `snapshot feature ${snapshot.featureSlug} does not match ticket feature ${ticket.feature}`;
+    if (plan.checkout.featureSlug !== ticket.feature) return `checkout feature ${plan.checkout.featureSlug} does not match ticket feature ${ticket.feature}`;
+    const checkoutPath = path.resolve(plan.checkout.worktreePath);
+    const snapshotPath = path.resolve(snapshot.worktreePath);
+    if (snapshotPath !== checkoutPath) return `snapshot worktree ${snapshotPath} does not match checkout worktree ${checkoutPath}`;
+    return null;
+  }
+
   private readTicketContent(ticketPath: string): string | null {
     try {
       return readFileSync(ticketPath, 'utf8');
@@ -364,6 +444,8 @@ export class SingleTicketRunner {
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
     const snapshot = plan.snapshots?.[ticket.label];
     if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
+    const contextMismatch = this.validateLaunchContext(plan, ticket.label);
+    if (contextMismatch) return this.handoffForLauncherContextMismatch(ticket.label, record, options, contextMismatch);
     const prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,

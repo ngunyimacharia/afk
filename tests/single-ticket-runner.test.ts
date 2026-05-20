@@ -104,6 +104,61 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
   assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
 });
 
+test('blocks before provider execution when launch context mismatches', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-context-mismatch-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '001.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  let called = false;
+  const runner = new SingleTicketRunner(store, {
+    execute: async () => {
+      called = true;
+      return { status: 'completed' };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree-a' },
+    snapshots: {
+      'feat/001': { generatedAt: 'now', ticketLabel: 'feat/001', ticketStatus: 'ready', ticketIssueName: '001', featureSlug: 'feat', ticketPath, repoRoot, worktreePath: '/tmp/worktree-b', worktreeName: 'other', branchName: 'afk/feat', head: 'head', gitStatusShort: [], ticketOutsideWorktree: true, dependencies: [], readiness: null },
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.equal(called, false);
+  const metadata = readFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-001.json'), 'utf8');
+  assert.match(metadata, /"STATUS": "blocked"/);
+  assert.match(metadata, /"FAILURE_KIND": "launcher-context-mismatch"/);
+});
+
+test('classifies repeated empty reviewer output separately from malformed JSON', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-review-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'empty-review.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\nDone\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') return { status: 'completed', sessionId: 'review-empty', output: [] };
+      return { status: 'completed', sessionId: 'exec', output: ['done'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'empty-review', label: 'feat/empty-review', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  const metadata = readFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-empty-review.json'), 'utf8');
+  assert.match(metadata, /"FAILURE_KIND": "reviewer-empty-output"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "empty-output-handoff"/);
+});
+
 test('records minor-risk approval metadata for minor-only findings', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-minor-risk-approval-'));
   const store = new RuntimeStore({ repoRoot });

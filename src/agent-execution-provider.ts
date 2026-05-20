@@ -2,6 +2,7 @@ import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan }
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import { classifyProviderFailure, formatProviderFailureMessage } from './provider-failure.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
+import { areAllPathsInsideRepoRoot } from './repo-boundary.js';
 
 export type AgentInvocationMode = 'execution' | 'reviewer';
 
@@ -123,6 +124,7 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         decidePermission: (permissionRequest) => decideAfkPermission(permissionRequest, {
           ticketLabel: ticket.label,
           coordinator: this.permissionCoordinator,
+          repoRoot: request.plan.repoRoot,
         }),
       });
       const failureReason = detectOpenCodeFailure(result.output ?? []);
@@ -167,9 +169,12 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
 
 export async function decideAfkPermission(
   request: OpenCodePermissionRequest,
-  options: { ticketLabel?: string; coordinator?: PermissionCoordinator } = {},
+  options: { ticketLabel?: string; coordinator?: PermissionCoordinator; repoRoot?: string } = {},
 ): Promise<OpenCodePermissionDecision | null> {
-  if (request.type === 'external_directory') return 'reject';
+  if (request.type === 'external_directory') {
+    if (options.repoRoot && areAllPathsInsideRepoRoot(options.repoRoot, request.patterns)) return 'always';
+    return 'reject';
+  }
   if (options.coordinator) return options.coordinator.submitForTicket(options.ticketLabel ?? 'unknown-ticket', request);
   return null;
 }

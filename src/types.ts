@@ -154,7 +154,8 @@ export type ReviewOutcomeClassification =
   | 'minor-risk-approval'
   | 'real-finding-loop'
   | 'real-finding-handoff'
-  | 'malformed-output-handoff';
+  | 'malformed-output-handoff'
+  | 'empty-output-handoff';
 
 export interface ReviewCycleHistoryEntry {
   cycle: number;

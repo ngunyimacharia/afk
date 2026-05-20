@@ -4,14 +4,6 @@ import path from 'node:path';
 import type { AfkStateSnapshot, DependencySnapshot, GitContext, LaunchModel, LaunchPlan, ReadinessSnapshot, ReviewerPromptTemplate, TicketRecord } from './types.js';
 import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
 
-function recentCommits(repoRoot: string): string[] {
-  try {
-    return execFileSync('git', ['log', '-5', '--pretty=%h %s'], { cwd: repoRoot, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 function runGit(repoRoot: string, args: string[]): string {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
@@ -136,8 +128,9 @@ export function buildLaunchPlan(
   tickets: TicketRecord[],
   checkout: PreparedCheckoutContext,
   reviewer?: { model?: LaunchModel; prompt?: ReviewerPromptTemplate },
+  checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
 ): LaunchPlan {
-  const snapshots = Object.fromEntries(tickets.map((ticket) => [ticket.label, buildSnapshot(repoRoot, ticket, tickets, checkout)]));
+  const snapshots = Object.fromEntries(tickets.map((ticket) => [ticket.label, buildSnapshot(repoRoot, ticket, tickets, checkoutsByFeature?.[ticket.feature] ?? checkout)]));
   return {
     repoRoot,
     model,
@@ -145,7 +138,8 @@ export function buildLaunchPlan(
     reviewerPrompt: reviewer?.prompt,
     tickets,
     checkout,
+    checkouts: checkoutsByFeature,
     snapshots,
-    gitContext: { commits: recentCommits(repoRoot) },
+    gitContext: { commits: [] },
   };
 }
