@@ -127,8 +127,18 @@ function smokeCommand(worktreePath: string, testFile: string): string | null {
   const testScript = scripts.test;
   const relative = path.relative(worktreePath, testFile);
   if (typeof testScript === 'string' && /\b(bun test|node --test|vitest|jest)\b/.test(testScript)) return `npm test -- ${shellQuote(relative)}`;
-  if (existsSync(path.join(worktreePath, 'phpunit.xml')) || existsSync(path.join(worktreePath, 'phpunit.xml.dist'))) return `vendor/bin/phpunit ${shellQuote(relative)}`;
+  if (existsSync(path.join(worktreePath, 'phpunit.xml')) || existsSync(path.join(worktreePath, 'phpunit.xml.dist'))) {
+    return hasPest(worktreePath) ? `vendor/bin/pest ${shellQuote(relative)}` : `vendor/bin/phpunit ${shellQuote(relative)}`;
+  }
   return null;
+}
+
+function hasPest(worktreePath: string): boolean {
+  if (existsSync(path.join(worktreePath, 'tests', 'Pest.php'))) return true;
+  const composer = readJson(path.join(worktreePath, 'composer.json'));
+  const requireDev = composer?.['require-dev'];
+  if (!requireDev || typeof requireDev !== 'object' || Array.isArray(requireDev)) return false;
+  return typeof (requireDev as Record<string, unknown>)['pestphp/pest'] === 'string';
 }
 
 function staticStyleCommands(worktreePath: string): string[] {

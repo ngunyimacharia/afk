@@ -26,13 +26,13 @@ test('derives names and honors overrides', () => {
     featureSlug: 'feature-a',
     defaultWorktreeName: 'feature-a',
     effectiveWorktreeName: 'custom-tree',
-    defaultBranchName: 'afk/feature-a',
+    defaultBranchName: 'feature-a',
     effectiveBranchName: 'local/branch',
     worktreePath: '/repo/custom-tree',
   };
   assert.equal(checkout.defaultWorktreeName, 'feature-a');
   assert.equal(checkout.effectiveWorktreeName, 'custom-tree');
-  assert.equal(checkout.defaultBranchName, 'afk/feature-a');
+  assert.equal(checkout.defaultBranchName, 'feature-a');
   assert.equal(checkout.effectiveBranchName, 'local/branch');
   assert.match(buildPrompt({ checkout, ticket: { path: '/tmp/ticket.md', feature: 'feature-a', issueName: '001', label: 'feature-a/001', executorAfk: true }, ticketContent: 'Status: ready-for-agent' }), /Use this prepared checkout/);
 });
@@ -56,13 +56,13 @@ test('creates or reuses a persistent local worktree and branch', () => {
 
   assert.equal(first.effectiveWorktreeName, 'feat-one');
   assert.equal(second.effectiveWorktreeName, 'feat-one');
-  assert.match(git(repoRoot, ['branch', '--list', 'afk/feat-one']), /afk\/feat-one/);
+  assert.match(git(repoRoot, ['branch', '--list', 'feat-one']), /feat-one/);
   assert.equal(git(repoRoot, ['worktree', 'list', '--porcelain']).includes(`worktree ${realpathSync(first.worktreePath)}`), true);
 });
 
 test('fails clearly when git rejects the requested branch state', () => {
   const repoRoot = createRepo('afk-worktree-fail-');
-  git(repoRoot, ['branch', 'afk/conflict']);
+  git(repoRoot, ['branch', 'conflict']);
 
   const service = new WorktreePreparationService();
   assert.throws(() => service.prepare({ repoRoot, featureSlug: 'conflict', ticketOverrides: { afk_branch: 'invalid branch name' } }));
@@ -73,7 +73,7 @@ test('prepares worktrees under ignored repo-local .worktree directory', () => {
   const result = new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'feature-a' });
 
   assert.equal(result.worktreePath, path.join(repoRoot, '.worktree', 'feature-a'));
-  assert.equal(result.effectiveBranchName, 'afk/feature-a');
+  assert.equal(result.effectiveBranchName, 'feature-a');
   assert.equal(existsSync(path.join(repoRoot, '.worktree')), true);
   assert.equal(existsSync(result.worktreePath), true);
   assert.match(readFileSync(path.join(repoRoot, '.gitignore'), 'utf8'), /^\.worktree\/$/m);
@@ -177,16 +177,39 @@ test('readiness checks preconditions and deterministic smoke/static commands', (
   git(repoRoot, ['add', '.']);
   git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
   const worktreePath = path.join(repoRoot, '.worktree', 'ready');
-  git(repoRoot, ['branch', 'afk/ready']);
-  git(repoRoot, ['worktree', 'add', worktreePath, 'afk/ready']);
+  git(repoRoot, ['branch', 'ready']);
+  git(repoRoot, ['worktree', 'add', worktreePath, 'ready']);
   const commands: string[] = [];
   const executor: ReadinessCommandExecutor = { run: (command) => { commands.push(command); return { exitCode: 0, output: 'ok' }; } };
 
-  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'afk/ready', selectedTicketPaths: [path.join(repoRoot, 'README.md')], envTestingDecision: 'present', dependencyCopyStatusKnown: true, executor });
+  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'ready', selectedTicketPaths: [path.join(repoRoot, 'README.md')], envTestingDecision: 'present', dependencyCopyStatusKnown: true, executor });
 
   assert.equal(readiness.terminalState, 'passed');
   assert.match(readiness.smoke.command, /tests\/b\.test\.ts/);
   assert.deepEqual(commands, [readiness.smoke.command, 'npm run lint --silent']);
+});
+
+test('readiness uses Pest when PHP tests are Pest-based', () => {
+  const repoRoot = createRepo('afk-readiness-pest-');
+  writeFileSync(path.join(repoRoot, 'composer.json'), JSON.stringify({ 'require-dev': { 'pestphp/pest': '^4.1' } }));
+  writeFileSync(path.join(repoRoot, 'phpunit.xml'), '<phpunit/>\n');
+  mkdirSync(path.join(repoRoot, 'tests', 'Feature'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'Pest.php'), '<?php\n');
+  writeFileSync(path.join(repoRoot, 'tests', 'Feature', 'AccountsPageTest.php'), '<?php\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+  const worktreePath = path.join(repoRoot, '.worktree', 'pest');
+  git(repoRoot, ['branch', 'pest']);
+  git(repoRoot, ['worktree', 'add', worktreePath, 'pest']);
+  const commands: string[] = [];
+  const executor: ReadinessCommandExecutor = { run: (command) => { commands.push(command); return { exitCode: 0, output: 'ok' }; } };
+
+  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'pest', envTestingDecision: 'present', dependencyCopyStatusKnown: true, executor });
+
+  assert.equal(readiness.terminalState, 'passed');
+  assert.match(readiness.smoke.command, /^vendor\/bin\/pest '/);
+  assert.match(readiness.smoke.command, /tests\/Feature\/AccountsPageTest\.php/);
+  assert.deepEqual(commands, [readiness.smoke.command]);
 });
 
 test('readiness blocks failed smoke command with bounded output', () => {
@@ -197,11 +220,11 @@ test('readiness blocks failed smoke command with bounded output', () => {
   git(repoRoot, ['add', '.']);
   git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
   const worktreePath = path.join(repoRoot, '.worktree', 'fail');
-  git(repoRoot, ['branch', 'afk/fail']);
-  git(repoRoot, ['worktree', 'add', worktreePath, 'afk/fail']);
+  git(repoRoot, ['branch', 'fail']);
+  git(repoRoot, ['worktree', 'add', worktreePath, 'fail']);
   const executor: ReadinessCommandExecutor = { run: () => ({ exitCode: 2, output: 'x'.repeat(1200) }) };
 
-  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'afk/fail', envTestingDecision: 'present', dependencyCopyStatusKnown: true, executor });
+  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'fail', envTestingDecision: 'present', dependencyCopyStatusKnown: true, executor });
 
   assert.equal(readiness.terminalState, 'blocked');
   assert.equal(readiness.smoke.status, 'failed');
@@ -211,12 +234,12 @@ test('readiness blocks failed smoke command with bounded output', () => {
 test('readiness detects stale git index lock in linked worktree git dir', () => {
   const repoRoot = createRepo('afk-readiness-lock-');
   const worktreePath = path.join(repoRoot, '.worktree', 'lock');
-  git(repoRoot, ['branch', 'afk/lock']);
-  git(repoRoot, ['worktree', 'add', worktreePath, 'afk/lock']);
+  git(repoRoot, ['branch', 'lock']);
+  git(repoRoot, ['worktree', 'add', worktreePath, 'lock']);
   const lockPath = git(worktreePath, ['rev-parse', '--git-path', 'index.lock']);
   writeFileSync(lockPath, 'stale\n');
 
-  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'afk/lock', envTestingDecision: 'not-required', dependencyCopyStatusKnown: true });
+  const readiness = buildWorktreeReadiness({ repoRoot, worktreePath, expectedBranch: 'lock', envTestingDecision: 'not-required', dependencyCopyStatusKnown: true });
 
   assert.equal(readiness.terminalState, 'blocked');
   assert.match(readiness.blockReason ?? '', /index lock/);
