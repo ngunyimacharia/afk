@@ -131,6 +131,20 @@ test('opencode provider supplies AFK permission policy that rejects external dir
   assert.equal(decision, 'reject');
 });
 
+test('external directory auto-reject does not enter manual coordinator history', async () => {
+  const coordinator = new PermissionCoordinator({
+    promptAdapter: async () => 'once',
+  });
+
+  const decision = await decideAfkPermission(
+    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/tmp/worktree/*'] },
+    { ticketLabel: 'feat/01', coordinator },
+  );
+
+  assert.equal(decision, 'reject');
+  assert.equal(coordinator.history.length, 0);
+});
+
 test('AFK permission policy leaves non-external requests to OpenCode defaults', async () => {
   assert.equal(await decideAfkPermission({ sessionId: 'session-42', permissionId: 'per_2', type: 'bash', title: 'bash', patterns: ['bun test'] }), null);
 });
