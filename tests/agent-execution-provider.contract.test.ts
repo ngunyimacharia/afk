@@ -51,6 +51,66 @@ test('opencode provider maps successful execution to completed result', async ()
   ]);
 });
 
+test('opencode reviewer invocation does not force the silent review agent', async () => {
+  let capturedAgent: string | undefined = 'unset';
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedAgent = input.agent;
+      return { sessionId: 'session-review', output: ['{"summary":"ok","findings":[]}'] };
+    },
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, reviewerModel: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'review',
+    invocationMode: 'reviewer',
+  });
+
+  assert.equal(capturedAgent, undefined);
+  assert.equal(result.status, 'completed');
+});
+
+test('opencode execution resumes existing session when provided', async () => {
+  let capturedSessionId: string | null | undefined;
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedSessionId = input.sessionId;
+      return { sessionId: 'session-existing', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'continue',
+    invocationMode: 'execution',
+    sessionId: 'session-existing',
+  });
+
+  assert.equal(capturedSessionId, 'session-existing');
+});
+
+test('opencode reviewer does not resume implementation session', async () => {
+  let capturedSessionId: string | null | undefined = 'unset';
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedSessionId = input.sessionId;
+      return { sessionId: 'session-review', output: ['{"summary":"ok","findings":[]}'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, reviewerModel: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'review',
+    invocationMode: 'reviewer',
+    sessionId: 'session-existing',
+  });
+
+  assert.equal(capturedSessionId, null);
+});
+
 test('opencode provider maps executor failures to failed status', async () => {
   const provider = new OpenCodeAgentExecutionProvider({
     run: async () => {
@@ -90,6 +150,43 @@ test('opencode provider maps model availability output to failed status', async 
   assert.match(progress.join('\n'), /failure:provider failure: selected implementation model/);
 });
 
+test('opencode provider ignores recoverable tool failures without terminal session errors', async () => {
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async () => ({
+      sessionId: 'session-tool-error-recovered',
+      output: ['tool failed: File not found: /repo/app.php', 'Implemented end-to-end and updated the ticket to done.'],
+    }),
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.removable, true);
+});
+
+test('opencode provider fails on structured terminal session errors', async () => {
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async () => ({
+      sessionId: 'session-terminal-error',
+      output: ['attempted work'],
+      terminalError: 'opencode error: provider unavailable',
+    }),
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.unsafeReason, 'opencode error: provider unavailable');
+});
+
 test('opencode provider forwards permission progress events', async () => {
   const progress: string[] = [];
   const provider = new OpenCodeAgentExecutionProvider({
@@ -113,7 +210,7 @@ test('opencode provider forwards permission progress events', async () => {
   ]);
 });
 
-test('opencode provider supplies AFK permission policy that allows repo-root external directories', async () => {
+test('opencode provider supplies AFK permission policy that allows assigned worktree external directories', async () => {
   let decision = '';
   const provider = new OpenCodeAgentExecutionProvider({
     run: async (input) => {
@@ -123,7 +220,7 @@ test('opencode provider supplies AFK permission policy that allows repo-root ext
   });
 
   await provider.execute({
-    plan: { repoRoot: '/repo', model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat/01' }] } as never,
+    plan: { repoRoot: '/repo', checkout: { worktreePath: '/repo/.worktree/feature' }, model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat/01' }] } as never,
     ticketIndex: 0,
     prompt: 'run',
   });
@@ -145,18 +242,45 @@ test('external directory auto-reject does not enter manual coordinator history',
   assert.equal(coordinator.history.length, 0);
 });
 
-test('external directory inside repo root bypasses manual coordinator', async () => {
+test('external directory inside assigned worktree bypasses manual coordinator', async () => {
   const coordinator = new PermissionCoordinator({
     promptAdapter: async () => 'once',
   });
 
   const decision = await decideAfkPermission(
-    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.git/*', '/repo/.worktree/feature/*'] },
-    { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo' },
+    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.worktree/feature/*'] },
+    { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
   );
 
   assert.equal(decision, 'always');
   assert.equal(coordinator.history.length, 0);
+});
+
+test('external directory under root source is rejected when worktree differs', async () => {
+  const decision = await decideAfkPermission(
+    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/app/*'] },
+    { ticketLabel: 'feat/01', repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
+  );
+
+  assert.equal(decision, 'reject');
+});
+
+test('external directory under root scratch is allowed', async () => {
+  const decision = await decideAfkPermission(
+    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.scratch/feat/*'] },
+    { ticketLabel: 'feat/01', repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
+  );
+
+  assert.equal(decision, 'always');
+});
+
+test('external directory under another worktree is rejected', async () => {
+  const decision = await decideAfkPermission(
+    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.worktree/other/*'] },
+    { ticketLabel: 'feat/01', repoRoot: '/repo', worktreePath: '/repo/.worktree/feature', otherWorktreePaths: ['/repo/.worktree/other'] },
+  );
+
+  assert.equal(decision, 'reject');
 });
 
 test('AFK permission policy leaves non-external requests to OpenCode defaults', async () => {

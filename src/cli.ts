@@ -15,6 +15,7 @@ import { createProgressLine } from './progress-line.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { classifyProviderFailure } from './provider-failure.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
+import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { orderSelectedFeaturesByWaves, refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
 import type { LaunchModel, TicketRecord } from './types.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
@@ -122,7 +123,10 @@ export async function runAfk(
   if (preflight) return { code: 1, message: preflight };
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
   const refresh = new FeatureExecutionRefreshService(repoRoot);
-  for (const feature of selectedFeatures) refresh.refresh(feature);
+  const featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
+  const orderingBlock = validateSelectedTicketDependencies(selectedTickets, tickets);
+  if (orderingBlock) return { code: 1, message: orderingBlock };
+  selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
   const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
   const firstTicket = selectedTickets[0];
   for (const feature of selectedFeatures) {
@@ -178,7 +182,7 @@ export async function runAfk(
       `Repo root: ${path.resolve(plan.repoRoot)}`,
       `Worktree: ${plan.checkout.effectiveWorktreeName}`,
       `Branch: ${plan.checkout.effectiveBranchName}`,
-      ...readRunOutcomeLines(runtimeStore, repoRoot, firstTicket.feature, firstTicket.issueName),
+      ...readRunOutcomeLines(runtimeStore, repoRoot, plan.tickets),
       ...formatManualPermissionReviewLines(permissionCoordinator.history),
     ].join('\n'),
   };
@@ -205,6 +209,47 @@ export function formatManualPermissionReviewLines(history: readonly PermissionDe
       ].join(' | ');
     }),
   ];
+}
+
+function orderSelectedTicketsByFeatureGraph(selectedTickets: TicketRecord[], graphs: Record<string, FeatureExecutionGraph>): TicketRecord[] {
+  const selectedByKey = new Map(selectedTickets.map((ticket) => [`${ticket.feature}/${ticket.issueName}`, ticket] as const));
+  const ordered: TicketRecord[] = [];
+  const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
+
+  for (const feature of selectedFeatures) {
+    const graph = graphs[feature];
+    const featureTickets = selectedTickets.filter((ticket) => ticket.feature === feature);
+    const graphOrder = new Map<string, number>();
+    graph?.waves.flat().forEach((issue, index) => graphOrder.set(issue, index));
+    featureTickets
+      .sort((left, right) => (graphOrder.get(left.issueName) ?? Number.MAX_SAFE_INTEGER) - (graphOrder.get(right.issueName) ?? Number.MAX_SAFE_INTEGER)
+        || left.issueName.localeCompare(right.issueName))
+      .forEach((ticket) => {
+        if (selectedByKey.has(`${ticket.feature}/${ticket.issueName}`)) ordered.push(ticket);
+      });
+  }
+
+  return ordered;
+}
+
+function validateSelectedTicketDependencies(selectedTickets: TicketRecord[], allTickets: TicketRecord[]): string | null {
+  const selected = new Set(selectedTickets.map((ticket) => `${ticket.feature}/${ticket.issueName}`));
+  const byKey = new Map<string, TicketRecord>(allTickets.map((ticket) => [`${ticket.feature}/${ticket.issueName}`, ticket]));
+  const completeStatuses = new Set(['done', 'closed', 'complete', 'resolved']);
+
+  for (const ticket of selectedTickets) {
+    for (const dependency of ticket.dependsOn ?? []) {
+      const key = `${ticket.feature}/${dependency}`;
+      if (selected.has(key)) continue;
+      const dependencyTicket = byKey.get(key);
+      const status = dependencyTicket?.status?.trim().toLowerCase();
+      if (!status || !completeStatuses.has(status)) {
+        return `Launch blocked: ${ticket.label} depends on incomplete unselected ticket ${key}. Select the dependency or mark it done.`;
+      }
+    }
+  }
+
+  return null;
 }
 
 async function preflightSelectedModels(executor: OpenCodeSessionExecutor, model: LaunchModel, reviewerModel: LaunchModel): Promise<string | null> {
@@ -260,26 +305,45 @@ export function formatPreflightFailure(modelId: string, role: 'implementation' |
   return lines.join('\n');
 }
 
-function readRunOutcomeLines(runtimeStore: RuntimeStore, repoRoot: string, featureSlug: string, issueName: string): string[] {
-  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${featureSlug}-${issueName}.json`);
+export function readRunOutcomeLines(runtimeStore: RuntimeStore, repoRoot: string, tickets: Array<{ feature: string; issueName: string; label: string }>): string[] {
+  const ticketLines = tickets.map((ticket) => formatTicketRunOutcome(runtimeStore, repoRoot, ticket));
+  const failed = ticketLines.filter((line) => line.includes('failed before review')).length;
+  const blocked = ticketLines.filter((line) => line.includes('blocked')).length;
+  const approved = ticketLines.filter((line) => line.includes('approved') || line.includes('completed')).length;
+
+  const aggregate = failed
+    ? `Run outcome: ${failed} failed before review${blocked ? `, ${blocked} blocked` : ''}`
+    : blocked
+      ? `Run outcome: ${blocked} blocked`
+      : approved === tickets.length
+        ? 'Run outcome: all tickets approved/completed'
+        : 'Run outcome: mixed/unknown';
+
+  return [aggregate, ...ticketLines.map((line) => `- ${line}`)];
+}
+
+function formatTicketRunOutcome(runtimeStore: RuntimeStore, repoRoot: string, ticket: { feature: string; issueName: string; label: string }): string {
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${ticket.feature}-${ticket.issueName}.json`);
 
   try {
     const metadata = runtimeStore.readMetadata(metadataPath);
-    if (metadata.FINAL_REVIEW_OUTCOME === 'approved' || metadata.FINAL_REVIEW_OUTCOME === 'needs-human') {
-      return [`Final review outcome: ${metadata.FINAL_REVIEW_OUTCOME}`];
+    if (metadata.FINAL_REVIEW_OUTCOME === 'approved' && metadata.STATUS === 'completed') {
+      return `${ticket.label}: approved`;
     }
-    if (metadata.STATUS === 'blocked') return ['Run outcome: blocked before final review'];
+    if (metadata.FINAL_REVIEW_OUTCOME === 'needs-human') {
+      return `${ticket.label}: blocked (${metadata.FAILURE_KIND ?? 'needs-human'}) - ${metadata.FINAL_REVIEW_REASON ?? metadata.UNSAFE_REASON ?? 'needs human'}`;
+    }
+    if (metadata.FINAL_REVIEW_OUTCOME === 'approved') {
+      return `${ticket.label}: blocked (${metadata.FAILURE_KIND ?? 'approval-not-completed'}) - approved review without completed runtime`;
+    }
+    if (metadata.STATUS === 'blocked') return `${ticket.label}: blocked before final review (${metadata.FAILURE_KIND ?? 'unknown'})`;
     if (metadata.STATUS === 'failed' || metadata.STATUS === 'interrupted') {
-      return [
-        'Run outcome: failed before review',
-        `Failure category: ${metadata.FAILURE_KIND ?? 'unknown'}`,
-        `First failure: ${metadata.UNSAFE_REASON ?? 'unknown'}`,
-      ];
+      return `${ticket.label}: failed before review (${metadata.FAILURE_KIND ?? 'unknown'}) - ${metadata.UNSAFE_REASON ?? 'unknown'}`;
     }
-    if (metadata.STATUS === 'completed') return ['Run outcome: completed without reviewer'];
+    if (metadata.STATUS === 'completed') return `${ticket.label}: completed without reviewer`;
   } catch {
-    return ['Run outcome: unknown'];
+    return `${ticket.label}: unknown`;
   }
 
-  return ['Run outcome: unknown'];
+  return `${ticket.label}: unknown`;
 }

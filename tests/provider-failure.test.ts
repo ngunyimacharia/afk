@@ -61,3 +61,8 @@ test('classifies missing dependency failures', () => {
   const classification = classifyProviderFailure('PHP Warning: require(vendor/autoload.php): Failed to open stream: No such file or directory');
   assert.equal(classification?.kind, 'dependency-missing');
 });
+
+test('classifies stale opencode sessions', () => {
+  const classification = classifyProviderFailure('opencode session stale after 3 recovery attempts');
+  assert.equal(classification?.kind, 'opencode-session-stale');
+});

@@ -42,6 +42,28 @@ test('emits progress while launching a ticket', async () => {
   ]);
 });
 
+test('persists provider session id as soon as progress observes it', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-session-observed-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\nDone\n');
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-observed.json');
+  let observedDuringExecution = '';
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ onProgress }) => {
+      onProgress?.({ ticketLabel: 'feat/observed', message: 'created opencode session session-observed', sessionId: 'session-observed' });
+      observedDuringExecution = readFileSync(metadataPath, 'utf8');
+      return { status: 'completed', sessionId: 'session-observed', removable: true, output: ['done'] };
+    },
+  });
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: 'observed', label: 'feat/observed', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
+
+  await runner.launch(plan as never);
+
+  assert.match(observedDuringExecution, /"PROVIDER_SESSION_ID": "session-observed"/);
+  assert.match(observedDuringExecution, /"UNSAFE_REASON": "session still running"/);
+});
+
 test('sends ticket file summary instructions to the execution provider', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-prompt-'));
   const store = new RuntimeStore({ repoRoot });
@@ -138,15 +160,19 @@ test('blocks before provider execution when launch context mismatches', async ()
   assert.match(metadata, /"FAILURE_KIND": "launcher-context-mismatch"/);
 });
 
-test('treats empty reviewer output as a pass with no findings', async () => {
+test('hands off when reviewer output stays empty after retry', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-review-'));
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'empty-review.md');
   mkdirSync(path.dirname(ticketPath), { recursive: true });
   writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\nDone\n');
+  let reviewerCalls = 0;
   const runner = new SingleTicketRunner(store, {
     execute: async ({ invocationMode }) => {
-      if (invocationMode === 'reviewer') return { status: 'completed', sessionId: 'review-empty', output: [] };
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        return { status: 'completed', sessionId: 'review-empty', output: [] };
+      }
       return { status: 'completed', sessionId: 'exec', output: ['done'] };
     },
   });
@@ -155,10 +181,10 @@ test('treats empty reviewer output as a pass with no findings', async () => {
   await runner.launch(plan as never);
 
   const metadata = readFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-empty-review.json'), 'utf8');
-  assert.match(metadata, /"STATUS": "completed"/);
-  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "approved"/);
-  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
-  assert.match(metadata, /"FAILURE_KIND": null/);
+  assert.equal(reviewerCalls, 2);
+  assert.match(metadata, /"STATUS": "blocked"/);
+  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
+  assert.match(metadata, /"FAILURE_KIND": "reviewer-empty-output"/);
 });
 
 test('records minor-risk approval metadata for minor-only findings', async () => {
@@ -219,7 +245,8 @@ test('does not promote completed runs without an AFK summary', async () => {
   await runner.launch(plan as never);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-003.json');
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-003.log');
-  assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "completed"/);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "blocked"/);
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FAILURE_KIND": "missing-afk-summary"/);
   assert.match(readFileSync(logPath, 'utf8'), /ready-for-human gate blocked/);
   assert.doesNotMatch(readFileSync(logPath, 'utf8'), /done/);
 });

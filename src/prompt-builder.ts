@@ -25,12 +25,15 @@ export function buildPrompt(input: PromptInput): string {
     '## Runtime Context',
     '',
     'Use this prepared checkout. Do not create or switch worktrees.',
-    `Repo root: ${input.snapshot?.repoRoot ?? 'unknown'}`,
+    `Working checkout: ${input.checkout.worktreePath}`,
     `Feature slug: ${input.checkout.featureSlug}`,
     `Branch: ${input.checkout.effectiveBranchName}`,
     `Worktree path: ${input.checkout.worktreePath}`,
-    'Access policy: paths inside the repo root are allowed, including cross-worktree paths. Paths outside the repo root are not allowed.',
-    'Search policy: search only inside the repo root. If a search reports macOS Operation not permitted paths, rerun it scoped to the repo root.',
+    `Repo root, for shared scratch artifacts only: ${input.snapshot?.repoRoot ?? 'unknown'}`,
+    'Access policy: source-code reads, searches, tests, and edits must use the Working checkout. Source mutation outside the Working checkout is forbidden.',
+    'Root repo writes are allowed only under the listed shared .scratch artifact paths. Do not write root source files when the root differs from the Working checkout.',
+    'Do not read, write, or patch source files in any other worktree.',
+    'Search policy: search only inside the Working checkout unless reading the listed shared .scratch artifacts.',
     '',
     ...snapshotLines,
     '',
@@ -62,6 +65,12 @@ function buildSnapshotLines(snapshot?: AfkStateSnapshot): string[] {
     ])
     : [];
   return [
+    '## Shared Scratch Artifacts',
+    '',
+    `- Scratch feature path: ${snapshot.scratchFeaturePath}`,
+    ...(snapshot.featurePrdPath ? [`- Feature PRD: ${snapshot.featurePrdPath}`] : []),
+    '- Read or update scratch artifacts only at these absolute paths. Do not guess `.scratch` paths relative to the worktree.',
+    '',
     ...(dependencyLines.length ? ['## Dependencies', '',] : []),
     ...dependencyLines,
   ];

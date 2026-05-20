@@ -5,6 +5,7 @@ export type ProviderFailureKind =
   | 'path-not-found'
   | 'patch-context-mismatch'
   | 'dependency-missing'
+  | 'opencode-session-stale'
   | 'tool-failed'
   | 'unknown';
 
@@ -26,6 +27,7 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
     return { kind: 'auth', reason: normalizedReason, availableModels: [] };
   }
   if (lower.includes('context overflow')) return { kind: 'context-overflow', reason: normalizedReason, availableModels: [] };
+  if (lower.includes('opencode session stale')) return { kind: 'opencode-session-stale', reason: normalizedReason, availableModels: [] };
   if (isDependencyMissing(lower)) return { kind: 'dependency-missing', reason: normalizedReason, availableModels: [] };
   if (isPatchContextMismatch(lower)) return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
   if (isPathNotFound(lower)) return { kind: 'path-not-found', reason: normalizedReason, availableModels: [] };

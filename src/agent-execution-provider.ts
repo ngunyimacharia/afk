@@ -2,7 +2,7 @@ import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan }
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import { classifyProviderFailure, formatProviderFailureMessage } from './provider-failure.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
-import { areAllPathsInsideRepoRoot } from './repo-boundary.js';
+import { areAllPathsAllowedForAfkWrite } from './repo-boundary.js';
 
 export type AgentInvocationMode = 'execution' | 'reviewer';
 
@@ -119,15 +119,20 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         model,
         prompt: request.prompt,
         title: invocationMode === 'reviewer' ? `afk review: ${ticket.label}` : `afk: ${ticket.label}`,
-        agent: invocationMode === 'reviewer' ? 'review' : 'build',
+        agent: invocationMode === 'reviewer' ? undefined : 'build',
+        sessionId: invocationMode === 'execution' ? request.sessionId : null,
         onProgress: (event) => request.onProgress?.({ ticketLabel: ticket.label, ...event }),
         decidePermission: (permissionRequest) => decideAfkPermission(permissionRequest, {
           ticketLabel: ticket.label,
           coordinator: this.permissionCoordinator,
           repoRoot: request.plan.repoRoot,
+          worktreePath: request.plan.checkout?.worktreePath,
+          otherWorktreePaths: Object.values(request.plan.checkouts ?? {})
+            .map((checkout) => checkout.worktreePath)
+            .filter((worktreePath) => worktreePath !== request.plan.checkout?.worktreePath),
         }),
       });
-      const failureReason = detectOpenCodeFailure(result.output ?? []);
+      const failureReason = result.terminalError ?? detectOpenCodeFailure(result.output ?? []);
       if (failureReason) {
         request.onProgress?.({
           ticketLabel: ticket.label,
@@ -169,10 +174,15 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
 
 export async function decideAfkPermission(
   request: OpenCodePermissionRequest,
-  options: { ticketLabel?: string; coordinator?: PermissionCoordinator; repoRoot?: string } = {},
+  options: { ticketLabel?: string; coordinator?: PermissionCoordinator; repoRoot?: string; worktreePath?: string; otherWorktreePaths?: string[] } = {},
 ): Promise<OpenCodePermissionDecision | null> {
-  if (request.type === 'external_directory') {
-    if (options.repoRoot && areAllPathsInsideRepoRoot(options.repoRoot, request.patterns)) return 'always';
+  if (request.type === 'external_directory' || isWriteLikePermission(request)) {
+    if (options.repoRoot && options.worktreePath && areAllPathsAllowedForAfkWrite({
+      repoRoot: options.repoRoot,
+      worktreePath: options.worktreePath,
+      otherWorktreePaths: options.otherWorktreePaths ?? [],
+      targets: request.patterns,
+    })) return 'always';
     return 'reject';
   }
   if (options.coordinator) return options.coordinator.submitForTicket(options.ticketLabel ?? 'unknown-ticket', request);
@@ -185,8 +195,12 @@ export function detectOpenCodeFailure(output: string[]): string | null {
     return normalized.includes('opencode error:')
       || normalized.includes('requested model is not available')
       || normalized.includes('providerautherror')
-      || normalized.includes('context overflow')
-      || normalized.includes('tool failed:');
+      || normalized.includes('context overflow');
   });
   return failure ?? null;
+}
+
+function isWriteLikePermission(request: OpenCodePermissionRequest): boolean {
+  const value = `${request.type} ${request.title}`.toLowerCase();
+  return /\b(write|edit|delete|patch|apply|modify|create|remove)\b/.test(value) && request.patterns.length > 0;
 }

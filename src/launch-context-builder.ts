@@ -88,6 +88,8 @@ function buildSnapshot(repoRoot: string, ticket: TicketRecord, tickets: TicketRe
   const repoRootResolved = path.resolve(repoRoot);
   const worktreePath = path.resolve(checkout.worktreePath);
   const ticketPath = path.resolve(ticket.path);
+  const scratchFeaturePath = path.join(repoRootResolved, '.scratch', ticket.feature);
+  const featurePrdPath = path.join(scratchFeaturePath, 'PRD.md');
   const head = (() => {
     try {
       return runGit(checkout.worktreePath, ['rev-parse', 'HEAD']);
@@ -110,6 +112,8 @@ function buildSnapshot(repoRoot: string, ticket: TicketRecord, tickets: TicketRe
     ticketIssueName: ticket.issueName,
     featureSlug: ticket.feature,
     ticketPath,
+    scratchFeaturePath,
+    ...(existsSync(featurePrdPath) ? { featurePrdPath } : {}),
     repoRoot: repoRootResolved,
     worktreePath,
     worktreeName: checkout.effectiveWorktreeName,

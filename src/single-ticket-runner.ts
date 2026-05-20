@@ -13,6 +13,7 @@ const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more
 const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
 const REVIEWER_EMPTY_OUTPUT_FAILURE_KIND = 'reviewer-empty-output';
 const LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND = 'launcher-context-mismatch';
+const MISSING_AFK_SUMMARY_FAILURE_KIND = 'missing-afk-summary';
 const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
   'The previous reviewer response was malformed.',
   'Return JSON only with this exact shape: {"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string"}]}.',
@@ -28,6 +29,7 @@ const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
 export interface SingleTicketRunResult {
   scheduled: boolean;
   message: string;
+  outcome?: 'completed' | 'blocked' | 'failed' | 'not-scheduled';
   launchBlock?: LaunchBlockEvidence;
 }
 
@@ -41,9 +43,9 @@ export class SingleTicketRunner {
 
   async launch(plan: LaunchPlan, options: { onProgress?: AgentExecutionProgressCallback } = {}): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
-    if (!ticket) return { scheduled: false, message: 'No ticket available for launch' };
+    if (!ticket) return { scheduled: false, message: 'No ticket available for launch', outcome: 'not-scheduled' };
     const ticketPathValidation = validateSelectedTicketPath(plan.repoRoot, ticket);
-    if (ticketPathValidation) return { scheduled: false, message: ticketPathValidation.message, launchBlock: ticketPathValidation };
+    if (ticketPathValidation) return { scheduled: false, message: ticketPathValidation.message, outcome: 'not-scheduled', launchBlock: ticketPathValidation };
     options.onProgress?.({ ticketLabel: ticket.label, message: 'starting ticket run' });
     const record = this.runtimeStore.createRecord({ featureSlug: ticket.feature, issueName: ticket.issueName, ticketPath: ticket.path });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
@@ -88,6 +90,7 @@ export class SingleTicketRunner {
     let useReviewerRepairPrompt = false;
     const ticketStartEpoch = Date.now();
 
+    let outcome: SingleTicketRunResult['outcome'] = 'failed';
     try {
       while (true) {
         const ticketBudget = this.checkTicketBudget(record.metadataPath, record.logPath, budgets, ticketStartEpoch, reviewCycle + 1);
@@ -110,7 +113,7 @@ export class SingleTicketRunner {
               prompt,
               invocationMode: 'execution',
               sessionId,
-              onProgress: this.progressLogger(record.logPath, options.onProgress),
+              onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
             }), reviewCycle + 1);
             sessionId = executionResult.sessionId ?? sessionId;
             latestExecutionResult = executionResult;
@@ -122,7 +125,7 @@ export class SingleTicketRunner {
                 this.runtimeStore.markFailed(record, executionResult.status);
                 this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
                 options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionResult.status}`, sessionId });
-                return { scheduled: true, message: `Scheduled ${ticket.label}` };
+                return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: executionResult.status === 'blocked' ? 'blocked' : 'failed' };
               });
             }
           } catch (error) {
@@ -143,11 +146,11 @@ export class SingleTicketRunner {
               this.runtimeStore.markFailed(record, 'failed');
               this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
               options.onProgress?.({ ticketLabel: ticket.label, message: `run failed: ${message}`, sessionId });
-              return { scheduled: true, message: `Scheduled ${ticket.label}` };
+              return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'failed' };
             });
           }
         }
-        if (!latestExecutionResult) return { scheduled: false, message: 'No execution result available for review' };
+        if (!latestExecutionResult) return { scheduled: false, message: 'No execution result available for review', outcome: 'not-scheduled' };
         const executionForReview = latestExecutionResult;
 
         const reviewResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'review', () => this.provider.execute({
@@ -158,7 +161,7 @@ export class SingleTicketRunner {
             : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview),
           invocationMode: 'reviewer',
           sessionId,
-          onProgress: this.progressLogger(record.logPath, options.onProgress),
+          onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
         }), reviewCycle + 1);
         useReviewerRepairPrompt = false;
         const reviewBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'review', reviewCycle + 1);
@@ -168,39 +171,6 @@ export class SingleTicketRunner {
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         const rawReviewOutput = (reviewResult.output ?? []).join('\n');
         const review = parseReviewerOutput(rawReviewOutput);
-
-        if (review.fallback && !rawReviewOutput.trim()) {
-          malformedAttempts = 0;
-          this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, {
-            cycle: reviewCycle + 1,
-            outcome: 'approve',
-            reason: 'Empty reviewer output treated as pass.',
-            malformed: false,
-            findings: [],
-            classification: 'clean-approval',
-          });
-          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-            outcome: 'approved',
-            reason: 'Reviewer returned empty output — no findings.',
-            cycle: reviewCycle + 1,
-            classification: 'clean-approval',
-            malformed: false,
-            findings: [],
-          }));
-          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
-            const ticketContent = this.readTicketContent(ticket.path);
-            if (this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
-              this.runtimeStore.markDone(record);
-              this.runtimeStore.appendLog(record.logPath, 'run completed');
-              options.onProgress?.({ ticketLabel: ticket.label, message: 'run completed', sessionId });
-            } else {
-              this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
-              this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
-              options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked: missing ## AFK Summary', sessionId });
-            }
-            return { scheduled: true, message: `Scheduled ${ticket.label}` };
-          });
-        }
 
         if (review.fallback) {
           malformedAttempts += 1;
@@ -224,27 +194,41 @@ export class SingleTicketRunner {
         if (decision.decision === 'approve') {
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
             const ticketContent = this.readTicketContent(ticket.path);
-            const terminalOutcome = this.summaryPresenceGate.hasSummary(ticketContent ?? '') ? 'approved' : 'needs-human';
-            const terminalReason = terminalOutcome === 'approved' ? decision.reason : 'ready-for-human gate blocked: missing ## AFK Summary';
             const classification: ReviewOutcomeClassification = decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval';
+            if (!this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
+              const reason = 'ready-for-human gate blocked: missing ## AFK Summary';
+              this.runtimeStore.updateMetadata(record.metadataPath, {
+                STATUS: 'blocked',
+                UNSAFE_REASON: reason,
+                FAILURE_KIND: MISSING_AFK_SUMMARY_FAILURE_KIND,
+              });
+              this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
+                outcome: 'needs-human',
+                reason,
+                cycle: reviewCycle + 1,
+                classification,
+                malformed: false,
+                findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
+              }));
+              this.runtimeStore.markFailed(record, reason);
+              this.runtimeStore.appendLog(record.logPath, reason);
+              this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
+              options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked: missing ## AFK Summary', sessionId });
+              return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
+            }
+
             this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-              outcome: terminalOutcome,
-              reason: terminalReason,
+              outcome: 'approved',
+              reason: decision.reason,
               cycle: reviewCycle + 1,
               classification,
               malformed: false,
               findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
             }));
-            if (this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
-              this.runtimeStore.markDone(record);
-              this.runtimeStore.appendLog(record.logPath, 'run completed');
-              options.onProgress?.({ ticketLabel: ticket.label, message: 'run completed', sessionId });
-            } else {
-              this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
-              this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
-              options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked: missing ## AFK Summary', sessionId });
-            }
-            return { scheduled: true, message: `Scheduled ${ticket.label}` };
+            this.runtimeStore.markDone(record);
+            this.runtimeStore.appendLog(record.logPath, 'run completed');
+            options.onProgress?.({ ticketLabel: ticket.label, message: 'run completed', sessionId });
+            return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'completed' };
           });
         }
 
@@ -266,7 +250,7 @@ export class SingleTicketRunner {
             this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
             this.runtimeStore.appendLog(record.logPath, 'run blocked');
             options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked', sessionId });
-            return { scheduled: true, message: `Scheduled ${ticket.label}` };
+            return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
           });
         }
 
@@ -288,7 +272,7 @@ export class SingleTicketRunner {
       this.runtimeStore.markFailed(record, 'failed');
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
     }
-    return { scheduled: true, message: `Scheduled ${ticket.label}` };
+    return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'failed' };
   }
 
   private resolveBudgets(): BudgetPolicy {
@@ -354,7 +338,7 @@ export class SingleTicketRunner {
       this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${reason}`);
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
       options.onProgress?.({ ticketLabel, message: `budget handoff: ${reason}`, sessionId });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
     });
   }
 
@@ -396,7 +380,7 @@ export class SingleTicketRunner {
       this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
       options.onProgress?.({ ticketLabel, message: 'malformed reviewer output handoff', sessionId });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
     });
   }
 
@@ -436,7 +420,7 @@ export class SingleTicketRunner {
       this.runtimeStore.appendLog(record.logPath, 'empty reviewer output handoff: reviewer-empty-output');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
       options.onProgress?.({ ticketLabel, message: 'empty reviewer output handoff', sessionId });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
     });
   }
 
@@ -456,7 +440,7 @@ export class SingleTicketRunner {
       this.runtimeStore.appendLog(record.logPath, `launcher context mismatch: ${reason}`);
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
       options.onProgress?.({ ticketLabel, message: 'launcher context mismatch' });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}` };
+      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
     });
   }
 
@@ -494,7 +478,7 @@ export class SingleTicketRunner {
 
   private async launchWithoutReviewer(plan: LaunchPlan, record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string }, options: { onProgress?: AgentExecutionProgressCallback }): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
-    if (!ticket) return { scheduled: false, message: 'No ticket available for launch' };
+    if (!ticket) return { scheduled: false, message: 'No ticket available for launch', outcome: 'not-scheduled' };
     if (plan.reviewerPrompt) this.runtimeStore.appendLog(record.logPath, `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`);
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
     const snapshot = plan.snapshots?.[ticket.label];
@@ -513,8 +497,9 @@ export class SingleTicketRunner {
     this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('worktree-preparation'));
     this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('readiness'));
 
+    let outcome: SingleTicketRunResult['outcome'] = 'failed';
     try {
-      const result = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({ plan, ticketIndex: 0, prompt, onProgress: this.progressLogger(record.logPath, options.onProgress) }), 1);
+      const result = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({ plan, ticketIndex: 0, prompt, onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress) }), 1);
       this.recordExecutionResult(record.metadataPath, record.logPath, result, result.sessionId ?? null);
       await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
         if (result.status === 'completed') {
@@ -522,11 +507,21 @@ export class SingleTicketRunner {
           if (this.summaryPresenceGate.hasSummary(updatedTicketContent)) {
             this.runtimeStore.markDone(record);
             this.runtimeStore.appendLog(record.logPath, 'run completed');
+            outcome = 'completed';
           } else {
-            this.runtimeStore.appendLog(record.logPath, 'ready-for-human gate blocked: missing ## AFK Summary');
+            const reason = 'ready-for-human gate blocked: missing ## AFK Summary';
+            this.runtimeStore.updateMetadata(record.metadataPath, {
+              STATUS: 'blocked',
+              UNSAFE_REASON: reason,
+              FAILURE_KIND: MISSING_AFK_SUMMARY_FAILURE_KIND,
+            });
+            this.runtimeStore.markFailed(record, reason);
+            this.runtimeStore.appendLog(record.logPath, reason);
+            outcome = 'blocked';
           }
         } else {
           this.runtimeStore.markFailed(record, result.status);
+          outcome = result.status === 'blocked' ? 'blocked' : 'failed';
         }
         this.runtimeStore.appendLog(record.logPath, `run ${result.status}`);
       });
@@ -543,11 +538,24 @@ export class SingleTicketRunner {
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
     }
 
-    return { scheduled: true, message: `Scheduled ${ticket.label}` };
+    return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome };
   }
 
-  private progressLogger(logPath: string, onProgress: AgentExecutionProgressCallback | undefined): AgentExecutionProgressCallback {
+  private progressLogger(metadataPath: string, logPath: string, onProgress: AgentExecutionProgressCallback | undefined): AgentExecutionProgressCallback {
+    const observedSessionIds = new Set<string>();
     return (event) => {
+      if (event.sessionId && !observedSessionIds.has(event.sessionId)) {
+        observedSessionIds.add(event.sessionId);
+        const metadata = this.runtimeStore.readMetadata(metadataPath);
+        if (!metadata.PROVIDER_SESSION_ID) {
+          this.runtimeStore.updateMetadata(metadataPath, {
+            PROVIDER_SESSION_ID: event.sessionId,
+            PROVIDER_SESSION_REMOVABLE: false,
+            UNSAFE_REASON: metadata.UNSAFE_REASON === 'session capture pending' ? 'session still running' : metadata.UNSAFE_REASON,
+          });
+          this.runtimeStore.appendLog(logPath, `provider session observed: ${event.sessionId}`);
+        }
+      }
       if (event.kind === 'permission') this.runtimeStore.appendLog(logPath, `permission required: ${event.message}`);
       else if (event.kind === 'failure') this.runtimeStore.appendLog(logPath, event.message);
       else if (event.permissionId) this.runtimeStore.appendLog(logPath, `permission event: ${event.message}`);
@@ -637,6 +645,8 @@ export class SingleTicketRunner {
         ticketLabel: snapshot.ticketLabel,
         featureSlug: snapshot.featureSlug,
         ticketPath: snapshot.ticketPath,
+        scratchFeaturePath: snapshot.scratchFeaturePath,
+        featurePrdPath: snapshot.featurePrdPath,
         repoRoot: snapshot.repoRoot,
         worktreePath: snapshot.worktreePath,
         worktreeName: snapshot.worktreeName,

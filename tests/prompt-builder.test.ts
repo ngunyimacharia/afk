@@ -13,13 +13,15 @@ test('prompt consumes prepared checkout context', () => {
     ticketContent: 'Status: ready-for-agent\n',
   });
   assert.match(prompt, /Use this prepared checkout/);
+  assert.match(prompt, /Working checkout: \/repo\/\.git\/worktrees\/feat-tree/);
   assert.match(prompt, /feat-tree/);
   assert.match(prompt, /Ticket file to update: \/repo\/\.scratch\/feat\/issues\/01\.md/);
   assert.match(prompt, /Do not put the final AFK summary only in the assistant response, runtime log, or commit message/);
   assert.match(prompt, /Status: ready-for-agent/);
   assert.doesNotMatch(prompt, /## AFK State Snapshot/);
-  assert.match(prompt, /Access policy: paths inside the repo root are allowed/);
-  assert.match(prompt, /Search policy: search only inside the repo root/);
+  assert.match(prompt, /Access policy: source-code reads, searches, tests, and edits must use the Working checkout/);
+  assert.match(prompt, /Root repo writes are allowed only under the listed shared \.scratch artifact paths/);
+  assert.match(prompt, /Search policy: search only inside the Working checkout/);
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
 });
 
@@ -51,7 +53,7 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
     staticReadiness: 'ready',
     styleReadiness: 'ready',
   }));
-
+  writeFileSync(path.join(repoRoot, '.scratch', 'feat', 'PRD.md'), '# PRD\n');
   const plan = buildLaunchPlan(
     repoRoot,
     { id: 'exec' },
@@ -72,6 +74,11 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
   });
 
   assert.match(prompt, /## Dependencies/);
+  assert.match(prompt, /## Shared Scratch Artifacts/);
+  assert.match(prompt, new RegExp(`Scratch feature path: ${path.join(repoRoot, '.scratch', 'feat').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(prompt, new RegExp(`Feature PRD: ${path.join(repoRoot, '.scratch', 'feat', 'PRD.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal(snapshot.scratchFeaturePath, path.join(repoRoot, '.scratch', 'feat'));
+  assert.equal(snapshot.featurePrdPath, path.join(repoRoot, '.scratch', 'feat', 'PRD.md'));
   assert.match(prompt, /feat\/01: ticket status=done; runtime=completed; done sentinel=present; failed sentinel=missing/);
   assert.match(prompt, /feat\/02: ticket status=ready-for-agent; runtime=failed; done sentinel=missing; failed sentinel=present/);
   assert.match(prompt, /instruction: if feat\/01 is already done, do not implement it again/);

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { formatManualPermissionReviewLines, runAfk } from '../src/cli.js';
+import { formatManualPermissionReviewLines, readRunOutcomeLines, runAfk } from '../src/cli.js';
 import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/interactive-launch.js';
+import { RuntimeStore } from '../src/runtime-store.js';
 
 test('default afk launch fails early without interactive tty', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
@@ -105,4 +106,29 @@ test('manual permission summary renders deterministic detailed rows', () => {
 
 test('manual permission summary reports no reviewed permissions when empty', () => {
   assert.deepEqual(formatManualPermissionReviewLines([]), ['Manual permission review: none required.']);
+});
+
+test('run outcome summary includes every selected ticket', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-outcomes-'));
+  const store = new RuntimeStore({ repoRoot });
+  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(metadataRoot, { recursive: true });
+  writeFileSync(path.join(metadataRoot, 'feat-a-01.json'), JSON.stringify({
+    STATUS: 'failed',
+    FAILURE_KIND: 'path-not-found',
+    UNSAFE_REASON: 'missing file',
+  }));
+  writeFileSync(path.join(metadataRoot, 'feat-b-02.json'), JSON.stringify({
+    STATUS: 'completed',
+    FINAL_REVIEW_OUTCOME: 'approved',
+  }));
+
+  const lines = readRunOutcomeLines(store, repoRoot, [
+    { feature: 'feat-a', issueName: '01', label: 'feat-a/01' },
+    { feature: 'feat-b', issueName: '02', label: 'feat-b/02' },
+  ]);
+
+  assert.match(lines[0] ?? '', /1 failed before review/);
+  assert.match(lines.join('\n'), /feat-a\/01: failed before review \(path-not-found\)/);
+  assert.match(lines.join('\n'), /feat-b\/02: approved/);
 });

@@ -114,6 +114,8 @@ export interface AfkStateSnapshot {
   ticketIssueName: string;
   featureSlug: string;
   ticketPath: string;
+  scratchFeaturePath: string;
+  featurePrdPath?: string;
   repoRoot: string;
   worktreePath: string;
   worktreeName: string;
@@ -222,6 +224,8 @@ export interface RuntimeMetadataRecord {
     ticketLabel: string;
     featureSlug: string;
     ticketPath: string;
+    scratchFeaturePath: string;
+    featurePrdPath?: string;
     repoRoot: string;
     worktreePath: string;
     worktreeName: string;
