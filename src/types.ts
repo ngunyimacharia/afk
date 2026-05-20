@@ -1,3 +1,5 @@
+import type { ReadinessCheckMetadata } from './readiness-service.js';
+
 export interface TicketRecord {
   path: string;
   feature: string;
@@ -54,6 +56,7 @@ export interface CheckoutReadinessCopyRecord {
 export interface CheckoutReadinessMetadata {
   dependencyCopies: CheckoutReadinessCopyRecord[];
   envTestingCopy: CheckoutReadinessCopyRecord;
+  checks?: ReadinessCheckMetadata;
 }
 
 export interface LaunchPlan {

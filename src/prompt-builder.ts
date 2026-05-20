@@ -23,6 +23,12 @@ export function buildPrompt(input: PromptInput): string {
       'Readiness metadata:',
       ...input.checkout.readiness.dependencyCopies.map((item) => `- ${item.name}: ${item.decision}`),
       `- .env.testing: ${input.checkout.readiness.envTestingCopy.decision}`,
+      ...(input.checkout.readiness.checks ? [
+        `- terminal state: ${input.checkout.readiness.checks.terminalState}`,
+        `- tests: ${input.checkout.readiness.checks.testSuite.envTesting}${input.checkout.readiness.checks.testSuite.signals.length ? ` (${input.checkout.readiness.checks.testSuite.signals.join(', ')})` : ''}`,
+        `- smoke: ${input.checkout.readiness.checks.smoke.status}${input.checkout.readiness.checks.smoke.command ? ` (${input.checkout.readiness.checks.smoke.command})` : ''}`,
+        ...input.checkout.readiness.checks.staticStyleChecks.map((item) => `- static/style: ${item.status}${item.command ? ` (${item.command})` : ''}`),
+      ] : []),
     ]
     : [];
   return [

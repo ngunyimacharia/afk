@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { TicketRepository } from './ticket-repository.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
-import { WorktreePreparationService } from './worktree-preparation-service.js';
+import { needsDisabledTestsDecision, WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
 import { runSync } from './sync/runner.js';
 import { RuntimeStore } from './runtime-store.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
@@ -10,7 +10,7 @@ import { OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
-import { isInteractiveLaunchAllowed, runInteractiveLaunchWizard, type PromptIO } from './interactive-launch.js';
+import { confirmDisabledTestsForMissingEnv, isInteractiveLaunchAllowed, runInteractiveLaunchWizard, type PromptIO } from './interactive-launch.js';
 import { createProgressLine } from './progress-line.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { classifyProviderFailure } from './provider-failure.js';
@@ -121,13 +121,33 @@ export async function runAfk(
     }
   }
   const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
-  const checkouts = Object.fromEntries(checkoutFeatures.map((feature) => {
-    const stackParent = workspaceGraph.features[feature]?.stackParent;
-    return [feature, worktreePreparationService.prepare({ repoRoot, featureSlug: feature, baseRef: stackParent ? `afk/${stackParent}` : undefined })];
-  }));
-  const checkout = checkouts[firstTicket.feature];
+  const disabledTestsFeatures = new Set<string>();
+  for (const feature of checkoutFeatures) {
+    if (!needsDisabledTestsDecision(repoRoot)) continue;
+    const confirmed = await confirmDisabledTestsForMissingEnv(io, feature);
+    if (!confirmed) return { code: 1, message: `Launch blocked: tests were detected but ${path.join(repoRoot, '.env.testing')} is missing. Add .env.testing or confirm tests are disabled for this AFK run.` };
+    disabledTestsFeatures.add(feature);
+  }
+  let checkouts: ReturnType<WorktreePreparationService['prepare']>[];
+  try {
+    checkouts = checkoutFeatures.map((feature) => {
+      const stackParent = workspaceGraph.features[feature]?.stackParent;
+      return worktreePreparationService.prepare({
+        repoRoot,
+        featureSlug: feature,
+        baseRef: stackParent ? `afk/${stackParent}` : undefined,
+        selectedTicketPaths: selectedTickets.filter((ticket) => ticket.feature === feature).map((ticket) => ticket.path),
+        testsDisabledByUser: disabledTestsFeatures.has(feature),
+      });
+    });
+  } catch (error) {
+    if (error instanceof WorktreeReadinessBlockedError) return { code: 1, message: `Launch blocked by worktree readiness: ${error.message}` };
+    throw error;
+  }
+  const checkoutsByFeature = Object.fromEntries(checkoutFeatures.map((feature, index) => [feature, checkouts[index]]));
+  const checkout = checkoutsByFeature[firstTicket.feature];
   const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt });
-  plan.checkouts = checkouts;
+  plan.checkouts = checkoutsByFeature;
   const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor));
   const scheduler = new Scheduler(runner, concurrency);
   const progressLine = createProgressLine(io.stdout);

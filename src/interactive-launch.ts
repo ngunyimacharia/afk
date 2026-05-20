@@ -59,6 +59,19 @@ export async function runInteractiveLaunchWizard(input: {
   return { cancelled: false, harness: 'OpenCode', model, reviewerModel, reviewerPrompt, tickets: selectedTickets, concurrency };
 }
 
+export async function confirmDisabledTestsForMissingEnv(io: PromptIO, feature: string): Promise<boolean> {
+  const result = await prompts(
+    {
+      type: 'confirm',
+      name: 'value',
+      message: `Tests were detected for ${feature}, but source .env.testing is missing. Treat tests as disabled for this AFK run?`,
+      initial: false,
+    },
+    { onCancel: () => true },
+  );
+  return result.value === true;
+}
+
 interface PromptChoice {
   title: string;
   value: string;
