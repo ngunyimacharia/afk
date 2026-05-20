@@ -5,21 +5,27 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { runAfk } from '../src/cli.js';
 
-test('afk-cleanup shows dry-run first and requires explicit confirmation phrase', async () => {
+test('afk-cleanup executes cleanup without confirmation phrase', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const sentinelsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels');
+  const workspaceExecutionPath = path.join(repoRoot, '.scratch', 'execution.json');
   mkdirSync(issuesDir, { recursive: true });
+  mkdirSync(sentinelsDir, { recursive: true });
   const ticketPath = path.join(issuesDir, 'done.md');
+  const sentinelPath = path.join(sentinelsDir, 'feat-done.done');
   writeFileSync(ticketPath, '---\nstatus: done\n---\n');
+  writeFileSync(sentinelPath, 'done');
+  writeFileSync(workspaceExecutionPath, '{"state":"running"}\n');
   const originalArg = process.argv[2];
   process.argv[2] = 'afk-cleanup';
-  const dryRun = await runAfk(repoRoot);
-  assert.match(dryRun.message, /AFK Cleanup Plan/);
-  assert.match(dryRun.message, /confirm cleanup plan/);
-  assert.equal(existsSync(ticketPath), true);
-  const confirmed = await runAfk(repoRoot);
+  const result = await runAfk(repoRoot);
   process.argv[2] = originalArg;
-  assert.match(confirmed.message, /AFK Cleanup Plan/);
+  assert.match(result.message, /AFK Cleanup Plan/);
+  assert.match(result.message, /Executed:/);
+  assert.equal(existsSync(ticketPath), false);
+  assert.equal(existsSync(sentinelPath), false);
+  assert.equal(existsSync(workspaceExecutionPath), false);
 });
 
 test('cleanup preserves ready-for-human tickets', async () => {

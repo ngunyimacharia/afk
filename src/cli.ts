@@ -42,7 +42,10 @@ export async function runAfk(
   if (command === 'afk-cleanup') {
     const planner = new CleanupPlanner({ repoRoot });
     const plan = planner.buildPlan();
-    const logTargets = plan.terminalTargets.flatMap((target) => [target.logPath, target.metadataPath]).filter(Boolean) as string[];
+    const logTargets = plan.terminalTargets
+      .flatMap((target) => [target.logPath, target.metadataPath, target.doneSentinelPath, target.failedSentinelPath])
+      .filter(Boolean) as string[];
+    if (plan.workspaceExecutionPath) logTargets.push(plan.workspaceExecutionPath);
     const dryRun = [
       'AFK Cleanup Plan',
       '',
@@ -61,14 +64,11 @@ export async function runAfk(
       'Feature directories to delete',
       ...(plan.featureDirectoriesToDelete.length ? plan.featureDirectoriesToDelete.map((featureDir) => `- ${featureDir}`) : ['- none']),
       '',
-      'Run `afk-cleanup` again with the exact phrase `confirm cleanup plan` to execute this plan.',
+      'Cleanup executes immediately (no confirmation required).',
     ].join('\n');
-    if (process.argv.includes('confirm cleanup plan')) {
-      const executor = new CleanupExecutor();
-      const result = executor.execute(plan);
-      return { code: 0, message: `${dryRun}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}` };
-    }
-    return { code: 0, message: dryRun };
+    const executor = new CleanupExecutor();
+    const result = executor.execute(plan);
+    return { code: 0, message: `${dryRun}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}` };
   }
   if (command === 'sync') return runSync();
   const interactivity = isInteractiveLaunchAllowed(io, env);

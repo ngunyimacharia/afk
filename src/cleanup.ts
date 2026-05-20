@@ -14,6 +14,8 @@ export interface CleanupTarget {
   issuePath: string;
   logPath?: string;
   metadataPath?: string;
+  doneSentinelPath?: string;
+  failedSentinelPath?: string;
   reason: string;
 }
 
@@ -22,6 +24,7 @@ export interface CleanupPlan {
   preservedIssues: string[];
   preservedArtifacts: string[];
   featureDirectoriesToDelete: string[];
+  workspaceExecutionPath?: string;
 }
 
 function readTerminalStatuses(): Set<string> {
@@ -65,6 +68,10 @@ function ticketMetadataPath(repoRoot: string, feature: string, issueName: string
   return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`);
 }
 
+function ticketSentinelPath(repoRoot: string, feature: string, issueName: string, kind: 'done' | 'failed'): string {
+  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', `${feature}-${issueName}.${kind}`);
+}
+
 export class CleanupPlanner {
   constructor(private readonly input: CleanupPlannerInput) {}
 
@@ -99,6 +106,8 @@ export class CleanupPlanner {
             issuePath,
             logPath: fileExists(ticketLogPath(this.input.repoRoot, featureDir.name, issueName)) ? ticketLogPath(this.input.repoRoot, featureDir.name, issueName) : undefined,
             metadataPath: fileExists(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)) ? ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName) : undefined,
+            doneSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done')) ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done') : undefined,
+            failedSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed')) ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed') : undefined,
             reason: `terminal status: ${status}`,
           });
         } else {
@@ -112,9 +121,12 @@ export class CleanupPlanner {
     for (const target of terminalTargets) {
       if (target.logPath) preservedArtifacts.push(target.logPath);
       if (target.metadataPath) preservedArtifacts.push(target.metadataPath);
+      if (target.doneSentinelPath) preservedArtifacts.push(target.doneSentinelPath);
+      if (target.failedSentinelPath) preservedArtifacts.push(target.failedSentinelPath);
     }
 
-    return { terminalTargets, preservedIssues, preservedArtifacts, featureDirectoriesToDelete };
+    const workspaceExecutionPath = fileExists(path.join(scratchRoot, 'execution.json')) ? path.join(scratchRoot, 'execution.json') : undefined;
+    return { terminalTargets, preservedIssues, preservedArtifacts, featureDirectoriesToDelete, workspaceExecutionPath };
   }
 }
 
@@ -122,12 +134,21 @@ export class CleanupExecutor {
   execute(plan: CleanupPlan): { deleted: string[] } {
     const deleted: string[] = [];
     for (const target of plan.terminalTargets) {
-      for (const filePath of [target.issuePath, target.logPath, target.metadataPath].filter((value): value is string => Boolean(value))) {
+      for (const filePath of [
+        target.issuePath,
+        target.logPath,
+        target.metadataPath,
+        target.doneSentinelPath,
+        target.failedSentinelPath,
+      ].filter((value): value is string => Boolean(value))) {
         try { rmSync(filePath, { force: true, recursive: false }); deleted.push(filePath); } catch {}
       }
     }
     for (const featureDir of plan.featureDirectoriesToDelete) {
       try { rmSync(featureDir, { force: true, recursive: true }); deleted.push(featureDir); } catch {}
+    }
+    if (plan.workspaceExecutionPath) {
+      try { rmSync(plan.workspaceExecutionPath, { force: true, recursive: false }); deleted.push(plan.workspaceExecutionPath); } catch {}
     }
     return { deleted };
   }
