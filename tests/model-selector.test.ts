@@ -23,7 +23,7 @@ test('builds launch plans with reviewer model and prompt context', () => {
     '/repo',
     { id: 'exec-model' },
     [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }],
-    { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/repo/.git/worktrees/feat' },
+    { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/repo/.git/worktrees/feat' },
     { model: { id: 'review-model' }, prompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' } },
   );
 

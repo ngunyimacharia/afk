@@ -138,7 +138,7 @@ export async function runAfk(
       return worktreePreparationService.prepare({
         repoRoot,
         featureSlug: feature,
-        baseRef: stackParent ? `afk/${stackParent}` : undefined,
+        baseRef: stackParent ? stackParent : undefined,
         selectedTicketPaths: selectedTickets.filter((ticket) => ticket.feature === feature).map((ticket) => ticket.path),
         testsDisabledByUser: disabledTestsFeatures.has(feature),
       });

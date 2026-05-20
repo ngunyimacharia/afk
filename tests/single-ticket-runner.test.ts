@@ -13,7 +13,7 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-'));
   const store = new RuntimeStore({ repoRoot });
   const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-1', removable: true, output: ['worker started'] }));
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.match(result.message, /Scheduled feat\/001/);
@@ -31,7 +31,7 @@ test('emits progress while launching a ticket', async () => {
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, '---\nfeature: feat\n---\n\n## AFK Summary\nStatus: done\n');
   const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-progress', removable: true, output: ['worker started'] }));
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: 'progress', label: 'feat/progress', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: 'progress', label: 'feat/progress', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
   const progress: string[] = [];
 
   await runner.launch(plan as never, { onProgress: (event) => progress.push(`${event.ticketLabel}: ${event.message}`) });
@@ -56,7 +56,7 @@ test('sends ticket file summary instructions to the execution provider', async (
       return { status: 'completed', sessionId: 'session-prompt', removable: true };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '006', label: 'feat/006', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '006', label: 'feat/006', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -83,7 +83,7 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
       return { status: 'completed', sessionId: 'session-execution', removable: true, output: ['worker finished'] };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: '007', label: 'feat/007', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: '007', label: 'feat/007', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   const result = await runner.launch(plan as never);
 
@@ -124,9 +124,9 @@ test('blocks before provider execution when launch context mismatches', async ()
     reviewerPrompt: resolveReviewerPromptTemplate(),
     tickets: [{ path: ticketPath, feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree-a' },
+    checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree-a' },
     snapshots: {
-      'feat/001': { generatedAt: 'now', ticketLabel: 'feat/001', ticketStatus: 'ready', ticketIssueName: '001', featureSlug: 'feat', ticketPath, repoRoot, worktreePath: '/tmp/worktree-b', worktreeName: 'other', branchName: 'afk/feat', head: 'head', gitStatusShort: [], ticketOutsideWorktree: true, dependencies: [], readiness: null },
+      'feat/001': { generatedAt: 'now', ticketLabel: 'feat/001', ticketStatus: 'ready', ticketIssueName: '001', featureSlug: 'feat', ticketPath, repoRoot, worktreePath: '/tmp/worktree-b', worktreeName: 'other', branchName: 'feat', head: 'head', gitStatusShort: [], ticketOutsideWorktree: true, dependencies: [], readiness: null },
     },
   };
 
@@ -150,7 +150,7 @@ test('classifies repeated empty reviewer output separately from malformed JSON',
       return { status: 'completed', sessionId: 'exec', output: ['done'] };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'empty-review', label: 'feat/empty-review', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'empty-review', label: 'feat/empty-review', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -172,7 +172,7 @@ test('records minor-risk approval metadata for minor-only findings', async () =>
       return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'minor-risk', label: 'feat/minor-risk', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'minor-risk', label: 'feat/minor-risk', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -196,7 +196,7 @@ test('records real-finding loop and handoff metadata for unresolved major findin
       return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'real-finding', label: 'feat/real-finding', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'real-finding', label: 'feat/real-finding', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -213,7 +213,7 @@ test('does not promote completed runs without an AFK summary', async () => {
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, '---\nfeature: feat\n---\n');
   const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-2', removable: true }));
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '003', label: 'feat/003', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '003', label: 'feat/003', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
   await runner.launch(plan as never);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-003.json');
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-003.log');
@@ -228,7 +228,7 @@ test('promotes completed runs when an AFK summary is present', async () => {
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, '---\nfeature: feat\n---\n\n## AFK Summary\nStatus: done\n');
   const runner = new SingleTicketRunner(store, new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-3', removable: true }));
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '004', label: 'feat/004', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '004', label: 'feat/004', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
   await runner.launch(plan as never);
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-004.log');
   assert.match(readFileSync(logPath, 'utf8'), /run completed/);
@@ -238,7 +238,7 @@ test('records failed state when the provider throws', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-fail-'));
   const store = new RuntimeStore({ repoRoot });
   const runner = new SingleTicketRunner(store, { execute: async () => { throw new Error('boom'); } });
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '002', label: 'feat/002', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '002', label: 'feat/002', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, true);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-002.json');
@@ -263,7 +263,7 @@ test('persists failed provider output for later inspection', async () => {
     unsafeReason: 'The requested model is not available for integrator "copilot-language-server".',
     output: ['The requested model is not available for integrator "copilot-language-server".'],
   }));
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '005', label: 'feat/005', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '005', label: 'feat/005', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -282,7 +282,7 @@ test('records path-not-found failure kind for failed provider results', async ()
     unsafeReason: 'ENOENT: no such file or directory, open \"/tmp/missing.md\"',
     output: ['Tool failed: ENOENT: no such file or directory'],
   }));
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'path-missing', label: 'feat/path-missing', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'path-missing', label: 'feat/path-missing', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -298,7 +298,7 @@ test('records patch-context-mismatch failure kind when provider throws', async (
       throw new Error('apply_patch verification failed: Failed to find expected lines in src/file.ts');
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'patch-mismatch', label: 'feat/patch-mismatch', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'patch-mismatch', label: 'feat/patch-mismatch', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -314,7 +314,7 @@ test('records dependency-missing failure kind when provider throws', async () =>
       throw new Error('require(vendor/autoload.php): Failed to open stream: No such file or directory');
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'dependency-missing', label: 'feat/dependency-missing', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'dependency-missing', label: 'feat/dependency-missing', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -345,7 +345,7 @@ test('persists permission progress before provider completion', async () => {
       return { status: 'completed', sessionId: 'session-permission', removable: true };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: 'permission', label: 'feat/permission', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: 'permission', label: 'feat/permission', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -368,7 +368,7 @@ test('scheduler queues tickets by feature and starts the next queued ticket afte
     { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
     { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
     { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
-  ], gitContext: { commits: [] }, checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' } };
+  ], gitContext: { commits: [] }, checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' } };
 
   await scheduler.launch(plan as never);
   assert.deepEqual(started, ['feat-a/001', 'feat-b/001', 'feat-a/002']);
@@ -382,7 +382,7 @@ test('scheduler forwards progress events from queued tickets', async () => {
   const plan = { repoRoot, model: { id: 'model-1' }, tickets: [
     { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
     { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
-  ], gitContext: { commits: [] }, checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' } };
+  ], gitContext: { commits: [] }, checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' } };
   const progress: string[] = [];
 
   await scheduler.launch(plan as never, { onProgress: (event) => progress.push(`${event.ticketLabel}: ${event.message}`) });
@@ -411,7 +411,7 @@ test('retries malformed reviewer once without starting another execution', async
       return { status: 'completed', sessionId: 's-exec' };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'm1', label: 'feat/m1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'm1', label: 'feat/m1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -429,7 +429,7 @@ test('hands off when malformed reviewer retry budget is exceeded', async () => {
       ? { status: 'completed', sessionId: 's-review', output: ['not json'] }
       : { status: 'completed', sessionId: 's-exec' },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'm2', label: 'feat/m2', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'm2', label: 'feat/m2', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-m2.json');
@@ -454,7 +454,7 @@ test('applies real fixup cap to major findings and then hands off', async () => 
       return { status: 'completed', sessionId: 's-exec' };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'fx', label: 'feat/fx', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'fx', label: 'feat/fx', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
   assert.equal(executionCalls, 3);
@@ -468,7 +468,7 @@ test('does not retry implementation when provider fails by default', async () =>
   const store = new RuntimeStore({ repoRoot });
   let calls = 0;
   const runner = new SingleTicketRunner(store, { execute: async () => { calls += 1; throw new Error('provider down'); } });
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'pf', label: 'feat/pf', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'pf', label: 'feat/pf', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
   assert.equal(calls, 1);
@@ -485,7 +485,7 @@ test('hands off when per-phase wall clock budget is exceeded', async () => {
       ? { status: 'completed', sessionId: 's-review', output: [JSON.stringify({ summary: 'ok', findings: [] })] }
       : { status: 'completed', sessionId: 's-exec' },
   }, undefined, { phaseWallClockMs: { execution: 5 } });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'p1', label: 'feat/p1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'p1', label: 'feat/p1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-p1.json');
@@ -510,7 +510,7 @@ test('hands off when per-ticket wall clock budget is exceeded', async () => {
         : { status: 'completed', sessionId: 's-exec' };
     },
   }, undefined, { ticketWallClockMs: 10 });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 't1', label: 'feat/t1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 't1', label: 'feat/t1', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   try {
     await runner.launch(plan as never);
@@ -534,7 +534,7 @@ test('blocks launch when selected ticket path is missing', async () => {
     },
   });
   const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '404.md');
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '404', label: 'feat/404', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: ticketPath, feature: 'feat', issueName: '404', label: 'feat/404', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   const result = await runner.launch(plan as never);
 
@@ -557,7 +557,7 @@ test('blocks launch when selected ticket path is outside issues layout', async (
   const badPath = path.join(repoRoot, '.scratch', 'feat', 'notes', '001.md');
   mkdirSync(path.dirname(badPath), { recursive: true });
   writeFileSync(badPath, '# wrong layout\n');
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: badPath, feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: badPath, feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   const result = await runner.launch(plan as never);
 
@@ -572,7 +572,7 @@ test('blocks launch when selected ticket path attempts traversal', async () => {
   const store = new RuntimeStore({ repoRoot });
   const runner = new SingleTicketRunner(store, { execute: async () => ({ status: 'completed' }) });
   const traversalPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '..', 'notes', '002.md');
-  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: traversalPath, feature: 'feat', issueName: '002', label: 'feat/002', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, tickets: [{ path: traversalPath, feature: 'feat', issueName: '002', label: 'feat/002', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, false);
@@ -612,7 +612,7 @@ test('retries malformed reviewer output once before implementation fixup', async
       return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'malformed-retry', label: 'feat/malformed-retry', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'malformed-retry', label: 'feat/malformed-retry', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never);
 
@@ -639,7 +639,7 @@ test('hands off after repeated malformed reviewer output without implementation 
       return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
     },
   });
-  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'malformed-handoff', label: 'feat/malformed-handoff', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat', worktreePath: '/tmp/worktree' } };
+  const plan = { repoRoot, model: { id: 'model-1' }, reviewerModel: { id: 'review-model' }, reviewerPrompt: resolveReviewerPromptTemplate(), tickets: [{ path: ticketPath, feature: 'feat', issueName: 'malformed-handoff', label: 'feat/malformed-handoff', executorAfk: true }], gitContext: { commits: [] }, checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat', defaultBranchName: 'feat', effectiveBranchName: 'feat', worktreePath: '/tmp/worktree' } };
 
   await runner.launch(plan as never, { onProgress: (event) => progress.push(event.message) });
 

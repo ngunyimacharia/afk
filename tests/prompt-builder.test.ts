@@ -8,7 +8,7 @@ import { buildPrompt } from '../src/prompt-builder.js';
 
 test('prompt consumes prepared checkout context', () => {
   const prompt = buildPrompt({
-    checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat-tree', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat-tree', worktreePath: '/repo/.git/worktrees/feat-tree' },
+    checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat-tree', defaultBranchName: 'feat', effectiveBranchName: 'feat-tree', worktreePath: '/repo/.git/worktrees/feat-tree' },
     ticket: { path: '/repo/.scratch/feat/issues/01.md', feature: 'feat', issueName: '01', label: 'feat/01', executorAfk: true },
     ticketContent: 'Status: ready-for-agent\n',
   });
@@ -60,7 +60,7 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
       { path: path.join(repoRoot, '.scratch', 'feat', 'issues', '02.md'), feature: 'feat', issueName: '02', label: 'feat/02', executorAfk: true, status: 'ready-for-agent' },
       { path: ticketPath, feature: 'feat', issueName: '03', label: 'feat/03', executorAfk: true, status: 'ready-for-agent', dependsOn: ['01', '02'] },
     ],
-    { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat-tree', defaultBranchName: 'afk/feat', effectiveBranchName: 'afk/feat-tree', worktreePath: repoRoot },
+    { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat-tree', defaultBranchName: 'feat', effectiveBranchName: 'feat-tree', worktreePath: repoRoot },
   );
   const snapshot = plan.snapshots?.['feat/03'];
   assert.ok(snapshot);
@@ -90,8 +90,8 @@ test('launch plan snapshots use per-feature checkouts', () => {
   mkdirSync(path.dirname(ticketB), { recursive: true });
   writeFileSync(ticketA, 'Status: ready-for-agent\n');
   writeFileSync(ticketB, 'Status: ready-for-agent\n');
-  const checkoutA = { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'tree-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: path.join(repoRoot, '.worktree', 'tree-a') };
-  const checkoutB = { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'tree-b', defaultBranchName: 'afk/feat-b', effectiveBranchName: 'afk/feat-b', worktreePath: path.join(repoRoot, '.worktree', 'tree-b') };
+  const checkoutA = { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'tree-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: path.join(repoRoot, '.worktree', 'tree-a') };
+  const checkoutB = { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'tree-b', defaultBranchName: 'feat-b', effectiveBranchName: 'feat-b', worktreePath: path.join(repoRoot, '.worktree', 'tree-b') };
 
   const plan = buildLaunchPlan(
     repoRoot,

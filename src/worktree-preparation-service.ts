@@ -198,7 +198,7 @@ export class WorktreePreparationService {
   prepare(input: WorktreePreparationInput): PreparedCheckoutContext {
     const defaultWorktreeName = input.featureSlug;
     const effectiveWorktreeName = input.ticketOverrides?.afk_worktree?.trim() || defaultWorktreeName;
-    const defaultBranchName = `afk/${defaultWorktreeName}`;
+    const defaultBranchName = defaultWorktreeName;
     const effectiveBranchName = input.ticketOverrides?.afk_branch?.trim() || defaultBranchName;
     const worktreePath = path.join(ensureIgnoredWorktreeRoot(input.repoRoot), effectiveWorktreeName);
 

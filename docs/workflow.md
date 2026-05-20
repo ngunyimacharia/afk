@@ -66,7 +66,7 @@ Deterministic checkout preparation is implemented in `src/worktree-preparation-s
 Current rules:
 
 - worktree naming defaults to the feature slug
-- branch naming defaults to `afk/<feature-slug>`
+- branch naming defaults to the feature slug
 - `afk_worktree` and `afk_branch` overrides are supported
 - worktrees are created or reused before execution
 - branches are local-only and use `git branch --no-track`

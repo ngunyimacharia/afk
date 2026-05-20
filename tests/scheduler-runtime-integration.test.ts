@@ -31,7 +31,7 @@ test('starts ready tickets without feature serialization', async () => {
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
   };
 
   const result = await scheduler.launch(plan as never);

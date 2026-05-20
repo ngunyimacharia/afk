@@ -40,7 +40,7 @@ test('runs ready tickets in parallel and caps global concurrency', async () => {
       { path: '/tmp/b-2.md', feature: 'feat-b', issueName: '002', label: 'feat-b/002', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -75,7 +75,7 @@ test('continues independent queues when one ticket fails', async () => {
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -105,7 +105,7 @@ test('waits for dependency completion before launching dependent ticket', async 
       { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -137,7 +137,7 @@ test('returns structured launch-block evidence for invalid selected paths', asyn
       { path: '/tmp/invalid.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/worktree' },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -166,10 +166,10 @@ test('passes feature checkout and matching snapshot to runner', async () => {
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/tree-a' },
+    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/tree-a' },
     checkouts: {
-      'feat-a': { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: '/tmp/tree-a' },
-      'feat-b': { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'feat-b', defaultBranchName: 'afk/feat-b', effectiveBranchName: 'afk/feat-b', worktreePath: '/tmp/tree-b' },
+      'feat-a': { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/tree-a' },
+      'feat-b': { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'feat-b', defaultBranchName: 'feat-b', effectiveBranchName: 'feat-b', worktreePath: '/tmp/tree-b' },
     },
     snapshots: {
       'feat-a/001': { featureSlug: 'feat-a', worktreePath: '/tmp/tree-a' },
