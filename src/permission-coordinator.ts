@@ -38,12 +38,13 @@ export interface PermissionDecisionHistoryEntry {
 
 interface QueuedPermissionRequest {
   request: OpenCodePermissionRequest;
+  ticketLabel: string;
   order: number;
   resolve: (decision: PermissionCoordinatorDecision) => void;
 }
 
 export interface PermissionCoordinatorOptions {
-  ticketLabel: string;
+  ticketLabel?: string;
   promptAdapter?: PermissionPromptAdapter;
   now?: () => Date;
 }
@@ -63,7 +64,7 @@ export class PermissionPromptNonInteractiveError extends Error {
 }
 
 export class PermissionCoordinator {
-  private readonly ticketLabel: string;
+  private readonly defaultTicketLabel: string;
   private readonly promptAdapter: PermissionPromptAdapter;
   private readonly now: () => Date;
   private readonly queue: QueuedPermissionRequest[] = [];
@@ -73,7 +74,7 @@ export class PermissionCoordinator {
   private nextOrder = 1;
 
   constructor(options: PermissionCoordinatorOptions) {
-    this.ticketLabel = options.ticketLabel;
+    this.defaultTicketLabel = options.ticketLabel ?? 'unknown-ticket';
     this.promptAdapter = options.promptAdapter ?? createManualPermissionPromptAdapter();
     this.now = options.now ?? (() => new Date());
   }
@@ -87,8 +88,12 @@ export class PermissionCoordinator {
   }
 
   async submit(request: OpenCodePermissionRequest): Promise<PermissionCoordinatorDecision> {
+    return this.submitForTicket(this.defaultTicketLabel, request);
+  }
+
+  async submitForTicket(ticketLabel: string, request: OpenCodePermissionRequest): Promise<PermissionCoordinatorDecision> {
     return new Promise((resolve) => {
-      this.queue.push({ request: cloneRequest(request), resolve, order: this.nextOrder++ });
+      this.queue.push({ ticketLabel, request: cloneRequest(request), resolve, order: this.nextOrder++ });
       this.scheduleDrain();
     });
   }
@@ -118,7 +123,7 @@ export class PermissionCoordinator {
   }
 
   private async processRequest(item: QueuedPermissionRequest): Promise<void> {
-    const metadata = this.createPromptMetadata(item.request);
+    const metadata = this.createPromptMetadata(item.ticketLabel, item.request);
     const renderedMessage = formatPermissionPromptMessage(metadata);
     let decision: PermissionCoordinatorDecision = 'reject';
     let safeDefaultReason: PermissionSafeDefaultReason | undefined;
@@ -144,10 +149,10 @@ export class PermissionCoordinator {
     item.resolve(decision);
   }
 
-  private createPromptMetadata(request: OpenCodePermissionRequest): PermissionPromptMetadata {
+  private createPromptMetadata(ticketLabel: string, request: OpenCodePermissionRequest): PermissionPromptMetadata {
     const sessionId = request.sessionId.trim() || 'unknown';
     return {
-      ticketLabel: this.ticketLabel,
+      ticketLabel: ticketLabel || this.defaultTicketLabel,
       sessionId,
       permissionId: request.permissionId,
       type: request.type,

@@ -17,6 +17,7 @@ import { classifyProviderFailure } from './provider-failure.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { orderSelectedFeaturesByWaves, refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
 import type { LaunchModel, TicketRecord } from './types.js';
+import { PermissionCoordinator } from './permission-coordinator.js';
 
 function commandArg(): string | undefined {
   const command = process.argv[2];
@@ -128,9 +129,10 @@ export async function runAfk(
   const checkout = checkouts[firstTicket.feature];
   const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt });
   plan.checkouts = checkouts;
-  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor));
+  const permissionCoordinator = new PermissionCoordinator({ ticketLabel: selectedTickets[0]?.label });
+  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator));
   const scheduler = new Scheduler(runner, concurrency);
-  const progressLine = createProgressLine(io.stdout);
+  const progressLine = createProgressLine(io.stdout, { isPromptActive: () => permissionCoordinator.promptActive });
   try {
     await scheduler.launch(plan, { onProgress: (event) => progressLine.update(event) });
   } finally {
