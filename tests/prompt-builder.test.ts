@@ -12,21 +12,21 @@ test('prompt consumes prepared checkout context', () => {
     ticket: { path: '/repo/.scratch/feat/issues/01.md', feature: 'feat', issueName: '01', label: 'feat/01', executorAfk: true },
     ticketContent: 'Status: ready-for-agent\n',
   });
-  assert.match(prompt, /prepared checkout context/);
+  assert.match(prompt, /Use this prepared checkout/);
   assert.match(prompt, /feat-tree/);
   assert.match(prompt, /Ticket file to update: \/repo\/\.scratch\/feat\/issues\/01\.md/);
   assert.match(prompt, /Do not put the final AFK summary only in the assistant response, runtime log, or commit message/);
   assert.match(prompt, /Status: ready-for-agent/);
-  assert.match(prompt, /## AFK State Snapshot/);
+  assert.doesNotMatch(prompt, /## AFK State Snapshot/);
+  assert.match(prompt, /Access policy: paths inside the repo root are allowed/);
+  assert.match(prompt, /Search policy: search only inside the repo root/);
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
 });
 
 test('afk prompt includes budget and handoff guardrails', () => {
   const source = readFileSync(new URL('../src/prompts/afk-prompt.md', import.meta.url), 'utf8');
-  assert.match(source, /Do not create fixup commits unless the reviewer reported concrete findings tied to this ticket\./);
-  assert.match(source, /Do not run or repair disabled test suites unless the selected ticket explicitly requires that work\./);
-  assert.match(source, /Do not rediscover or retry known readiness failures unless the selected ticket explicitly requires fixing them\./);
-  assert.match(source, /append a structured `## AFK Summary` block/);
+  assert.match(source, /Do not create fixup commits, repair disabled tests, or retry known readiness failures/);
+  assert.match(source, /Append or update `## AFK Summary`/);
 });
 
 test('snapshot includes dependency/runtime/readiness facts and excludes unrelated scratch content', () => {
@@ -71,16 +71,42 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
     snapshot,
   });
 
-  assert.match(prompt, /## AFK State Snapshot/);
-  assert.match(prompt, /Dependency tickets:/);
+  assert.match(prompt, /## Dependencies/);
   assert.match(prompt, /feat\/01: ticket status=done; runtime=completed; done sentinel=present; failed sentinel=missing/);
   assert.match(prompt, /feat\/02: ticket status=ready-for-agent; runtime=failed; done sentinel=missing; failed sentinel=present/);
   assert.match(prompt, /instruction: if feat\/01 is already done, do not implement it again/);
-  assert.match(prompt, /Worktree HEAD:/);
-  assert.match(prompt, /Launch `git status --short`:/);
-  assert.match(prompt, /Worktree readiness facts:/);
-  assert.match(prompt, /dependency-copy: copied node_modules/);
-  assert.match(prompt, /\.env\.testing: present/);
-  assert.match(prompt, /Scope guard: exclude unrelated \.scratch content/);
+  assert.doesNotMatch(prompt, /Worktree HEAD:/);
+  assert.doesNotMatch(prompt, /Launch `git status --short`:/);
+  assert.doesNotMatch(prompt, /Worktree readiness facts:/);
+  assert.doesNotMatch(prompt, /dependency-copy: copied node_modules/);
   assert.doesNotMatch(prompt, /super secret scratch text/);
+});
+
+test('launch plan snapshots use per-feature checkouts', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-prompt-multi-checkout-'));
+  const ticketA = path.join(repoRoot, '.scratch', 'feat-a', 'issues', '01.md');
+  const ticketB = path.join(repoRoot, '.scratch', 'feat-b', 'issues', '01.md');
+  mkdirSync(path.dirname(ticketA), { recursive: true });
+  mkdirSync(path.dirname(ticketB), { recursive: true });
+  writeFileSync(ticketA, 'Status: ready-for-agent\n');
+  writeFileSync(ticketB, 'Status: ready-for-agent\n');
+  const checkoutA = { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'tree-a', defaultBranchName: 'afk/feat-a', effectiveBranchName: 'afk/feat-a', worktreePath: path.join(repoRoot, '.worktree', 'tree-a') };
+  const checkoutB = { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'tree-b', defaultBranchName: 'afk/feat-b', effectiveBranchName: 'afk/feat-b', worktreePath: path.join(repoRoot, '.worktree', 'tree-b') };
+
+  const plan = buildLaunchPlan(
+    repoRoot,
+    { id: 'exec' },
+    [
+      { path: ticketA, feature: 'feat-a', issueName: '01', label: 'feat-a/01', executorAfk: true },
+      { path: ticketB, feature: 'feat-b', issueName: '01', label: 'feat-b/01', executorAfk: true },
+    ],
+    checkoutA,
+    undefined,
+    { 'feat-a': checkoutA, 'feat-b': checkoutB },
+  );
+
+  assert.equal(plan.gitContext.commits.length, 0);
+  assert.equal(plan.snapshots?.['feat-a/01']?.worktreeName, 'tree-a');
+  assert.equal(plan.snapshots?.['feat-b/01']?.worktreeName, 'tree-b');
+  assert.equal(plan.snapshots?.['feat-b/01']?.worktreePath, path.resolve(checkoutB.worktreePath));
 });

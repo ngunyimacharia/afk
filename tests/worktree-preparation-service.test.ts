@@ -34,7 +34,7 @@ test('derives names and honors overrides', () => {
   assert.equal(checkout.effectiveWorktreeName, 'custom-tree');
   assert.equal(checkout.defaultBranchName, 'afk/feature-a');
   assert.equal(checkout.effectiveBranchName, 'local/branch');
-  assert.match(buildPrompt({ checkout, ticket: { path: '/tmp/ticket.md', feature: 'feature-a', issueName: '001', label: 'feature-a/001', executorAfk: true }, ticketContent: 'Status: ready-for-agent' }), /prepared checkout context/);
+  assert.match(buildPrompt({ checkout, ticket: { path: '/tmp/ticket.md', feature: 'feature-a', issueName: '001', label: 'feature-a/001', executorAfk: true }, ticketContent: 'Status: ready-for-agent' }), /Use this prepared checkout/);
 });
 
 test('fails clearly when the target worktree path exists but is not registered', () => {
