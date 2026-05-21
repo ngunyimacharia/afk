@@ -66,11 +66,61 @@ The internal runner still recognizes the older command names for compatibility w
 
 Typical workflow:
 
-1. Add or update issue files under `.scratch/<feature-slug>/issues/`.
-2. Mark tickets with an eligible status such as `ready-for-agent`.
-3. Run AFK in an interactive terminal and complete the prompts for harness, model, and tickets.
-4. Run `afk summary` to inspect issue summaries and runtime metadata.
-5. Run `afk cleanup` first as a dry run, then repeat with `confirm cleanup plan` only when the plan is correct.
+1. Run the synced OpenCode slash command `/afk-config` once per repo to create local `afk.json`.
+2. Add or update issue files under `.scratch/<feature-slug>/issues/`.
+3. Mark tickets with an eligible status such as `ready-for-agent`.
+4. Run AFK in an interactive terminal and complete the prompts for harness, model, and tickets.
+5. Run `afk summary` to inspect issue summaries and runtime metadata.
+6. Run `afk cleanup` first as a dry run, then repeat with `confirm cleanup plan` only when the plan is correct.
+
+## Project Config
+
+`afk` requires `afk.json` in the repo root before launching work. If it is missing, AFK exits and asks you to run `/afk-config` in OpenCode. The config file is added to AFK's global Git ignore entries because it represents local project preferences. The `/afk-config` slash command inspects the repo, generates the readiness config, writes `afk.json`, and reports the chosen commands.
+
+Example:
+
+```json
+{
+  "testsEnabled": true,
+  "testEnvFile": ".env.testing",
+  "smokeTestCommand": "bun test tests/project-config.test.ts",
+  "staticCheckCommands": ["npm run lint --silent", "npm run typecheck --silent"]
+}
+```
+
+Common concrete examples by stack:
+
+```json
+{
+  "testsEnabled": true,
+  "smokeTestCommand": "npm test -- tests/smoke/project-config.test.ts",
+  "staticCheckCommands": ["npm run lint --silent", "npm run typecheck --silent"]
+}
+```
+
+```json
+{
+  "testsEnabled": true,
+  "smokeTestCommand": "bun test tests/project-config.test.ts",
+  "staticCheckCommands": ["bun run build"]
+}
+```
+
+```json
+{
+  "testsEnabled": true,
+  "testEnvFile": ".env.testing",
+  "smokeTestCommand": "php artisan test tests/Feature/HealthCheckTest.php",
+  "staticCheckCommands": ["php -l app/Console/Kernel.php"]
+}
+```
+
+Fields:
+
+- `testsEnabled`: required boolean. When `false`, AFK skips test execution readiness checks.
+- `testEnvFile`: optional repo-relative file copied into AFK worktrees when present.
+- `smokeTestCommand`: required when `testsEnabled=true`; must reference a concrete deterministic test file path from the repo.
+- `staticCheckCommands`: optional ordered command list; any failure blocks readiness.
 
 ## Ticket Model
 
@@ -101,6 +151,7 @@ Eligible launch tickets are discovered from `.scratch/*/issues/*.md`. Terminal t
 Launch behavior notes:
 
 - `afk` launch is interactive-only and requires a TTY (no CI/non-interactive launch mode in this pass).
+- `afk` launch requires repo-local `afk.json`; run `/afk-config` first.
 - prompt order is harness -> model -> reviewer model -> feature multiselect -> global concurrency.
 - the only harness currently supported is `OpenCode`.
 - no prompt preselects a default option.
