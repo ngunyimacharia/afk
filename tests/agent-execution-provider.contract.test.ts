@@ -5,6 +5,7 @@ import {
   FakeAgentExecutionProvider,
   OpenCodeAgentExecutionProvider,
 } from '../src/agent-execution-provider.js';
+import { SDKOpenCodeSessionExecutor } from '../src/opencode.js';
 import { PermissionCoordinator } from '../src/permission-coordinator.js';
 
 test('normalizes execution outcomes and session ids', async () => {
@@ -188,6 +189,53 @@ test('opencode provider ignores recoverable tool failures without terminal sessi
 
   assert.equal(result.status, 'completed');
   assert.equal(result.removable, true);
+});
+
+test('opencode provider completes when actual session output has recovered historical abort', async () => {
+  const progress: string[] = [];
+  const provider = new OpenCodeAgentExecutionProvider(
+    new SDKOpenCodeSessionExecutor(
+      async () =>
+        ({
+          server: { url: 'http://127.0.0.1:1', close() {} },
+          client: {
+            event: {
+              subscribe: async () => ({ stream: [] }),
+            },
+            session: {
+              create: async () => ({ id: 'session-recovered-abort' }),
+              prompt: async () => ({ ok: true }),
+              messages: async () => [
+                {
+                  role: 'assistant',
+                  error: { name: 'MessageAbortedError', data: { message: 'Aborted' } },
+                  parts: [{ type: 'text', text: 'stale attempt aborted' }],
+                },
+                {
+                  role: 'assistant',
+                  parts: [{ type: 'text', text: 'Recovered and completed' }],
+                },
+              ],
+            },
+          },
+        }) as never,
+    ),
+  );
+
+  const result = await provider.execute({
+    plan: { model: { id: 'github-copilot/claude-sonnet-4.6' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+    onProgress: (event) => progress.push(`${event.kind ?? 'message'}:${event.message}`),
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.sessionId, 'session-recovered-abort');
+  assert.equal(result.removable, true);
+  assert.equal(result.unsafeReason, null);
+  assert.deepEqual(result.output, ['opencode error: Aborted', 'stale attempt aborted', 'Recovered and completed']);
+  assert.doesNotMatch(progress.join('\n'), /provider failure/);
+  assert.match(progress.join('\n'), /opencode session completed/);
 });
 
 test('opencode provider fails on structured terminal session errors', async () => {

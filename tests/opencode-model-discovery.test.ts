@@ -72,6 +72,46 @@ test('extracts terminal session errors separately from tool failures', () => {
   assert.deepEqual(output.lines, ['opencode error: Provider unavailable', 'tool failed: File not found']);
 });
 
+test('ignores recovered historical aborts when later assistant turn succeeds', () => {
+  const output = extractSessionOutput([
+    {
+      role: 'assistant',
+      error: { name: 'MessageAbortedError', data: { message: 'Aborted' } },
+      parts: [{ type: 'text', text: 'stale attempt aborted' }],
+    },
+    {
+      role: 'assistant',
+      parts: [{ type: 'text', text: 'Recovered and completed' }],
+    },
+  ]);
+
+  assert.equal(output.terminalError, null);
+  assert.deepEqual(output.lines, ['opencode error: Aborted', 'stale attempt aborted', 'Recovered and completed']);
+});
+
+test('uses only the final assistant turn for terminal session errors', () => {
+  const output = extractSessionOutput([
+    {
+      role: 'assistant',
+      error: { name: 'MessageAbortedError', data: { message: 'Aborted' } },
+      parts: [{ type: 'text', text: 'earlier aborted turn' }],
+    },
+    {
+      role: 'assistant',
+      error: { name: 'APIError', data: { message: 'Provider unavailable' } },
+      parts: [{ type: 'text', text: 'final failed turn' }],
+    },
+  ]);
+
+  assert.equal(output.terminalError, 'opencode error: Provider unavailable');
+  assert.deepEqual(output.lines, [
+    'opencode error: Aborted',
+    'earlier aborted turn',
+    'opencode error: Provider unavailable',
+    'final failed turn',
+  ]);
+});
+
 test('extracts reviewer text from alternate message shapes', () => {
   assert.deepEqual(
     extractSessionOutput({
@@ -254,6 +294,11 @@ test('recovers stale opencode prompts in the same session', async () => {
               return true;
             },
             messages: async () => [
+              {
+                role: 'assistant',
+                error: { name: 'MessageAbortedError', data: { message: 'Aborted' } },
+                parts: [{ type: 'text', text: 'stale attempt aborted' }],
+              },
               { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Recovered and completed' }] },
             ],
           },
@@ -273,7 +318,7 @@ test('recovers stale opencode prompts in the same session', async () => {
 
   assert.equal(result.sessionId, 'session-stale');
   assert.equal(result.terminalError, null);
-  assert.deepEqual(result.output, ['Recovered and completed']);
+  assert.deepEqual(result.output, ['opencode error: Aborted', 'stale attempt aborted', 'Recovered and completed']);
   assert.equal(createCalls, 1);
   assert.equal(abortCalls, 1);
   assert.deepEqual(promptPaths, ['session-stale', 'session-stale']);
