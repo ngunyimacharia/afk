@@ -188,6 +188,7 @@ export interface PhaseHistoryEntry {
 }
 
 export interface RuntimeMetadataRecord {
+  RUN_ID?: string;
   TICKET_PATH: string;
   FEATURE_SLUG: string;
   ISSUE_NAME: string;

@@ -9,19 +9,18 @@ function normalize(value: string | undefined): string | undefined {
   return value?.trim().toLowerCase();
 }
 
-function parseFrontmatter(content: string): Record<string, unknown> {
-  if (!content.startsWith('---\n')) return {};
+function parseFrontmatter(content: string, filePath: string): Record<string, unknown> {
+  if (/^Status:/im.test(content.split(/\r?\n/, 1)[0] ?? '')) {
+    throw new Error(`${filePath}: legacy Status line before frontmatter is not supported; use YAML frontmatter status`);
+  }
+  if (!content.startsWith('---\n')) throw new Error(`${filePath}: missing YAML frontmatter`);
   const end = content.indexOf('\n---\n', 4);
-  if (end === -1) return {};
-  return (YAML.parse(content.slice(4, end)) ?? {}) as Record<string, unknown>;
-}
-
-function parseLegacyStatus(content: string): string | undefined {
-  const statusLine = content.match(/^Status:\s*(.+)$/im)?.[1]?.trim();
-  if (statusLine) return statusLine;
-  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|Z)/im);
-  const headingBody = headingMatch?.[1]?.trim();
-  return headingBody ? headingBody.split(/\r?\n/)[0].trim() : undefined;
+  if (end === -1) throw new Error(`${filePath}: unclosed YAML frontmatter`);
+  const parsed = YAML.parse(content.slice(4, end)) ?? {};
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${filePath}: YAML frontmatter must be a mapping`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function readFrontmatterValue(frontmatter: Record<string, unknown>, key: string): unknown {
@@ -32,34 +31,20 @@ function readFrontmatterValue(frontmatter: Record<string, unknown>, key: string)
   return undefined;
 }
 
-function parseDependsOn(value: unknown): string[] {
+function parseDependsOn(value: unknown, filePath: string): string[] {
   if (!value) return [];
   if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
   if (typeof value === 'number') return [String(value)];
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) throw new Error(`${filePath}: Depends-On must be a string, number, or array`);
 
   return value
-    .map((entry) => (typeof entry === 'string' || typeof entry === 'number' ? String(entry).trim() : ''))
+    .map((entry) => {
+      if (typeof entry !== 'string' && typeof entry !== 'number') {
+        throw new Error(`${filePath}: Depends-On entries must be strings or numbers`);
+      }
+      return String(entry).trim();
+    })
     .filter((entry) => entry.length > 0);
-}
-
-function parseRawDependsOn(content: string): string[] | undefined {
-  if (!content.startsWith('---\n')) return undefined;
-  const end = content.indexOf('\n---\n', 4);
-  if (end === -1) return undefined;
-  const lines = content.slice(4, end).split(/\r?\n/);
-  const index = lines.findIndex((line) => /^Depends-On\s*:/i.test(line));
-  if (index === -1) return undefined;
-  const first = lines[index].replace(/^Depends-On\s*:/i, '').trim();
-  if (first && first !== '[]') return [first.replace(/^['"]|['"]$/g, '')];
-  if (first === '[]') return [];
-  const values: string[] = [];
-  for (const line of lines.slice(index + 1)) {
-    if (/^\S[^:]*:/.test(line)) break;
-    const match = line.match(/^\s*-\s*(.+?)\s*$/);
-    if (match?.[1]) values.push(match[1].replace(/^['"]|['"]$/g, ''));
-  }
-  return values;
 }
 
 export class TicketRepository {
@@ -80,17 +65,19 @@ export class TicketRepository {
 
   readTicket(filePath: string, featureFallback?: string): TicketRecord {
     const content = readFileSync(filePath, 'utf8');
-    const frontmatter = parseFrontmatter(content);
+    const frontmatter = parseFrontmatter(content, filePath);
     const feature =
       (readFrontmatterValue(frontmatter, 'feature') as string | undefined) ??
       featureFallback ??
       path.basename(path.dirname(path.dirname(filePath)));
     const issueName = path.basename(filePath, '.md');
-    const status = (readFrontmatterValue(frontmatter, 'status') as string | undefined) ?? parseLegacyStatus(content);
-    const executorAfk =
-      normalize(readFrontmatterValue(frontmatter, 'executor') as string | undefined) === 'afk' ||
-      /(^|\n)Executor:\s*AFK\b/i.test(content);
-    const dependsOn = parseRawDependsOn(content) ?? parseDependsOn(readFrontmatterValue(frontmatter, 'Depends-On'));
+    const statusValue = readFrontmatterValue(frontmatter, 'status');
+    if (typeof statusValue !== 'string' || !statusValue.trim()) {
+      throw new Error(`${filePath}: missing YAML frontmatter status`);
+    }
+    const status = statusValue.trim();
+    const executorAfk = normalize(readFrontmatterValue(frontmatter, 'executor') as string | undefined) === 'afk';
+    const dependsOn = parseDependsOn(readFrontmatterValue(frontmatter, 'Depends-On'), filePath);
     return { path: filePath, feature, issueName, label: `${feature}/${issueName}`, status, executorAfk, dependsOn };
   }
 

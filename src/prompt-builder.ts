@@ -43,7 +43,7 @@ export function buildPrompt(input: PromptInput): string {
     `Issue reference: ${input.ticket.label}`,
     '',
     'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
-    'If the ticket is complete, set its `Status:` line to `done` and append/update the `## AFK Summary` section in that file.',
+    'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
     '',
     '## Final Result Contract',
     '',

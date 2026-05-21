@@ -6,11 +6,17 @@ Run `afk summary`. Read-only summary of AFK work. This command is strictly read-
 
 ## Steps
 
-1. **Collect issue files first**: Inspect `.scratch/*/issues/*.md` as the default source of truth for AFK work.
+1. **Run the CLI command first**: Execute `afk summary` and parse the command output as the primary source.
 
-2. **Read issue metadata**: For each issue file, read the `Status:` line near the top and every `## AFK Summary` block in the file.
+2. **Parse the standard sections**: Extract entries from:
+   - `Completed or successful work`
+   - `Failed or blocked work`
+   - `Interrupted or incomplete work`
+   - `Missing summaries`
+   - `Repeated attempts`
+   - Optional diagnostics: `Phase timing highlights`, `Failure kind totals`
 
-3. **Report every recorded attempt**: Treat each `## AFK Summary` block as one AFK attempt. Include repeated attempts on the same issue, even when they reference the same ticket or outcome.
+3. **Report every recorded attempt**: Preserve all listed attempts, including repeated attempts on the same issue.
 
 4. **Group the report by outcome**:
    - Completed or successful work
@@ -18,7 +24,7 @@ Run `afk summary`. Read-only summary of AFK work. This command is strictly read-
    - Interrupted or incomplete work
    - Issues with missing `## AFK Summary` blocks
 
-5. **Handle missing summaries explicitly**: If an issue file has no `## AFK Summary` block, report it as missing a summary. Do not fall back to raw AFK logs on the default path.
+5. **Use issue files only as fallback**: If `afk summary` is unavailable, errors, or returns empty output, inspect `.scratch/*/issues/*.md`, read frontmatter `status`, and parse each `## AFK Summary` block.
 
 6. **Gate raw log reads behind permission**: Never inspect `.scratch/.opencode-afk-logs/` unless the user grants permission for this invocation. Ask every time before reading raw logs, even if a prior run already allowed it.
 
@@ -32,7 +38,7 @@ Run `afk summary`. Read-only summary of AFK work. This command is strictly read-
 
 9. **Make the permission request specific**: State the intended log scope and the reason before any raw log access. Example scope: a named issue, a time window, or a specific subset of `.scratch/.opencode-afk-logs/`.
 
-10. **Fallback when permission is absent or denied**: Continue with issue-file-only output and explicitly note that raw logs were not inspected.
+10. **Fallback when permission is absent or denied**: Continue with CLI-output and/or issue-file-only output and explicitly note that raw logs were not inspected.
 
 11. **Produce summary**: Output a structured report containing:
     - Completed work: ticket references, status, and AFK summary details

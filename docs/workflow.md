@@ -18,8 +18,8 @@ Ticket discovery is implemented by `TicketRepository` in `src/ticket-repository.
 Behavior:
 
 - scans `.scratch/<feature>/issues/*.md`
-- prefers YAML frontmatter for machine-readable fields
-- falls back to legacy `Status:` and `## Status` parsing
+- requires opening YAML frontmatter for machine-readable fields
+- rejects legacy `Status:` and `## Status` scheduling metadata
 - excludes terminal tickets from relaunch
 - parses same-feature `Depends-On` issue frontmatter
 

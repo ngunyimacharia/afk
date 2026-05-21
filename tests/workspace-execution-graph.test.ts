@@ -25,6 +25,12 @@ test('parses Depends-On-Features from PRD frontmatter', () => {
   assert.deepEqual(parseFeatureDependencies(repoRoot, 'child'), ['parent']);
 });
 
+test('ignores self references in Depends-On-Features frontmatter', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
+  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - child\n  - parent\n---\n');
+  assert.deepEqual(parseFeatureDependencies(repoRoot, 'child'), ['parent']);
+});
+
 test('writes workspace execution graph with feature waves', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
   writeFeature(repoRoot, 'parent', '# PRD\n');

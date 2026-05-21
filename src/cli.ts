@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
@@ -13,7 +15,7 @@ import { createProgressLine } from './progress-line.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
-import { Scheduler } from './scheduler.js';
+import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
@@ -36,6 +38,10 @@ function commandArg(): string | undefined {
   return arg2;
 }
 
+function hasFlag(flag: string): boolean {
+  return process.argv.includes(flag);
+}
+
 export async function runAfk(
   repoRoot = process.cwd(),
   runtime: { io?: PromptIO; env?: NodeJS.ProcessEnv } = {},
@@ -49,6 +55,7 @@ export async function runAfk(
     return { code: 0, message: report.message };
   }
   if (command === 'afk-cleanup') {
+    const isDryRun = hasFlag('--dry-run');
     const planner = new CleanupPlanner({ repoRoot });
     const plan = planner.buildPlan();
     const logTargets = plan.terminalTargets
@@ -75,8 +82,9 @@ export async function runAfk(
         ? plan.featureDirectoriesToDelete.map((featureDir) => `- ${featureDir}`)
         : ['- none']),
       '',
-      'Cleanup executes immediately (no confirmation required).',
+      isDryRun ? 'Dry run only. No files were deleted.' : 'Cleanup executes immediately (no confirmation required).',
     ].join('\n');
+    if (isDryRun) return { code: 0, message: dryRun };
     const executor = new CleanupExecutor();
     const result = executor.execute(plan);
     return {
@@ -94,7 +102,12 @@ export async function runAfk(
     return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
   const activeProjectConfig = projectConfig.config;
   const repository = new TicketRepository(repoRoot);
-  const allTickets = repository.discoverTickets();
+  let allTickets: TicketRecord[];
+  try {
+    allTickets = repository.discoverTickets();
+  } catch (error) {
+    return { code: 1, message: formatTicketMetadataError(error) };
+  }
   const tickets = allTickets.filter((ticket) => repository.isEligible(ticket));
   if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
   const worktreePreparationService = new WorktreePreparationService();
@@ -138,8 +151,14 @@ export async function runAfk(
   const preflight = await preflightSelectedModels(sessionExecutor, model, reviewerModel);
   if (preflight) return { code: 1, message: preflight };
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
+  selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
   const refresh = new FeatureExecutionRefreshService(repoRoot);
-  const featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
+  let featureGraphs: Record<string, FeatureExecutionGraph>;
+  try {
+    featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
+  } catch (error) {
+    return { code: 1, message: formatTicketMetadataError(error) };
+  }
   const orderingBlock = validateSelectedTicketDependencies(selectedTickets, allTickets);
   if (orderingBlock) return { code: 1, message: orderingBlock };
   selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
@@ -192,8 +211,10 @@ export async function runAfk(
   );
   const scheduler = new Scheduler(runner, concurrency);
   const progressLine = createProgressLine(io.stdout, { isPromptActive: () => permissionCoordinator.promptActive });
+  const runId = randomUUID();
+  let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
-    await scheduler.launch(plan, { onProgress: (event) => progressLine.update(event) });
+    schedulerResult = await scheduler.launch(plan, { onProgress: (event) => progressLine.update(event), runId });
   } finally {
     progressLine.done();
   }
@@ -209,10 +230,22 @@ export async function runAfk(
       `Repo root: ${path.resolve(plan.repoRoot)}`,
       `Worktree: ${plan.checkout.effectiveWorktreeName}`,
       `Branch: ${plan.checkout.effectiveBranchName}`,
-      ...readRunOutcomeLines(runtimeStore, repoRoot, plan.tickets),
+      ...readRunOutcomeLines(runtimeStore, repoRoot, plan.tickets, {
+        runId,
+        ticketResults: schedulerResult.ticketResults,
+      }),
       ...formatManualPermissionReviewLines(permissionCoordinator.history),
     ].join('\n'),
   };
+}
+
+function formatTicketMetadataError(error: unknown): string {
+  const reason = error instanceof Error ? error.message : 'Unknown ticket metadata error';
+  return [
+    'Launch blocked by invalid ticket metadata.',
+    reason,
+    'Fix: use opening YAML frontmatter with `status`, `Depends-On`, and PRD `Depends-On-Features` as needed.',
+  ].join('\n');
 }
 
 export function formatManualPermissionReviewLines(history: readonly PermissionDecisionHistoryEntry[]): string[] {
@@ -238,7 +271,7 @@ export function formatManualPermissionReviewLines(history: readonly PermissionDe
   ];
 }
 
-function orderSelectedTicketsByFeatureGraph(
+export function orderSelectedTicketsByFeatureGraph(
   selectedTickets: TicketRecord[],
   graphs: Record<string, FeatureExecutionGraph>,
 ): TicketRecord[] {
@@ -293,6 +326,14 @@ export function validateSelectedTicketDependencies(
   }
 
   return null;
+}
+
+export function expandSelectedFeaturesToAllTickets(
+  selectedTickets: TicketRecord[],
+  allTickets: TicketRecord[],
+): TicketRecord[] {
+  const selectedFeatures = new Set(selectedTickets.map((ticket) => ticket.feature));
+  return allTickets.filter((ticket) => selectedFeatures.has(ticket.feature));
 }
 
 async function preflightSelectedModels(
@@ -365,9 +406,21 @@ export function formatPreflightFailure(modelId: string, role: 'implementation' |
 export function readRunOutcomeLines(
   runtimeStore: RuntimeStore,
   repoRoot: string,
-  tickets: Array<{ feature: string; issueName: string; label: string }>,
+  tickets: Array<{ feature: string; issueName: string; label: string; path?: string }>,
+  currentRun?: { runId?: string; ticketResults?: SchedulerTicketResult[]; launchStartedAt?: number },
 ): string[] {
-  const ticketLines = tickets.map((ticket) => formatTicketRunOutcome(runtimeStore, repoRoot, ticket));
+  const resultsByTicket = new Map(
+    (currentRun?.ticketResults ?? []).map((result) => [`${result.ticket.feature}/${result.ticket.issueName}`, result]),
+  );
+  const ticketLines = tickets.map((ticket) => {
+    const result = resultsByTicket.get(`${ticket.feature}/${ticket.issueName}`);
+    if (!result) return formatTicketRunOutcome(runtimeStore, repoRoot, ticket, currentRun);
+    if (result.outcome === 'not-scheduled') return `${ticket.label}: blocked (not-scheduled) - ${result.message}`;
+    if (result.outcome === 'blocked') return `${ticket.label}: blocked - ${result.message}`;
+    if (result.outcome === 'failed') return `${ticket.label}: failed before review (runner-failed) - ${result.message}`;
+    if (isTerminalTicketStatus(result.ticket.status)) return `${ticket.label}: completed (already done)`;
+    return formatTicketRunOutcome(runtimeStore, repoRoot, ticket, currentRun);
+  });
   const failed = ticketLines.filter((line) => line.includes('failed before review')).length;
   const blocked = ticketLines.filter((line) => line.includes('blocked')).length;
   const approved = ticketLines.filter((line) => line.includes('approved') || line.includes('completed')).length;
@@ -386,7 +439,8 @@ export function readRunOutcomeLines(
 function formatTicketRunOutcome(
   runtimeStore: RuntimeStore,
   repoRoot: string,
-  ticket: { feature: string; issueName: string; label: string },
+  ticket: { feature: string; issueName: string; label: string; path?: string },
+  currentRun?: { runId?: string; launchStartedAt?: number },
 ): string {
   const metadataPath = path.join(
     repoRoot,
@@ -398,7 +452,19 @@ function formatTicketRunOutcome(
 
   try {
     const metadata = runtimeStore.readMetadata(metadataPath);
+    if (currentRun?.runId && metadata.RUN_ID !== currentRun.runId) {
+      return `${ticket.label}: unknown (runtime metadata from different run)`;
+    }
+    if (
+      currentRun?.launchStartedAt &&
+      typeof metadata.START_EPOCH === 'number' &&
+      metadata.START_EPOCH < currentRun.launchStartedAt
+    ) {
+      return `${ticket.label}: unknown (stale runtime metadata from previous launch)`;
+    }
     if (metadata.FINAL_REVIEW_OUTCOME === 'approved' && metadata.STATUS === 'completed') {
+      const ticketCompletionBlock = validateApprovedTicketFile(ticket.path);
+      if (ticketCompletionBlock) return `${ticket.label}: blocked (${ticketCompletionBlock})`;
       return `${ticket.label}: approved`;
     }
     if (metadata.FINAL_REVIEW_OUTCOME === 'needs-human') {
@@ -418,4 +484,32 @@ function formatTicketRunOutcome(
   }
 
   return `${ticket.label}: unknown`;
+}
+
+function validateApprovedTicketFile(ticketPath?: string): string | null {
+  if (!ticketPath) return null;
+  try {
+    const content = readFileSync(ticketPath, 'utf8');
+    if (!/^##\s+AFK Summary\s*$/im.test(content)) return 'missing-afk-summary';
+    const status = readTicketStatus(content)?.trim().toLowerCase();
+    if (!isTerminalTicketStatus(status)) return 'ticket-status-not-done';
+  } catch {
+    return 'ticket-file-unreadable';
+  }
+  return null;
+}
+
+function isTerminalTicketStatus(status?: string): boolean {
+  return !!status && new Set(['done', 'closed', 'complete', 'resolved']).has(status.trim().toLowerCase());
+}
+
+function readTicketStatus(content: string): string | undefined {
+  const frontmatterStatus = readFrontmatter(content)?.match(/^status:\s*(.+)$/im)?.[1];
+  return frontmatterStatus;
+}
+
+function readFrontmatter(content: string): string | null {
+  if (!content.startsWith('---\n')) return null;
+  const end = content.indexOf('\n---\n', 4);
+  return end === -1 ? null : content.slice(4, end);
 }

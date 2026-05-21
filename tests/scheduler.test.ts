@@ -53,6 +53,13 @@ test('runs ready tickets in parallel and caps global concurrency', async () => {
   const result = await scheduler.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.equal(peak <= 3, true);
+  assert.deepEqual(result.ticketResults.map((entry) => entry.outcome).sort(), [
+    'completed',
+    'completed',
+    'completed',
+    'completed',
+    'completed',
+  ]);
   assert.equal(launches[0], 'feat-a/001');
   assert.equal(launches[1], 'feat-b/001');
   assert.equal(launches[2], 'feat-c/001');
@@ -95,6 +102,7 @@ test('continues independent queues when one ticket fails', async () => {
   const result = await scheduler.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.match(result.message, /boom/);
+  assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/001')?.outcome, 'failed');
 });
 
 test('waits for dependency completion before launching dependent ticket', async () => {
@@ -141,6 +149,104 @@ test('waits for dependency completion before launching dependent ticket', async 
   assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
 });
 
+test('treats unselected dependencies as already validated by launch selection', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-unselected-deps-'));
+  const started: string[] = [];
+  const scheduler = new Scheduler({
+    launch: async (plan: LaunchPlan) => {
+      const ticket = plan.tickets[0];
+      assert.ok(ticket);
+      started.push(ticket.label);
+      return { scheduled: true, message: ticket.label };
+    },
+  } as never);
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  const result = await scheduler.launch(plan as never);
+
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/002']);
+  assert.equal(result.ticketResults[0]?.outcome, 'completed');
+});
+
+test('skips completed tickets and marks them completed in scheduler results', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-skip-done-'));
+  const started: string[] = [];
+  const scheduler = new Scheduler({
+    launch: async (plan: LaunchPlan) => {
+      const ticket = plan.tickets[0];
+      assert.ok(ticket);
+      started.push(ticket.label);
+      return { scheduled: true, message: ticket.label };
+    },
+  } as never);
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [
+      {
+        path: '/tmp/a-1.md',
+        feature: 'feat-a',
+        issueName: '001',
+        label: 'feat-a/001',
+        status: 'done',
+        executorAfk: true,
+      },
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        status: 'ready-for-agent',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  const result = await scheduler.launch(plan as never);
+
+  assert.deepEqual(started, ['feat-a/002']);
+  assert.equal(
+    result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/001')?.message,
+    'Skipped feat-a/001: ticket already done',
+  );
+  assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/002')?.outcome, 'completed');
+});
+
 test('does not launch dependent ticket when dependency blocks', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-blocked-deps-'));
   const started: string[] = [];
@@ -183,7 +289,9 @@ test('does not launch dependent ticket when dependency blocks', async () => {
   const result = await scheduler.launch(plan as never);
 
   assert.equal(result.scheduled, true);
+  assert.match(result.message, /dependencies did not complete/);
   assert.deepEqual(started, ['feat-a/001']);
+  assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/002')?.outcome, 'not-scheduled');
 });
 
 test('serializes tickets that share a feature worktree', async () => {

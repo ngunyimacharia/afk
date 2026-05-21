@@ -140,8 +140,8 @@ Key conventions:
 
 - one feature per directory
 - implementation issues live under `.scratch/<feature-slug>/issues/`
-- `Status:` near the top of the issue file is the operational status
-- YAML frontmatter is the canonical machine-readable source when present
+- opening YAML frontmatter `status` is the operational status
+- YAML frontmatter is the canonical machine-readable source; legacy `Status:` lines are rejected
 - issue frontmatter may include `Depends-On` with same-feature issue basenames
 - PRD frontmatter may include `Depends-On-Features` with feature slugs
 - `execution.json` files are derived AFK scheduler state and may be regenerated

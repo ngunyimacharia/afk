@@ -31,8 +31,13 @@ export function parseFeatureDependencies(repoRoot: string, feature: string): str
   if (end === -1) return [];
   const frontmatter = (YAML.parse(content.slice(4, end)) ?? {}) as Record<string, unknown>;
   const value = frontmatter['Depends-On-Features'];
-  if (Array.isArray(value)) return value.map((entry) => String(entry).trim()).filter(Boolean);
-  if (typeof value === 'string' && value.trim()) return [value.trim()];
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry).trim()).filter((dependency) => dependency && dependency !== feature);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const dependency = value.trim();
+    return dependency === feature ? [] : [dependency];
+  }
   return [];
 }
 

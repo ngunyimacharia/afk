@@ -185,3 +185,25 @@ Outcome: blocked
   assert.match(report.message, /Failure kind totals/);
   assert.match(report.message, /needs-human: 1 run, 60000ms/);
 });
+
+test('detects AFK summary when it is the last section in file', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    `---
+feature: feat
+status: done
+---
+
+## AFK Summary
+Timestamp: 2026-05-21T16:00:00.000Z
+Outcome: completed`,
+  );
+
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.doesNotMatch(report.message, /Missing summaries\n- feat\/01/);
+  assert.match(report.message, /Completed or successful work[\s\S]*feat\/01/);
+});

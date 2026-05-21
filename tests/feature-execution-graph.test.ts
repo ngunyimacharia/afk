@@ -13,7 +13,7 @@ test('builds ready and blocked waves from dependencies', () => {
   writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: ready-for-agent\n---\n');
   writeFileSync(
     path.join(issuesDir, '02.md'),
-    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 01\n---\n',
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - "01"\n---\n',
   );
   const repository = new TicketRepository(repoRoot);
   const graph = buildFeatureExecutionGraph(repoRoot, 'feat', repository.discoverTickets(), false);
@@ -22,13 +22,34 @@ test('builds ready and blocked waves from dependencies', () => {
   assert.deepEqual(graph.waves[0], ['01']);
 });
 
+test('orders dependency chain into sequential waves', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: ready-for-agent\n---\n');
+  writeFileSync(
+    path.join(issuesDir, '02.md'),
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - "01"\n---\n',
+  );
+  writeFileSync(
+    path.join(issuesDir, '03.md'),
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - "02"\n---\n',
+  );
+  const repository = new TicketRepository(repoRoot);
+  const graph = buildFeatureExecutionGraph(repoRoot, 'feat', repository.discoverTickets(), false);
+
+  assert.deepEqual(graph.waves, [['01'], ['02'], ['03']]);
+  assert.deepEqual(graph.tickets['02'].blockedBy, ['01']);
+  assert.deepEqual(graph.tickets['03'].blockedBy, ['02']);
+});
+
 test('rejects missing dependency references', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
   mkdirSync(issuesDir, { recursive: true });
   writeFileSync(
     path.join(issuesDir, '01.md'),
-    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 99\n---\n',
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - "99"\n---\n',
   );
   const repository = new TicketRepository(repoRoot);
   assert.throws(

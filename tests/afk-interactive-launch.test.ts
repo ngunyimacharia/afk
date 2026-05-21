@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
+  expandSelectedFeaturesToAllTickets,
   formatManualPermissionReviewLines,
+  orderSelectedTicketsByFeatureGraph,
   readRunOutcomeLines,
   runAfk,
   validateSelectedTicketDependencies,
@@ -44,6 +46,27 @@ test('default afk launch requires afk.json before tty checks', async () => {
   assert.equal(result.code, 1);
   assert.match(result.message, /Project config missing/);
   assert.match(result.message, /\/afk-config/);
+});
+
+test('returns friendly error for invalid ticket metadata', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-invalid-ticket-'));
+  writeMinimalAfkConfig(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    'Status: ready-for-agent\n---\nstatus: ready-for-agent\nDepends-On:\n  - "00"\n---\n',
+  );
+
+  const result = await runAfk(repoRoot, {
+    io: { stdin: { isTTY: true } as never, stdout: { isTTY: true } as never },
+    env: { ...process.env, CI: '' },
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.message, /Launch blocked by invalid ticket metadata/);
+  assert.match(result.message, /legacy Status line before frontmatter is not supported/);
+  assert.doesNotMatch(result.message, /at parseFrontmatter|\$bunfs|Bun v/);
 });
 
 test('model selection title includes provider and model label', () => {
@@ -173,6 +196,106 @@ test('run outcome summary includes every selected ticket', () => {
   assert.match(lines.join('\n'), /feat-b\/02: approved/);
 });
 
+test('run outcome ignores stale metadata from a previous launch', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-outcomes-stale-'));
+  const store = new RuntimeStore({ repoRoot });
+  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(metadataRoot, { recursive: true });
+  writeFileSync(
+    path.join(metadataRoot, 'feat-01.json'),
+    JSON.stringify({
+      STATUS: 'completed',
+      FINAL_REVIEW_OUTCOME: 'approved',
+      START_EPOCH: 100,
+    }),
+  );
+
+  const lines = readRunOutcomeLines(store, repoRoot, [{ feature: 'feat', issueName: '01', label: 'feat/01' }], {
+    launchStartedAt: 200,
+  });
+
+  assert.equal(lines[0], 'Run outcome: mixed/unknown');
+  assert.match(lines.join('\n'), /feat\/01: unknown \(stale runtime metadata from previous launch\)/);
+});
+
+test('run outcome ignores metadata from a different run id', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-outcomes-run-id-'));
+  const store = new RuntimeStore({ repoRoot });
+  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(metadataRoot, { recursive: true });
+  writeFileSync(
+    path.join(metadataRoot, 'feat-01.json'),
+    JSON.stringify({
+      RUN_ID: 'previous-run',
+      STATUS: 'completed',
+      FINAL_REVIEW_OUTCOME: 'approved',
+      START_EPOCH: 200,
+    }),
+  );
+
+  const lines = readRunOutcomeLines(store, repoRoot, [{ feature: 'feat', issueName: '01', label: 'feat/01' }], {
+    runId: 'current-run',
+  });
+
+  assert.equal(lines[0], 'Run outcome: mixed/unknown');
+  assert.match(lines.join('\n'), /feat\/01: unknown \(runtime metadata from different run\)/);
+});
+
+test('run outcome reports scheduler not-scheduled results without reading stale metadata', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-outcomes-not-scheduled-'));
+  const store = new RuntimeStore({ repoRoot });
+  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(metadataRoot, { recursive: true });
+  writeFileSync(
+    path.join(metadataRoot, 'feat-01.json'),
+    JSON.stringify({
+      RUN_ID: 'previous-run',
+      STATUS: 'completed',
+      FINAL_REVIEW_OUTCOME: 'approved',
+    }),
+  );
+
+  const lines = readRunOutcomeLines(store, repoRoot, [{ feature: 'feat', issueName: '01', label: 'feat/01' }], {
+    runId: 'current-run',
+    ticketResults: [
+      {
+        ticket: { path: '/tmp/01.md', feature: 'feat', issueName: '01', label: 'feat/01', executorAfk: true },
+        outcome: 'not-scheduled',
+        message: 'Not scheduled because dependencies did not complete: feat/01',
+        runId: 'current-run',
+      },
+    ],
+  });
+
+  assert.equal(lines[0], 'Run outcome: 1 blocked');
+  assert.match(lines.join('\n'), /feat\/01: blocked \(not-scheduled\)/);
+});
+
+test('run outcome does not approve tickets left ready-for-agent', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-outcomes-ticket-state-'));
+  const store = new RuntimeStore({ repoRoot });
+  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md');
+  mkdirSync(metadataRoot, { recursive: true });
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, '---\nfeature: feat\nstatus: ready-for-agent\n---\n\n## AFK Summary\n\nNot done\n');
+  writeFileSync(
+    path.join(metadataRoot, 'feat-01.json'),
+    JSON.stringify({
+      STATUS: 'completed',
+      FINAL_REVIEW_OUTCOME: 'approved',
+      START_EPOCH: 200,
+    }),
+  );
+
+  const lines = readRunOutcomeLines(store, repoRoot, [
+    { feature: 'feat', issueName: '01', label: 'feat/01', path: ticketPath },
+  ]);
+
+  assert.equal(lines[0], 'Run outcome: 1 blocked');
+  assert.match(lines.join('\n'), /feat\/01: blocked \(ticket-status-not-done\)/);
+});
+
 test('launch dependency validation sees completed tickets filtered from eligible choices', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-deps-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
@@ -180,7 +303,7 @@ test('launch dependency validation sees completed tickets filtered from eligible
   writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: done\n---\n');
   writeFileSync(
     path.join(issuesDir, '02.md'),
-    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 01\n---\n',
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - "01"\n---\n',
   );
 
   const repository = new TicketRepository(repoRoot);
@@ -192,6 +315,54 @@ test('launch dependency validation sees completed tickets filtered from eligible
     ['02'],
   );
   assert.equal(validateSelectedTicketDependencies(eligibleTickets, allTickets), null);
+});
+
+test('selected features expand back to completed and eligible tickets', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-feature-expand-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: done\n---\n');
+  writeFileSync(path.join(issuesDir, '02.md'), '---\nfeature: feat\nstatus: ready-for-agent\n---\n');
+
+  const repository = new TicketRepository(repoRoot);
+  const allTickets = repository.discoverTickets();
+  const eligibleTickets = allTickets.filter((ticket) => repository.isEligible(ticket));
+  const expanded = expandSelectedFeaturesToAllTickets(eligibleTickets, allTickets);
+
+  assert.deepEqual(expanded.map((ticket) => ticket.issueName).sort(), ['01', '02']);
+});
+
+test('selected feature tickets are ordered by dependency graph waves', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-feature-order-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01-foundation.md'), '---\nfeature: feat\nstatus: ready-for-agent\n---\n');
+  writeFileSync(
+    path.join(issuesDir, '02-middle.md'),
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 01-foundation\n---\n',
+  );
+  writeFileSync(
+    path.join(issuesDir, '03-verification.md'),
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 02-middle\n---\n',
+  );
+
+  const repository = new TicketRepository(repoRoot);
+  const allTickets = repository.discoverTickets();
+  const graph = JSON.parse(
+    JSON.stringify({
+      feature: 'feat',
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      waves: [['01-foundation'], ['02-middle'], ['03-verification']],
+      tickets: {},
+    }),
+  );
+  const reversed = [...allTickets].sort((left, right) => right.issueName.localeCompare(left.issueName));
+
+  assert.deepEqual(
+    orderSelectedTicketsByFeatureGraph(reversed, { feat: graph }).map((ticket) => ticket.label),
+    ['feat/01-foundation', 'feat/02-middle', 'feat/03-verification'],
+  );
 });
 
 function writeMinimalAfkConfig(repoRoot: string): void {

@@ -46,6 +46,11 @@ export interface SingleTicketRunResult {
   launchBlock?: LaunchBlockEvidence;
 }
 
+export interface SingleTicketLaunchOptions {
+  onProgress?: AgentExecutionProgressCallback;
+  runId?: string;
+}
+
 export class SingleTicketRunner {
   constructor(
     private readonly runtimeStore: RuntimeStore,
@@ -54,10 +59,7 @@ export class SingleTicketRunner {
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
   ) {}
 
-  async launch(
-    plan: LaunchPlan,
-    options: { onProgress?: AgentExecutionProgressCallback } = {},
-  ): Promise<SingleTicketRunResult> {
+  async launch(plan: LaunchPlan, options: SingleTicketLaunchOptions = {}): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
     if (!ticket) return { scheduled: false, message: 'No ticket available for launch', outcome: 'not-scheduled' };
     const ticketPathValidation = validateSelectedTicketPath(plan.repoRoot, ticket);
@@ -73,6 +75,7 @@ export class SingleTicketRunner {
       featureSlug: ticket.feature,
       issueName: ticket.issueName,
       ticketPath: ticket.path,
+      runId: options.runId,
     });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);

@@ -26,7 +26,7 @@ test('refresh recomputes dependency state after status changes', () => {
   writeFileSync(first, '---\nfeature: feat\nstatus: ready-for-agent\n---\n');
   writeFileSync(
     path.join(issuesDir, '02.md'),
-    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 01\n---\n',
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - "01"\n---\n',
   );
 
   const service = new FeatureExecutionRefreshService(repoRoot);

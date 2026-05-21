@@ -63,11 +63,11 @@ Rules:
 - Issue files are always placed under `.scratch/<feature-slug>/issues/`.
 - Issue files are numbered from `01` and use stable slug basenames.
 - Never publish implementation issue files directly under `.scratch/<feature-slug>/`.
-- Triage state is recorded as a `Status:` line near the top of each issue file.
-- Machine-readable ticket metadata should use YAML frontmatter when present.
+- Triage state is recorded as a mandatory `status` field in opening YAML frontmatter.
+- Machine-readable ticket metadata must use opening YAML frontmatter. Legacy `Status:` lines are invalid for AFK scheduling.
 - Comments and conversation history append under a `## Comments` heading.
 - If the repo contains a non-canonical feature folder, such as `.scratch/<feature-slug>/prd.md` or `.scratch/<feature-slug>/01-slice.md`, normalize future output to the canonical layout and report the mismatch.
-- Each issue must begin with `Status: ready-for-agent` before the title or any other body content unless the conversation explicitly requires a different canonical status.
+- Each issue must begin with YAML frontmatter before the title or any other body content. Include `status: ready-for-agent` unless the conversation explicitly requires a different canonical status.
 - AFK derives `.scratch/<feature-slug>/execution.json` from issue markdown and `.scratch/execution.json` from selected feature PRDs; do not hand-author these derived files.
 
 ## Existing Scratch Packages
@@ -101,6 +101,7 @@ afk_branch: custom-name
 - Call out whether the dependency is a linear stack or fan-in. First-pass AFK branch automation supports linear stacks only; fan-in or multiple-parent branch preparation is deferred/manual unless a PRD explicitly scopes it.
 - Add same-feature issue dependencies to issue YAML frontmatter as `Depends-On` using issue basenames only, without paths or `.md`.
 - Use `Depends-On` only for true same-feature issue blockers, not preferred ordering.
+- The prose `## Dependencies` section is informational only. Scheduling dependencies are defined exclusively in frontmatter `Depends-On`.
 
 Dependency frontmatter examples:
 
@@ -227,7 +228,9 @@ Every implementation issue must include automated code test expectations in its 
 Use this structure for each issue:
 
 ```md
-Status: ready-for-agent
+---
+status: ready-for-agent
+---
 
 ## Title
 
@@ -252,8 +255,7 @@ Excludes:
 
 ## Dependencies
 
-Blocking:
-- <issue refs only if true blockers>
+- Frontmatter `Depends-On`: <issue refs only if true blockers>
 
 Related:
 - <optional non-blocking references>

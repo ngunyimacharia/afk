@@ -20,6 +20,7 @@ export interface RuntimeTicketContext {
   featureSlug: string;
   issueName: string;
   ticketPath: string;
+  runId?: string;
 }
 
 export interface RuntimeRecordHandle {
@@ -123,6 +124,7 @@ export class RuntimeStore {
     this.assertManagedPath(doneSentinelPath, 'done sentinel');
     this.assertManagedPath(failedSentinelPath, 'failed sentinel');
     this.writeMetadata(metadataPath, {
+      ...(context.runId ? { RUN_ID: context.runId } : {}),
       TICKET_PATH: context.ticketPath,
       FEATURE_SLUG: context.featureSlug,
       ISSUE_NAME: context.issueName,

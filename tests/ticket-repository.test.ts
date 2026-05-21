@@ -16,13 +16,11 @@ test('parses frontmatter status and eligibility', () => {
   assert.equal(repository.isEligible(ticket), true);
 });
 
-test('parses legacy status and terminal exclusion', () => {
+test('rejects legacy status-only tickets', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
   mkdirSync(issuesDir, { recursive: true });
   writeFileSync(path.join(issuesDir, '02.md'), 'Status: ready-for-human\n');
   const repository = new TicketRepository(repoRoot);
-  const ticket = repository.readTicket(path.join(issuesDir, '02.md'));
-  assert.equal(ticket.status, 'ready-for-human');
-  assert.equal(repository.isEligible(ticket), false);
+  assert.throws(() => repository.readTicket(path.join(issuesDir, '02.md')), /legacy Status line/);
 });

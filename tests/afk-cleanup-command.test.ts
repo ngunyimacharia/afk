@@ -41,3 +41,30 @@ test('cleanup preserves ready-for-human tickets', async () => {
   assert.match(result.message, /human\.md/);
   assert.equal(existsSync(ticketPath), true);
 });
+
+test('afk-cleanup --dry-run prints plan without deleting files', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const sentinelsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels');
+  const workspaceExecutionPath = path.join(repoRoot, '.scratch', 'execution.json');
+  mkdirSync(issuesDir, { recursive: true });
+  mkdirSync(sentinelsDir, { recursive: true });
+  const ticketPath = path.join(issuesDir, 'done.md');
+  const sentinelPath = path.join(sentinelsDir, 'feat-done.done');
+  writeFileSync(ticketPath, '---\nstatus: done\n---\n');
+  writeFileSync(sentinelPath, 'done');
+  writeFileSync(workspaceExecutionPath, '{"state":"running"}\n');
+
+  const originalArgs = [...process.argv];
+  process.argv[2] = 'afk-cleanup';
+  process.argv[3] = '--dry-run';
+  const result = await runAfk(repoRoot);
+  process.argv = originalArgs;
+
+  assert.match(result.message, /AFK Cleanup Plan/);
+  assert.match(result.message, /Dry run only\. No files were deleted\./);
+  assert.doesNotMatch(result.message, /Executed:/);
+  assert.equal(existsSync(ticketPath), true);
+  assert.equal(existsSync(sentinelPath), true);
+  assert.equal(existsSync(workspaceExecutionPath), true);
+});

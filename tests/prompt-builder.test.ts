@@ -23,7 +23,7 @@ test('prompt consumes prepared checkout context', () => {
       label: 'feat/01',
       executorAfk: true,
     },
-    ticketContent: 'Status: ready-for-agent\n',
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
   });
   assert.match(prompt, /Use this prepared checkout/);
   assert.match(prompt, /Working checkout: \/repo\/\.git\/worktrees\/feat-tree/);
@@ -33,7 +33,7 @@ test('prompt consumes prepared checkout context', () => {
     prompt,
     /Do not put the final AFK summary only in the assistant response, runtime log, or commit message/,
   );
-  assert.match(prompt, /Status: ready-for-agent/);
+  assert.match(prompt, /status: ready-for-agent/);
   assert.doesNotMatch(prompt, /## AFK State Snapshot/);
   assert.match(prompt, /Access policy: source-code reads, searches, tests, and edits must use the Working checkout/);
   assert.match(prompt, /Root repo writes are allowed only under the listed shared \.scratch artifact paths/);
@@ -56,7 +56,7 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
   const unrelatedScratchPath = path.join(repoRoot, '.scratch', 'other-feature', 'issues', '99.md');
   mkdirSync(path.dirname(ticketPath), { recursive: true });
   mkdirSync(path.dirname(unrelatedScratchPath), { recursive: true });
-  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n');
   writeFileSync(unrelatedScratchPath, 'super secret scratch text\n');
   mkdirSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata'), { recursive: true });
   mkdirSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels'), { recursive: true });
@@ -128,7 +128,7 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
   const prompt = buildPrompt({
     checkout: plan.checkout,
     ticket,
-    ticketContent: 'Status: ready-for-agent\n',
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
     snapshot,
   });
 
@@ -170,8 +170,8 @@ test('launch plan snapshots use per-feature checkouts', () => {
   const ticketB = path.join(repoRoot, '.scratch', 'feat-b', 'issues', '01.md');
   mkdirSync(path.dirname(ticketA), { recursive: true });
   mkdirSync(path.dirname(ticketB), { recursive: true });
-  writeFileSync(ticketA, 'Status: ready-for-agent\n');
-  writeFileSync(ticketB, 'Status: ready-for-agent\n');
+  writeFileSync(ticketA, '---\nstatus: ready-for-agent\n---\n');
+  writeFileSync(ticketB, '---\nstatus: ready-for-agent\n---\n');
   const checkoutA = {
     featureSlug: 'feat-a',
     defaultWorktreeName: 'feat-a',
