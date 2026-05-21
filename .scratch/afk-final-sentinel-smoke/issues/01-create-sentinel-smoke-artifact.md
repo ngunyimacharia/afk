@@ -1,5 +1,5 @@
 ---
-status: ready-for-agent
+status: done
 ---
 
 Status: done
@@ -38,7 +38,7 @@ AFK needs a harmless ticket that verifies a complete execution can finish with t
 - Session/Run ID: afk-final-sentinel-smoke
 - Status: done
 - Outcome: created the sentinel smoke artifact and updated the ticket status
-- Commits: `feat: create sentinel smoke artifact`
+- Commits: `feat: create sentinel smoke artifact`; `docs: update smoke ticket status`
 - Changed areas: `.scratch/afk-final-sentinel-smoke/artifacts/sentinel-smoke.md`, `.scratch/afk-final-sentinel-smoke/issues/01-create-sentinel-smoke-artifact.md`
 - Verification: local file-content check for the artifact path and `sentinel smoke artifact complete`
 - Blockers/Errors: none
