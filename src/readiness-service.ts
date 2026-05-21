@@ -1,6 +1,7 @@
-import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
+import { type ExecFileSyncOptionsWithStringEncoding, execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { AfkProjectConfig } from './project-config.js';
 
 export type ReadinessTerminalState = 'passed' | 'disabled-by-user' | 'blocked';
 
@@ -19,7 +20,11 @@ export interface ReadinessCheckMetadata {
   ticketPaths: { status: 'passed' | 'blocked'; missing: string[] };
   gitIndexLock: { status: 'passed' | 'blocked'; path: string };
   dependencyCopyStatusKnown: { status: 'passed' | 'blocked' };
-  testSuite: { detected: boolean; signals: string[]; envTesting: 'present' | 'missing-disabled-by-user' | 'missing-blocking' | 'not-required' };
+  testSuite: {
+    detected: boolean;
+    signals: string[];
+    envTesting: 'present' | 'missing-disabled-by-user' | 'missing-blocking' | 'not-required';
+  };
   smoke: ReadinessCommandResult;
   staticStyleChecks: ReadinessCommandResult[];
   terminalState: ReadinessTerminalState;
@@ -32,12 +37,20 @@ export interface ReadinessCommandExecutor {
 
 export class SyncReadinessCommandExecutor implements ReadinessCommandExecutor {
   run(command: string, cwd: string): { exitCode: number; output: string } {
-    const options: ExecFileSyncOptionsWithStringEncoding = { cwd, encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] };
+    const options: ExecFileSyncOptionsWithStringEncoding = {
+      cwd,
+      encoding: 'utf8',
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    };
     try {
       return { exitCode: 0, output: execFileSync(command, options) };
     } catch (error) {
       const err = error as { status?: number; stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
-      return { exitCode: typeof err.status === 'number' ? err.status : 1, output: `${err.stdout ?? ''}${err.stderr ?? ''}` || err.message || 'command failed' };
+      return {
+        exitCode: typeof err.status === 'number' ? err.status : 1,
+        output: `${err.stdout ?? ''}${err.stderr ?? ''}` || err.message || 'command failed',
+      };
     }
   }
 }
@@ -45,11 +58,16 @@ export class SyncReadinessCommandExecutor implements ReadinessCommandExecutor {
 export function detectTestSuite(repoRoot: string): { detected: boolean; signals: string[] } {
   const signals: string[] = [];
   if (existsSync(path.join(repoRoot, 'artisan'))) signals.push('laravel-artisan');
-  if (existsSync(path.join(repoRoot, 'phpunit.xml')) || existsSync(path.join(repoRoot, 'phpunit.xml.dist'))) signals.push('phpunit-config');
+  if (existsSync(path.join(repoRoot, 'phpunit.xml')) || existsSync(path.join(repoRoot, 'phpunit.xml.dist')))
+    signals.push('phpunit-config');
   const composer = readJson(path.join(repoRoot, 'composer.json'));
   if (composer && (composer.require || composer['require-dev'] || composer.scripts)) signals.push('composer');
   const packageJson = readJson(path.join(repoRoot, 'package.json'));
-  if (packageJson?.scripts && Object.keys(packageJson.scripts as Record<string, unknown>).some((name) => /(^|:)(test|spec)s?($|:)/i.test(name))) signals.push('package-test-script');
+  if (
+    packageJson?.scripts &&
+    Object.keys(packageJson.scripts as Record<string, unknown>).some((name) => /(^|:)(test|spec)s?($|:)/i.test(name))
+  )
+    signals.push('package-test-script');
   if (hasTestFiles(path.join(repoRoot, 'tests'))) signals.push('tests-directory');
   return { detected: signals.length > 0, signals };
 }
@@ -61,42 +79,96 @@ export function buildWorktreeReadiness(input: {
   selectedTicketPaths?: string[];
   envTestingDecision: 'present' | 'missing-disabled-by-user' | 'missing-blocking' | 'not-required';
   dependencyCopyStatusKnown: boolean;
+  config?: AfkProjectConfig;
   executor?: ReadinessCommandExecutor;
 }): ReadinessCheckMetadata {
   const executor = input.executor ?? new SyncReadinessCommandExecutor();
-  const testSuite = detectTestSuite(input.repoRoot);
+  const testSuite = input.config
+    ? { detected: input.config.testsEnabled, signals: input.config.testsEnabled ? ['afk-config'] : [] }
+    : detectTestSuite(input.repoRoot);
   const preconditions = evaluatePreconditions(input);
   const blockReason = firstBlockReason(preconditions);
-  if (blockReason) return finalize({ ...preconditions, testSuite: { ...testSuite, envTesting: input.envTestingDecision }, smoke: skipped('smoke', blockReason), staticStyleChecks: [], blockReason });
+  if (blockReason)
+    return finalize({
+      ...preconditions,
+      testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      smoke: skipped('smoke', blockReason),
+      staticStyleChecks: [],
+      blockReason,
+    });
   if (input.envTestingDecision === 'missing-blocking') {
     const reason = 'Detected tests but source .env.testing is missing and disabled tests were not confirmed.';
-    return finalize({ ...preconditions, testSuite: { ...testSuite, envTesting: input.envTestingDecision }, smoke: skipped('smoke', reason), staticStyleChecks: [], blockReason: reason });
+    return finalize({
+      ...preconditions,
+      testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      smoke: skipped('smoke', reason),
+      staticStyleChecks: [],
+      blockReason: reason,
+    });
   }
   if (input.envTestingDecision === 'missing-disabled-by-user') {
-    return finalize({ ...preconditions, testSuite: { ...testSuite, envTesting: input.envTestingDecision }, smoke: skipped('smoke', 'tests disabled by user'), staticStyleChecks: runStaticStyleChecks(input.worktreePath, executor) });
+    return finalize({
+      ...preconditions,
+      testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      smoke: skipped('smoke', 'tests disabled by user'),
+      staticStyleChecks: runStaticStyleChecks(input.worktreePath, executor, input.config),
+    });
   }
 
-  const smoke = runSmokeCheck(input.worktreePath, executor);
-  const staticStyleChecks = runStaticStyleChecks(input.worktreePath, executor);
+  const smoke = runSmokeCheck(input.worktreePath, executor, input.config);
+  const staticStyleChecks = runStaticStyleChecks(input.worktreePath, executor, input.config);
   const failed = [smoke, ...staticStyleChecks].find((item) => item.status === 'failed');
-  return finalize({ ...preconditions, testSuite: { ...testSuite, envTesting: input.envTestingDecision }, smoke, staticStyleChecks, blockReason: failed ? `${failed.mode} readiness failed: ${failed.command}` : undefined });
+  return finalize({
+    ...preconditions,
+    testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+    smoke,
+    staticStyleChecks,
+    blockReason: failed ? `${failed.mode} readiness failed: ${failed.command}` : undefined,
+  });
 }
 
-function evaluatePreconditions(input: { worktreePath: string; expectedBranch: string; selectedTicketPaths?: string[]; dependencyCopyStatusKnown: boolean }): Pick<ReadinessCheckMetadata, 'worktreePath' | 'branch' | 'ticketPaths' | 'gitIndexLock' | 'dependencyCopyStatusKnown'> {
+function evaluatePreconditions(input: {
+  worktreePath: string;
+  expectedBranch: string;
+  selectedTicketPaths?: string[];
+  dependencyCopyStatusKnown: boolean;
+}): Pick<
+  ReadinessCheckMetadata,
+  'worktreePath' | 'branch' | 'ticketPaths' | 'gitIndexLock' | 'dependencyCopyStatusKnown'
+> {
   const worktreeExists = existsSync(input.worktreePath);
   const actualBranch = worktreeExists ? readBranch(input.worktreePath) : undefined;
   const missing = (input.selectedTicketPaths ?? []).filter((ticketPath) => !existsSync(ticketPath));
-  const gitIndexLockPath = worktreeExists ? gitPath(input.worktreePath, 'index.lock') : path.join(input.worktreePath, '.git', 'index.lock');
+  const gitIndexLockPath = worktreeExists
+    ? gitPath(input.worktreePath, 'index.lock')
+    : path.join(input.worktreePath, '.git', 'index.lock');
   return {
-    worktreePath: worktreeExists ? { status: 'passed', path: input.worktreePath } : { status: 'blocked', path: input.worktreePath, reason: 'worktree path does not exist' },
-    branch: actualBranch === input.expectedBranch ? { status: 'passed', expected: input.expectedBranch, actual: actualBranch } : { status: 'blocked', expected: input.expectedBranch, actual: actualBranch, reason: 'expected branch is not checked out' },
+    worktreePath: worktreeExists
+      ? { status: 'passed', path: input.worktreePath }
+      : { status: 'blocked', path: input.worktreePath, reason: 'worktree path does not exist' },
+    branch:
+      actualBranch === input.expectedBranch
+        ? { status: 'passed', expected: input.expectedBranch, actual: actualBranch }
+        : {
+            status: 'blocked',
+            expected: input.expectedBranch,
+            actual: actualBranch,
+            reason: 'expected branch is not checked out',
+          },
     ticketPaths: missing.length ? { status: 'blocked', missing } : { status: 'passed', missing: [] },
-    gitIndexLock: existsSync(gitIndexLockPath) ? { status: 'blocked', path: gitIndexLockPath } : { status: 'passed', path: gitIndexLockPath },
+    gitIndexLock: existsSync(gitIndexLockPath)
+      ? { status: 'blocked', path: gitIndexLockPath }
+      : { status: 'passed', path: gitIndexLockPath },
     dependencyCopyStatusKnown: input.dependencyCopyStatusKnown ? { status: 'passed' } : { status: 'blocked' },
   };
 }
 
-function firstBlockReason(input: Pick<ReadinessCheckMetadata, 'worktreePath' | 'branch' | 'ticketPaths' | 'gitIndexLock' | 'dependencyCopyStatusKnown'>): string | null {
+function firstBlockReason(
+  input: Pick<
+    ReadinessCheckMetadata,
+    'worktreePath' | 'branch' | 'ticketPaths' | 'gitIndexLock' | 'dependencyCopyStatusKnown'
+  >,
+): string | null {
   if (input.worktreePath.status === 'blocked') return input.worktreePath.reason ?? 'worktree path check failed';
   if (input.branch.status === 'blocked') return input.branch.reason ?? 'branch check failed';
   if (input.ticketPaths.status === 'blocked') return `missing selected ticket path: ${input.ticketPaths.missing[0]}`;
@@ -105,32 +177,64 @@ function firstBlockReason(input: Pick<ReadinessCheckMetadata, 'worktreePath' | '
   return null;
 }
 
-function runSmokeCheck(worktreePath: string, executor: ReadinessCommandExecutor): ReadinessCommandResult {
+function runSmokeCheck(
+  worktreePath: string,
+  executor: ReadinessCommandExecutor,
+  config?: AfkProjectConfig,
+): ReadinessCommandResult {
+  if (config && !config.testsEnabled) return skipped('smoke', 'tests disabled by afk.json');
   const testFile = firstTestFile(path.join(worktreePath, 'tests'));
   if (!testFile) return skipped('smoke', 'no deterministic test file found');
-  const command = smokeCommand(worktreePath, testFile);
+  const command = config
+    ? renderSmokeCommand(config.smokeTestCommand ?? '', worktreePath, testFile)
+    : smokeCommand(worktreePath, testFile);
   if (!command) return skipped('smoke', 'configured test command does not support a single-file argument');
   return runCommand(command, worktreePath, executor, 'smoke');
 }
 
-function runStaticStyleChecks(worktreePath: string, executor: ReadinessCommandExecutor): ReadinessCommandResult[] {
-  return staticStyleCommands(worktreePath).map((command) => runCommand(command, worktreePath, executor, 'static-style'));
+function runStaticStyleChecks(
+  worktreePath: string,
+  executor: ReadinessCommandExecutor,
+  config?: AfkProjectConfig,
+): ReadinessCommandResult[] {
+  const commands = config ? config.staticCheckCommands : staticStyleCommands(worktreePath);
+  return commands.map((command) => runCommand(command, worktreePath, executor, 'static-style'));
 }
 
-function runCommand(command: string, cwd: string, executor: ReadinessCommandExecutor, mode: 'smoke' | 'static-style'): ReadinessCommandResult {
+function runCommand(
+  command: string,
+  cwd: string,
+  executor: ReadinessCommandExecutor,
+  mode: 'smoke' | 'static-style',
+): ReadinessCommandResult {
   const result = executor.run(command, cwd);
-  return { command, mode, status: result.exitCode === 0 ? 'passed' : 'failed', exitCode: result.exitCode, outputSnippet: snippet(result.output) };
+  return {
+    command,
+    mode,
+    status: result.exitCode === 0 ? 'passed' : 'failed',
+    exitCode: result.exitCode,
+    outputSnippet: snippet(result.output),
+  };
 }
 
 function smokeCommand(worktreePath: string, testFile: string): string | null {
   const scripts = packageScripts(worktreePath);
   const testScript = scripts.test;
   const relative = path.relative(worktreePath, testFile);
-  if (typeof testScript === 'string' && /\b(bun test|node --test|vitest|jest)\b/.test(testScript)) return `npm test -- ${shellQuote(relative)}`;
+  if (typeof testScript === 'string' && /\b(bun test|node --test|vitest|jest)\b/.test(testScript))
+    return `npm test -- ${shellQuote(relative)}`;
   if (existsSync(path.join(worktreePath, 'phpunit.xml')) || existsSync(path.join(worktreePath, 'phpunit.xml.dist'))) {
-    return hasPest(worktreePath) ? `vendor/bin/pest ${shellQuote(relative)}` : `vendor/bin/phpunit ${shellQuote(relative)}`;
+    return hasPest(worktreePath)
+      ? `vendor/bin/pest ${shellQuote(relative)}`
+      : `vendor/bin/phpunit ${shellQuote(relative)}`;
   }
   return null;
+}
+
+function renderSmokeCommand(command: string, worktreePath: string, testFile: string): string | null {
+  if (!command) return null;
+  const relative = path.relative(worktreePath, testFile);
+  return command.includes('{testFile}') ? command.replace(/\{testFile\}/g, shellQuote(relative)) : command;
 }
 
 function hasPest(worktreePath: string): boolean {
@@ -145,7 +249,11 @@ function staticStyleCommands(worktreePath: string): string[] {
   const scripts = packageScripts(worktreePath);
   const safeNames = ['lint', 'typecheck', 'check', 'format:check'];
   return safeNames
-    .filter((name) => typeof scripts[name] === 'string' && (!/\b(write|fix|format)\b/i.test(String(scripts[name])) || name === 'format:check'))
+    .filter(
+      (name) =>
+        typeof scripts[name] === 'string' &&
+        (!/\b(write|fix|format)\b/i.test(String(scripts[name])) || name === 'format:check'),
+    )
     .map((name) => `npm run ${name} --silent`);
 }
 
@@ -169,7 +277,7 @@ function readJson(filePath: string): Record<string, unknown> | null {
   if (!existsSync(filePath)) return null;
   try {
     const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
   }
@@ -177,7 +285,9 @@ function readJson(filePath: string): Record<string, unknown> | null {
 
 function packageScripts(root: string): Record<string, unknown> {
   const parsed = readJson(path.join(root, 'package.json'));
-  return parsed?.scripts && typeof parsed.scripts === 'object' && !Array.isArray(parsed.scripts) ? parsed.scripts as Record<string, unknown> : {};
+  return parsed?.scripts && typeof parsed.scripts === 'object' && !Array.isArray(parsed.scripts)
+    ? (parsed.scripts as Record<string, unknown>)
+    : {};
 }
 
 function hasTestFiles(dir: string): boolean {
@@ -202,7 +312,11 @@ function skipped(mode: 'smoke' | 'static-style', reason: string): ReadinessComma
 }
 
 function finalize(input: Omit<ReadinessCheckMetadata, 'terminalState'>): ReadinessCheckMetadata {
-  const terminalState: ReadinessTerminalState = input.blockReason ? 'blocked' : input.testSuite.envTesting === 'missing-disabled-by-user' ? 'disabled-by-user' : 'passed';
+  const terminalState: ReadinessTerminalState = input.blockReason
+    ? 'blocked'
+    : input.testSuite.envTesting === 'missing-disabled-by-user'
+      ? 'disabled-by-user'
+      : 'passed';
   return { ...input, terminalState };
 }
 

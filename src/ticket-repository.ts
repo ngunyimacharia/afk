@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import type { TicketRecord } from './types.js';
@@ -19,7 +19,7 @@ function parseFrontmatter(content: string): Record<string, unknown> {
 function parseLegacyStatus(content: string): string | undefined {
   const statusLine = content.match(/^Status:\s*(.+)$/im)?.[1]?.trim();
   if (statusLine) return statusLine;
-  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|\Z)/im);
+  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|Z)/im);
   const headingBody = headingMatch?.[1]?.trim();
   return headingBody ? headingBody.split(/\r?\n/)[0].trim() : undefined;
 }
@@ -81,10 +81,15 @@ export class TicketRepository {
   readTicket(filePath: string, featureFallback?: string): TicketRecord {
     const content = readFileSync(filePath, 'utf8');
     const frontmatter = parseFrontmatter(content);
-    const feature = (readFrontmatterValue(frontmatter, 'feature') as string | undefined) ?? featureFallback ?? path.basename(path.dirname(path.dirname(filePath)));
+    const feature =
+      (readFrontmatterValue(frontmatter, 'feature') as string | undefined) ??
+      featureFallback ??
+      path.basename(path.dirname(path.dirname(filePath)));
     const issueName = path.basename(filePath, '.md');
     const status = (readFrontmatterValue(frontmatter, 'status') as string | undefined) ?? parseLegacyStatus(content);
-    const executorAfk = normalize(readFrontmatterValue(frontmatter, 'executor') as string | undefined) === 'afk' || /(^|\n)Executor:\s*AFK\b/i.test(content);
+    const executorAfk =
+      normalize(readFrontmatterValue(frontmatter, 'executor') as string | undefined) === 'afk' ||
+      /(^|\n)Executor:\s*AFK\b/i.test(content);
     const dependsOn = parseRawDependsOn(content) ?? parseDependsOn(readFrontmatterValue(frontmatter, 'Depends-On'));
     return { path: filePath, feature, issueName, label: `${feature}/${issueName}`, status, executorAfk, dependsOn };
   }
@@ -97,6 +102,10 @@ export class TicketRepository {
   }
 
   private exists(target: string): boolean {
-    try { return statSync(target).isDirectory(); } catch { return false; }
+    try {
+      return statSync(target).isDirectory();
+    } catch {
+      return false;
+    }
   }
 }

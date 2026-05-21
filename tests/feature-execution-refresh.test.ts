@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -24,7 +24,10 @@ test('refresh recomputes dependency state after status changes', () => {
   mkdirSync(issuesDir, { recursive: true });
   const first = path.join(issuesDir, '01.md');
   writeFileSync(first, '---\nfeature: feat\nstatus: ready-for-agent\n---\n');
-  writeFileSync(path.join(issuesDir, '02.md'), '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 01\n---\n');
+  writeFileSync(
+    path.join(issuesDir, '02.md'),
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 01\n---\n',
+  );
 
   const service = new FeatureExecutionRefreshService(repoRoot);
   assert.equal(service.refresh('feat').tickets['02'].state, 'blocked');

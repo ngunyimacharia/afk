@@ -20,9 +20,9 @@ test('configures git global excludes file and adds AFK repo-local ignores', asyn
   });
 
   assert.equal(result.excludesFile, path.join(home, '.config', 'git', 'ignore'));
-  assert.deepEqual(result.added, ['/.scratch/', '/.worktree/']);
+  assert.deepEqual(result.added, ['/.scratch/', '/.worktree/', '/afk.json']);
   assert.deepEqual(commands.at(-1), ['config', '--global', 'core.excludesfile', result.excludesFile]);
-  assert.equal(await readFile(result.excludesFile, 'utf8'), '/.scratch/\n/.worktree/\n');
+  assert.equal(await readFile(result.excludesFile, 'utf8'), '/.scratch/\n/.worktree/\n/afk.json\n');
 });
 
 test('preserves configured global excludes file and does not duplicate entries', async () => {
@@ -30,10 +30,18 @@ test('preserves configured global excludes file and does not duplicate entries',
   const excludesFile = path.join(home, 'custom-ignore');
   await writeFile(excludesFile, '*.log\n/.scratch/\n');
 
-  const first = await ensureAfkGlobalGitIgnore({ home, env: {}, git: (args) => (args.includes('--get') ? excludesFile : '') });
-  const second = await ensureAfkGlobalGitIgnore({ home, env: {}, git: (args) => (args.includes('--get') ? excludesFile : '') });
+  const first = await ensureAfkGlobalGitIgnore({
+    home,
+    env: {},
+    git: (args) => (args.includes('--get') ? excludesFile : ''),
+  });
+  const second = await ensureAfkGlobalGitIgnore({
+    home,
+    env: {},
+    git: (args) => (args.includes('--get') ? excludesFile : ''),
+  });
 
-  assert.deepEqual(first.added, ['/.worktree/']);
+  assert.deepEqual(first.added, ['/.worktree/', '/afk.json']);
   assert.deepEqual(second.added, []);
-  assert.equal(await readFile(excludesFile, 'utf8'), '*.log\n/.scratch/\n/.worktree/\n');
+  assert.equal(await readFile(excludesFile, 'utf8'), '*.log\n/.scratch/\n/.worktree/\n/afk.json\n');
 });

@@ -8,8 +8,14 @@ import { formatSyncReport } from '../src/sync/engine.js';
 test('adapter provides mappings without hard-coded core paths', () => {
   const categories = OpenCodeSyncAdapter.assetCategories();
   assert.equal(categories.length, 3);
-  assert.deepEqual(categories.map((c) => path.basename(c.destinationRoot)), ['agents', 'prompts', 'command']);
-  assert.deepEqual(categories.map((c) => c.destinationBase), categories.map((c) => path.dirname(c.destinationRoot)));
+  assert.deepEqual(
+    categories.map((c) => path.basename(c.destinationRoot)),
+    ['agents', 'prompts', 'command'],
+  );
+  assert.deepEqual(
+    categories.map((c) => c.destinationBase),
+    categories.map((c) => path.dirname(c.destinationRoot)),
+  );
 });
 
 test('sync report renders reviewable counts and actions', () => {
@@ -17,8 +23,18 @@ test('sync report renders reviewable counts and actions', () => {
     adapterId: 'opencode',
     counts: { created: 1, updated: 2, unchanged: 3, skipped: 4 },
     actions: [
-      { category: 'agents', sourcePath: 'artifacts/opencode/agents/a.md', destinationPath: '~/.config/opencode/agents/a.md', status: 'created' },
-      { category: 'prompts', sourcePath: 'artifacts/opencode/prompts/b.md', destinationPath: '~/.config/opencode/prompts/b.md', status: 'updated' },
+      {
+        category: 'agents',
+        sourcePath: 'artifacts/opencode/agents/a.md',
+        destinationPath: '~/.config/opencode/agents/a.md',
+        status: 'created',
+      },
+      {
+        category: 'prompts',
+        sourcePath: 'artifacts/opencode/prompts/b.md',
+        destinationPath: '~/.config/opencode/prompts/b.md',
+        status: 'updated',
+      },
     ],
   });
 
@@ -34,4 +50,8 @@ test('internal AFK prompt is not a syncable opencode artifact', async () => {
 
 test('interview-me agent is a syncable opencode artifact', async () => {
   await assert.doesNotReject(access('artifacts/opencode/agents/interview-me.md'));
+});
+
+test('afk-config command is a syncable opencode slash command', async () => {
+  await assert.doesNotReject(access('artifacts/opencode/commands/afk-config.md'));
 });

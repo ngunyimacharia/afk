@@ -1,7 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { buildWorktreeReadiness, detectTestSuite, type ReadinessCheckMetadata, type ReadinessCommandExecutor } from './readiness-service.js';
+import type { AfkProjectConfig } from './project-config.js';
+import {
+  buildWorktreeReadiness,
+  detectTestSuite,
+  type ReadinessCheckMetadata,
+  type ReadinessCommandExecutor,
+} from './readiness-service.js';
 
 export interface PreparedCheckoutContext {
   featureSlug: string;
@@ -38,11 +44,15 @@ export interface WorktreePreparationInput {
   baseRef?: string;
   selectedTicketPaths?: string[];
   testsDisabledByUser?: boolean;
+  projectConfig?: AfkProjectConfig;
   readinessExecutor?: ReadinessCommandExecutor;
 }
 
 export class WorktreeReadinessBlockedError extends Error {
-  constructor(message: string, readonly readiness: ReadinessCheckMetadata) {
+  constructor(
+    message: string,
+    readonly readiness: ReadinessCheckMetadata,
+  ) {
     super(message);
   }
 }
@@ -112,21 +122,28 @@ function evaluateCopyCandidate(params: {
   };
 }
 
-function copyReadinessArtifacts(repoRoot: string, worktreePath: string): WorktreeReadinessMetadata {
+function copyReadinessArtifacts(
+  repoRoot: string,
+  worktreePath: string,
+  config?: AfkProjectConfig,
+): WorktreeReadinessMetadata {
   const repoRootReal = realpathSync(repoRoot);
-  const dependencyCopies = DEPENDENCY_COPY_ALLOWLIST.map((name) => evaluateCopyCandidate({
-    repoRootReal,
-    sourcePath: path.join(repoRoot, name),
-    targetPath: path.join(worktreePath, name),
-    name,
-    allowSymlink: true,
-  }));
+  const dependencyCopies = DEPENDENCY_COPY_ALLOWLIST.map((name) =>
+    evaluateCopyCandidate({
+      repoRootReal,
+      sourcePath: path.join(repoRoot, name),
+      targetPath: path.join(worktreePath, name),
+      name,
+      allowSymlink: true,
+    }),
+  );
 
+  const envFile = config?.testEnvFile?.trim() || '.env.testing';
   const envTestingCopy = evaluateCopyCandidate({
     repoRootReal,
-    sourcePath: path.join(repoRoot, '.env.testing'),
-    targetPath: path.join(worktreePath, '.env.testing'),
-    name: '.env.testing',
+    sourcePath: path.join(repoRoot, envFile),
+    targetPath: path.join(worktreePath, envFile),
+    name: envFile,
     allowSymlink: false,
   });
 
@@ -213,12 +230,17 @@ export class WorktreePreparationService {
       runGit(input.repoRoot, ['worktree', 'add', worktreePath, effectiveBranchName]);
     }
 
-    const readiness = copyReadinessArtifacts(input.repoRoot, worktreePath);
-    const envTestingDecision = readiness.envTestingCopy.decision === 'copied' || readiness.envTestingCopy.decision === 'already-present'
-      ? 'present'
-      : needsDisabledTestsDecision(input.repoRoot)
-        ? input.testsDisabledByUser ? 'missing-disabled-by-user' : 'missing-blocking'
-        : 'not-required';
+    const readiness = copyReadinessArtifacts(input.repoRoot, worktreePath, input.projectConfig);
+    const envTestingDecision =
+      readiness.envTestingCopy.decision === 'copied' || readiness.envTestingCopy.decision === 'already-present'
+        ? 'present'
+        : input.projectConfig
+          ? 'not-required'
+          : needsDisabledTestsDecision(input.repoRoot)
+            ? input.testsDisabledByUser
+              ? 'missing-disabled-by-user'
+              : 'missing-blocking'
+            : 'not-required';
     readiness.checks = buildWorktreeReadiness({
       repoRoot: input.repoRoot,
       worktreePath,
@@ -226,10 +248,14 @@ export class WorktreePreparationService {
       selectedTicketPaths: input.selectedTicketPaths,
       envTestingDecision,
       dependencyCopyStatusKnown: Boolean(readiness.dependencyCopies.length && readiness.envTestingCopy),
+      config: input.projectConfig,
       executor: input.readinessExecutor,
     });
     if (readiness.checks.terminalState === 'blocked') {
-      throw new WorktreeReadinessBlockedError(readiness.checks.blockReason ?? 'Worktree readiness failed', readiness.checks);
+      throw new WorktreeReadinessBlockedError(
+        readiness.checks.blockReason ?? 'Worktree readiness failed',
+        readiness.checks,
+      );
     }
 
     return {

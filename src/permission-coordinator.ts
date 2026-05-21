@@ -19,7 +19,9 @@ export interface PermissionPromptInput {
   message: string;
 }
 
-export type PermissionPromptAdapter = (input: PermissionPromptInput) => Promise<PermissionCoordinatorDecision | null | undefined>;
+export type PermissionPromptAdapter = (
+  input: PermissionPromptInput,
+) => Promise<PermissionCoordinatorDecision | null | undefined>;
 
 export type PermissionSafeDefaultReason =
   | 'prompt-cancelled'
@@ -91,7 +93,10 @@ export class PermissionCoordinator {
     return this.submitForTicket(this.defaultTicketLabel, request);
   }
 
-  async submitForTicket(ticketLabel: string, request: OpenCodePermissionRequest): Promise<PermissionCoordinatorDecision> {
+  async submitForTicket(
+    ticketLabel: string,
+    request: OpenCodePermissionRequest,
+  ): Promise<PermissionCoordinatorDecision> {
     return new Promise((resolve) => {
       this.queue.push({ ticketLabel, request: cloneRequest(request), resolve, order: this.nextOrder++ });
       this.scheduleDrain();
@@ -128,7 +133,11 @@ export class PermissionCoordinator {
     let decision: PermissionCoordinatorDecision = 'reject';
     let safeDefaultReason: PermissionSafeDefaultReason | undefined;
     try {
-      const value = await this.promptAdapter({ request: cloneRequest(item.request), metadata, message: renderedMessage });
+      const value = await this.promptAdapter({
+        request: cloneRequest(item.request),
+        metadata,
+        message: renderedMessage,
+      });
       if (value === 'once' || value === 'always' || value === 'reject') {
         decision = value;
       } else {
@@ -183,9 +192,7 @@ export function createManualPermissionPromptAdapter(): PermissionPromptAdapter {
       },
       {
         onCancel: () => {
-          throw new PermissionPromptCancelledError(
-            `manual decision cancelled for ${metadata.permissionId}`,
-          );
+          throw new PermissionPromptCancelledError(`manual decision cancelled for ${metadata.permissionId}`);
         },
       },
     );

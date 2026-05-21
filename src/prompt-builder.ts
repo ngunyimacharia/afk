@@ -45,7 +45,9 @@ export function buildPrompt(input: PromptInput): string {
     'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
     'If the ticket is complete, set its `Status:` line to `done` and append/update the `## AFK Summary` section in that file.',
     '',
-    ...(input.reviewerPrompt ? ['## Reviewer Context', '', `Reviewer prompt: ${input.reviewerPrompt.id} (${input.reviewerPrompt.path})`, ''] : []),
+    ...(input.reviewerPrompt
+      ? ['## Reviewer Context', '', `Reviewer prompt: ${input.reviewerPrompt.id} (${input.reviewerPrompt.path})`, '']
+      : []),
     '## Ticket Content',
     '',
     '```markdown',
@@ -60,9 +62,9 @@ function buildSnapshotLines(snapshot?: AfkStateSnapshot): string[] {
   }
   const dependencyLines = snapshot.dependencies.length
     ? snapshot.dependencies.flatMap((dependency) => [
-      `- ${dependency.label}: ticket status=${dependency.status}; runtime=${dependency.runtimeStatus}; done sentinel=${dependency.doneSentinel}; failed sentinel=${dependency.failedSentinel}`,
-      `  instruction: if ${dependency.label} is already done, do not implement it again.`,
-    ])
+        `- ${dependency.label}: ticket status=${dependency.status}; runtime=${dependency.runtimeStatus}; done sentinel=${dependency.doneSentinel}; failed sentinel=${dependency.failedSentinel}`,
+        `  instruction: if ${dependency.label} is already done, do not implement it again.`,
+      ])
     : [];
   return [
     '## Shared Scratch Artifacts',
@@ -71,7 +73,7 @@ function buildSnapshotLines(snapshot?: AfkStateSnapshot): string[] {
     ...(snapshot.featurePrdPath ? [`- Feature PRD: ${snapshot.featurePrdPath}`] : []),
     '- Read or update scratch artifacts only at these absolute paths. Do not guess `.scratch` paths relative to the worktree.',
     '',
-    ...(dependencyLines.length ? ['## Dependencies', '',] : []),
+    ...(dependencyLines.length ? ['## Dependencies', ''] : []),
     ...dependencyLines,
   ];
 }

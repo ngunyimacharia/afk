@@ -1,15 +1,28 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { RuntimeStore } from './runtime-store.js';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, AgentExecutionResult, BudgetExceededEvent, BudgetPhaseName, BudgetPolicy, LaunchBlockEvidence, LaunchPlan, ReviewerPromptTemplate, ReviewCycleHistoryEntry, ReviewOutcomeClassification, ReviewTerminalOutcomeRecord } from './types.js';
-import { SummaryPresenceGate } from './summary-presence-gate.js';
-import { buildPrompt } from './prompt-builder.js';
-import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
-import { classifyProviderFailure } from './provider-failure.js';
 import { validateSelectedTicketPath } from './path-validation.js';
+import { buildPrompt } from './prompt-builder.js';
+import { classifyProviderFailure } from './provider-failure.js';
+import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
+import type { RuntimeStore } from './runtime-store.js';
+import { SummaryPresenceGate } from './summary-presence-gate.js';
+import type {
+  AgentExecutionProgressCallback,
+  AgentExecutionResult,
+  BudgetExceededEvent,
+  BudgetPhaseName,
+  BudgetPolicy,
+  LaunchBlockEvidence,
+  LaunchPlan,
+  ReviewCycleHistoryEntry,
+  ReviewerPromptTemplate,
+  ReviewOutcomeClassification,
+  ReviewTerminalOutcomeRecord,
+} from './types.js';
 
-const FIXUP_REMEDIATION_GUIDANCE = 'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
+const FIXUP_REMEDIATION_GUIDANCE =
+  'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
 const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
 const REVIEWER_EMPTY_OUTPUT_FAILURE_KIND = 'reviewer-empty-output';
 const LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND = 'launcher-context-mismatch';
@@ -41,19 +54,35 @@ export class SingleTicketRunner {
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
   ) {}
 
-  async launch(plan: LaunchPlan, options: { onProgress?: AgentExecutionProgressCallback } = {}): Promise<SingleTicketRunResult> {
+  async launch(
+    plan: LaunchPlan,
+    options: { onProgress?: AgentExecutionProgressCallback } = {},
+  ): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
     if (!ticket) return { scheduled: false, message: 'No ticket available for launch', outcome: 'not-scheduled' };
     const ticketPathValidation = validateSelectedTicketPath(plan.repoRoot, ticket);
-    if (ticketPathValidation) return { scheduled: false, message: ticketPathValidation.message, outcome: 'not-scheduled', launchBlock: ticketPathValidation };
+    if (ticketPathValidation)
+      return {
+        scheduled: false,
+        message: ticketPathValidation.message,
+        outcome: 'not-scheduled',
+        launchBlock: ticketPathValidation,
+      };
     options.onProgress?.({ ticketLabel: ticket.label, message: 'starting ticket run' });
-    const record = this.runtimeStore.createRecord({ featureSlug: ticket.feature, issueName: ticket.issueName, ticketPath: ticket.path });
+    const record = this.runtimeStore.createRecord({
+      featureSlug: ticket.feature,
+      issueName: ticket.issueName,
+      ticketPath: ticket.path,
+    });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);
     if (!plan.reviewerModel || !plan.reviewerPrompt) return this.launchWithoutReviewer(plan, record, options);
 
     this.runtimeStore.appendLog(record.logPath, `reviewer model: ${plan.reviewerModel.id}`);
-    this.runtimeStore.appendLog(record.logPath, `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`);
+    this.runtimeStore.appendLog(
+      record.logPath,
+      `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`,
+    );
     this.runtimeStore.updateMetadata(record.metadataPath, {
       EXECUTION_MODEL_ID: plan.model.id,
       REVIEWER_MODEL_ID: plan.reviewerModel.id,
@@ -77,8 +106,16 @@ export class SingleTicketRunner {
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
-    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('launch-preparation'));
-    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('worktree-preparation'));
+    this.runtimeStore.completePhase(
+      record.metadataPath,
+      record.logPath,
+      this.runtimeStore.startPhase('launch-preparation'),
+    );
+    this.runtimeStore.completePhase(
+      record.metadataPath,
+      record.logPath,
+      this.runtimeStore.startPhase('worktree-preparation'),
+    );
     this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('readiness'));
     let providerFailureCount = 0;
     let sessionId: string | null = null;
@@ -90,50 +127,91 @@ export class SingleTicketRunner {
     let useReviewerRepairPrompt = false;
     const ticketStartEpoch = Date.now();
 
-    let outcome: SingleTicketRunResult['outcome'] = 'failed';
+    const outcome: SingleTicketRunResult['outcome'] = 'failed';
     try {
       while (true) {
-        const ticketBudget = this.checkTicketBudget(record.metadataPath, record.logPath, budgets, ticketStartEpoch, reviewCycle + 1);
+        const ticketBudget = this.checkTicketBudget(
+          record.metadataPath,
+          record.logPath,
+          budgets,
+          ticketStartEpoch,
+          reviewCycle + 1,
+        );
         if (ticketBudget) return this.handoffForBudget(ticket.label, record, options, ticketBudget, sessionId);
         if (executeBeforeReview && fixupCycles >= budgets.fixupCycleLimit && reviewCycle > 0) {
-          return this.handoffForBudget(ticket.label, record, options, {
-            budgetName: 'fixup-cycle-cap',
-            limit: budgets.fixupCycleLimit,
-            observed: fixupCycles,
-            phase: 'fixup',
-            cycle: reviewCycle,
-            evidence: 'Real implementation fixup cycle cap reached',
-          }, sessionId);
+          return this.handoffForBudget(
+            ticket.label,
+            record,
+            options,
+            {
+              budgetName: 'fixup-cycle-cap',
+              limit: budgets.fixupCycleLimit,
+              observed: fixupCycles,
+              phase: 'fixup',
+              cycle: reviewCycle,
+              evidence: 'Real implementation fixup cycle cap reached',
+            },
+            sessionId,
+          );
         }
         if (executeBeforeReview) {
           try {
-            const executionResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({
-              plan,
-              ticketIndex: 0,
-              prompt,
-              invocationMode: 'execution',
-              sessionId,
-              onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
-            }), reviewCycle + 1);
+            const executionResult = await this.runtimeStore.runPhase(
+              record.metadataPath,
+              record.logPath,
+              'execution',
+              () =>
+                this.provider.execute({
+                  plan,
+                  ticketIndex: 0,
+                  prompt,
+                  invocationMode: 'execution',
+                  sessionId,
+                  onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+                }),
+              reviewCycle + 1,
+            );
             sessionId = executionResult.sessionId ?? sessionId;
             latestExecutionResult = executionResult;
             this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
-            const executionBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'execution', reviewCycle + 1);
-            if (executionBudget) return this.handoffForBudget(ticket.label, record, options, executionBudget, sessionId);
+            const executionBudget = this.checkPhaseBudget(
+              record.metadataPath,
+              record.logPath,
+              budgets,
+              'execution',
+              reviewCycle + 1,
+            );
+            if (executionBudget)
+              return this.handoffForBudget(ticket.label, record, options, executionBudget, sessionId);
             if (executionResult.status !== 'completed') {
               return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
                 this.runtimeStore.markFailed(record, executionResult.status);
                 this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
-                options.onProgress?.({ ticketLabel: ticket.label, message: `run ${executionResult.status}`, sessionId });
-                return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: executionResult.status === 'blocked' ? 'blocked' : 'failed' };
+                options.onProgress?.({
+                  ticketLabel: ticket.label,
+                  message: `run ${executionResult.status}`,
+                  sessionId,
+                });
+                return {
+                  scheduled: true,
+                  message: `Scheduled ${ticket.label}`,
+                  outcome: executionResult.status === 'blocked' ? 'blocked' : 'failed',
+                };
               });
             }
           } catch (error) {
             providerFailureCount += 1;
             const message = error instanceof Error ? error.message : 'provider execution failed';
-            this.runtimeStore.appendLog(record.logPath, `provider failure ${providerFailureCount}/${budgets.providerFailureRetries}: ${message}`);
+            this.runtimeStore.appendLog(
+              record.logPath,
+              `provider failure ${providerFailureCount}/${budgets.providerFailureRetries}: ${message}`,
+            );
             if (providerFailureCount <= budgets.providerFailureRetries) {
-              options.onProgress?.({ ticketLabel: ticket.label, message: `provider failure retry ${providerFailureCount}/${budgets.providerFailureRetries}`, sessionId });
+              options.onProgress?.({
+                ticketLabel: ticket.label,
+                message: `provider failure retry ${providerFailureCount}/${budgets.providerFailureRetries}`,
+                sessionId,
+              });
               executeBeforeReview = true;
               continue;
             }
@@ -150,25 +228,80 @@ export class SingleTicketRunner {
             });
           }
         }
-        if (!latestExecutionResult) return { scheduled: false, message: 'No execution result available for review', outcome: 'not-scheduled' };
+        if (!latestExecutionResult)
+          return { scheduled: false, message: 'No execution result available for review', outcome: 'not-scheduled' };
         const executionForReview = latestExecutionResult;
 
-        const reviewResult = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'review', () => this.provider.execute({
-          plan,
-          ticketIndex: 0,
-          prompt: useReviewerRepairPrompt
-            ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview)
-            : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview),
-          invocationMode: 'reviewer',
-          sessionId,
-          onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
-        }), reviewCycle + 1);
+        const reviewResult = await this.runtimeStore.runPhase(
+          record.metadataPath,
+          record.logPath,
+          'review',
+          () =>
+            this.provider.execute({
+              plan,
+              ticketIndex: 0,
+              prompt: useReviewerRepairPrompt
+                ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview)
+                : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview),
+              invocationMode: 'reviewer',
+              sessionId,
+              onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+            }),
+          reviewCycle + 1,
+        );
         useReviewerRepairPrompt = false;
-        const reviewBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'review', reviewCycle + 1);
+        const reviewBudget = this.checkPhaseBudget(
+          record.metadataPath,
+          record.logPath,
+          budgets,
+          'review',
+          reviewCycle + 1,
+        );
         if (reviewBudget) return this.handoffForBudget(ticket.label, record, options, reviewBudget, sessionId);
-        const afterReviewTicketBudget = this.checkTicketBudget(record.metadataPath, record.logPath, budgets, ticketStartEpoch, reviewCycle + 1);
-        if (afterReviewTicketBudget) return this.handoffForBudget(ticket.label, record, options, afterReviewTicketBudget, sessionId);
+        const afterReviewTicketBudget = this.checkTicketBudget(
+          record.metadataPath,
+          record.logPath,
+          budgets,
+          ticketStartEpoch,
+          reviewCycle + 1,
+        );
+        if (afterReviewTicketBudget)
+          return this.handoffForBudget(ticket.label, record, options, afterReviewTicketBudget, sessionId);
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
+        if (reviewResult.status !== 'completed') {
+          providerFailureCount += 1;
+          const message =
+            reviewResult.unsafeReason ??
+            ((reviewResult.output ?? []).join('\n') || `reviewer returned ${reviewResult.status}`);
+          this.runtimeStore.appendLog(
+            record.logPath,
+            `provider failure ${providerFailureCount}/${budgets.providerFailureRetries}: ${message}`,
+          );
+          if (providerFailureCount <= budgets.providerFailureRetries) {
+            options.onProgress?.({
+              ticketLabel: ticket.label,
+              message: `provider failure retry ${providerFailureCount}/${budgets.providerFailureRetries}`,
+              sessionId: reviewResult.sessionId ?? sessionId,
+            });
+            executeBeforeReview = false;
+            continue;
+          }
+          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+            this.runtimeStore.updateMetadata(record.metadataPath, {
+              STATUS: 'failed',
+              UNSAFE_REASON: message,
+              FAILURE_KIND: classifyProviderFailure(message)?.kind ?? 'unknown',
+            });
+            this.runtimeStore.markFailed(record, 'failed');
+            this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+            options.onProgress?.({
+              ticketLabel: ticket.label,
+              message: `run failed: ${message}`,
+              sessionId: reviewResult.sessionId ?? sessionId,
+            });
+            return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'failed' };
+          });
+        }
         const rawReviewOutput = (reviewResult.output ?? []).join('\n');
         const review = parseReviewerOutput(rawReviewOutput);
 
@@ -188,13 +321,21 @@ export class SingleTicketRunner {
         }
 
         malformedAttempts = 0;
-        const decision = decideReviewOutcome(review, { cycle: reviewCycle + 1, maxCycles: budgets.fixupCycleLimit + 1 });
-        this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, this.buildReviewCycleEntry(reviewCycle + 1, decision));
+        const decision = decideReviewOutcome(review, {
+          cycle: reviewCycle + 1,
+          maxCycles: budgets.fixupCycleLimit + 1,
+        });
+        this.runtimeStore.recordReviewCycle(
+          record.metadataPath,
+          record.logPath,
+          this.buildReviewCycleEntry(reviewCycle + 1, decision),
+        );
 
         if (decision.decision === 'approve') {
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
             const ticketContent = this.readTicketContent(ticket.path);
-            const classification: ReviewOutcomeClassification = decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval';
+            const classification: ReviewOutcomeClassification =
+              decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval';
             if (!this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
               const reason = 'ready-for-human gate blocked: missing ## AFK Summary';
               this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -202,29 +343,49 @@ export class SingleTicketRunner {
                 UNSAFE_REASON: reason,
                 FAILURE_KIND: MISSING_AFK_SUMMARY_FAILURE_KIND,
               });
-              this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-                outcome: 'needs-human',
-                reason,
-                cycle: reviewCycle + 1,
-                classification,
-                malformed: false,
-                findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
-              }));
+              this.runtimeStore.recordFinalReviewOutcome(
+                record.metadataPath,
+                record.logPath,
+                this.buildFinalOutcomeRecord({
+                  outcome: 'needs-human',
+                  reason,
+                  cycle: reviewCycle + 1,
+                  classification,
+                  malformed: false,
+                  findings: decision.findings.map((finding) => ({
+                    severity: finding.severity,
+                    summary: finding.title,
+                    detail: finding.detail,
+                  })),
+                }),
+              );
               this.runtimeStore.markFailed(record, reason);
               this.runtimeStore.appendLog(record.logPath, reason);
               this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
-              options.onProgress?.({ ticketLabel: ticket.label, message: 'run blocked: missing ## AFK Summary', sessionId });
+              options.onProgress?.({
+                ticketLabel: ticket.label,
+                message: 'run blocked: missing ## AFK Summary',
+                sessionId,
+              });
               return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
             }
 
-            this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-              outcome: 'approved',
-              reason: decision.reason,
-              cycle: reviewCycle + 1,
-              classification,
-              malformed: false,
-              findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
-            }));
+            this.runtimeStore.recordFinalReviewOutcome(
+              record.metadataPath,
+              record.logPath,
+              this.buildFinalOutcomeRecord({
+                outcome: 'approved',
+                reason: decision.reason,
+                cycle: reviewCycle + 1,
+                classification,
+                malformed: false,
+                findings: decision.findings.map((finding) => ({
+                  severity: finding.severity,
+                  summary: finding.title,
+                  detail: finding.detail,
+                })),
+              }),
+            );
             this.runtimeStore.markDone(record);
             this.runtimeStore.appendLog(record.logPath, 'run completed');
             options.onProgress?.({ ticketLabel: ticket.label, message: 'run completed', sessionId });
@@ -237,14 +398,22 @@ export class SingleTicketRunner {
             STATUS: 'blocked',
             UNSAFE_REASON: decision.reason,
           });
-          this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-            outcome: 'needs-human',
-            reason: decision.reason,
-            cycle: reviewCycle + 1,
-            classification: 'real-finding-handoff',
-            malformed: false,
-            findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
-          }));
+          this.runtimeStore.recordFinalReviewOutcome(
+            record.metadataPath,
+            record.logPath,
+            this.buildFinalOutcomeRecord({
+              outcome: 'needs-human',
+              reason: decision.reason,
+              cycle: reviewCycle + 1,
+              classification: 'real-finding-handoff',
+              malformed: false,
+              findings: decision.findings.map((finding) => ({
+                severity: finding.severity,
+                summary: finding.title,
+                detail: finding.detail,
+              })),
+            }),
+          );
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
             this.runtimeStore.markFailed(record, 'needs-human handoff required');
             this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
@@ -256,7 +425,13 @@ export class SingleTicketRunner {
 
         reviewCycle += 1;
         fixupCycles += 1;
-        prompt = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'fixup', () => this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review), reviewCycle);
+        prompt = await this.runtimeStore.runPhase(
+          record.metadataPath,
+          record.logPath,
+          'fixup',
+          () => this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review),
+          reviewCycle,
+        );
         const fixupBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'fixup', reviewCycle);
         if (fixupBudget) return this.handoffForBudget(ticket.label, record, options, fixupBudget, sessionId);
         executeBeforeReview = true;
@@ -282,7 +457,13 @@ export class SingleTicketRunner {
     };
   }
 
-  private checkTicketBudget(metadataPath: string, logPath: string, budgets: BudgetPolicy, ticketStartEpoch: number, cycle: number): BudgetExceededEvent | null {
+  private checkTicketBudget(
+    metadataPath: string,
+    logPath: string,
+    budgets: BudgetPolicy,
+    ticketStartEpoch: number,
+    cycle: number,
+  ): BudgetExceededEvent | null {
     const limit = budgets.ticketWallClockMs;
     if (!limit) return null;
     const observed = Date.now() - ticketStartEpoch;
@@ -297,11 +478,19 @@ export class SingleTicketRunner {
     };
   }
 
-  private checkPhaseBudget(metadataPath: string, logPath: string, budgets: BudgetPolicy, phase: BudgetPhaseName, cycle: number): BudgetExceededEvent | null {
+  private checkPhaseBudget(
+    metadataPath: string,
+    logPath: string,
+    budgets: BudgetPolicy,
+    phase: BudgetPhaseName,
+    cycle: number,
+  ): BudgetExceededEvent | null {
     const limit = budgets.phaseWallClockMs?.[phase];
     if (!limit) return null;
     const metadata = this.runtimeStore.readMetadata(metadataPath);
-    const latest = [...(metadata.PHASE_HISTORY ?? [])].reverse().find((entry) => entry.name === phase && entry.cycle === cycle);
+    const latest = [...(metadata.PHASE_HISTORY ?? [])]
+      .reverse()
+      .find((entry) => entry.name === phase && entry.cycle === cycle);
     if (!latest || latest.durationMs <= limit) return null;
     return {
       budgetName: `phase-${phase}-wall-clock-ms`,
@@ -327,12 +516,16 @@ export class SingleTicketRunner {
       UNSAFE_REASON: reason,
       FAILURE_KIND: 'needs-human',
     });
-    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-      outcome: 'needs-human',
-      reason,
-      cycle: event.cycle,
-      classification: event.budgetName === 'fixup-cycle-cap' ? 'real-finding-handoff' : undefined,
-    }));
+    this.runtimeStore.recordFinalReviewOutcome(
+      record.metadataPath,
+      record.logPath,
+      this.buildFinalOutcomeRecord({
+        outcome: 'needs-human',
+        reason,
+        cycle: event.cycle,
+        classification: event.budgetName === 'fixup-cycle-cap' ? 'real-finding-handoff' : undefined,
+      }),
+    );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${reason}`);
@@ -366,15 +559,19 @@ export class SingleTicketRunner {
       classification: 'malformed-output-handoff',
       malformedOutputSnippet,
     });
-    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-      cycle,
-      outcome: 'needs-human',
-      reason: malformedHandoffReason,
-      classification: 'malformed-output-handoff',
-      malformed: true,
-      findings: [],
-      malformedOutputSnippet,
-    }));
+    this.runtimeStore.recordFinalReviewOutcome(
+      record.metadataPath,
+      record.logPath,
+      this.buildFinalOutcomeRecord({
+        cycle,
+        outcome: 'needs-human',
+        reason: malformedHandoffReason,
+        classification: 'malformed-output-handoff',
+        malformed: true,
+        findings: [],
+        malformedOutputSnippet,
+      }),
+    );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
@@ -406,15 +603,19 @@ export class SingleTicketRunner {
       classification: 'empty-output-handoff',
       malformedOutputSnippet: '',
     });
-    this.runtimeStore.recordFinalReviewOutcome(record.metadataPath, record.logPath, this.buildFinalOutcomeRecord({
-      cycle,
-      outcome: 'needs-human',
-      reason,
-      classification: 'empty-output-handoff',
-      malformed: true,
-      findings: [],
-      malformedOutputSnippet: '',
-    }));
+    this.runtimeStore.recordFinalReviewOutcome(
+      record.metadataPath,
+      record.logPath,
+      this.buildFinalOutcomeRecord({
+        cycle,
+        outcome: 'needs-human',
+        reason,
+        classification: 'empty-output-handoff',
+        malformed: true,
+        findings: [],
+        malformedOutputSnippet: '',
+      }),
+    );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'empty reviewer output handoff: reviewer-empty-output');
@@ -448,11 +649,14 @@ export class SingleTicketRunner {
     const ticket = plan.tickets[0];
     const snapshot = plan.snapshots?.[ticketLabel];
     if (!ticket || !snapshot) return null;
-    if (snapshot.featureSlug !== ticket.feature) return `snapshot feature ${snapshot.featureSlug} does not match ticket feature ${ticket.feature}`;
-    if (plan.checkout.featureSlug !== ticket.feature) return `checkout feature ${plan.checkout.featureSlug} does not match ticket feature ${ticket.feature}`;
+    if (snapshot.featureSlug !== ticket.feature)
+      return `snapshot feature ${snapshot.featureSlug} does not match ticket feature ${ticket.feature}`;
+    if (plan.checkout.featureSlug !== ticket.feature)
+      return `checkout feature ${plan.checkout.featureSlug} does not match ticket feature ${ticket.feature}`;
     const checkoutPath = path.resolve(plan.checkout.worktreePath);
     const snapshotPath = path.resolve(snapshot.worktreePath);
-    if (snapshotPath !== checkoutPath) return `snapshot worktree ${snapshotPath} does not match checkout worktree ${checkoutPath}`;
+    if (snapshotPath !== checkoutPath)
+      return `snapshot worktree ${snapshotPath} does not match checkout worktree ${checkoutPath}`;
     return null;
   }
 
@@ -476,10 +680,18 @@ export class SingleTicketRunner {
     return prompt.content ?? readFileSync(prompt.path, 'utf8');
   }
 
-  private async launchWithoutReviewer(plan: LaunchPlan, record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string }, options: { onProgress?: AgentExecutionProgressCallback }): Promise<SingleTicketRunResult> {
+  private async launchWithoutReviewer(
+    plan: LaunchPlan,
+    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
+    options: { onProgress?: AgentExecutionProgressCallback },
+  ): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
     if (!ticket) return { scheduled: false, message: 'No ticket available for launch', outcome: 'not-scheduled' };
-    if (plan.reviewerPrompt) this.runtimeStore.appendLog(record.logPath, `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`);
+    if (plan.reviewerPrompt)
+      this.runtimeStore.appendLog(
+        record.logPath,
+        `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`,
+      );
     const ticketContent = this.readTicketContent(ticket.path) ?? '';
     const snapshot = plan.snapshots?.[ticket.label];
     if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
@@ -493,13 +705,33 @@ export class SingleTicketRunner {
       reviewerPrompt: plan.reviewerPrompt,
       afkInstructions: this.readAfkInstructions(plan.repoRoot),
     });
-    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('launch-preparation'));
-    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('worktree-preparation'));
+    this.runtimeStore.completePhase(
+      record.metadataPath,
+      record.logPath,
+      this.runtimeStore.startPhase('launch-preparation'),
+    );
+    this.runtimeStore.completePhase(
+      record.metadataPath,
+      record.logPath,
+      this.runtimeStore.startPhase('worktree-preparation'),
+    );
     this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('readiness'));
 
     let outcome: SingleTicketRunResult['outcome'] = 'failed';
     try {
-      const result = await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'execution', () => this.provider.execute({ plan, ticketIndex: 0, prompt, onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress) }), 1);
+      const result = await this.runtimeStore.runPhase(
+        record.metadataPath,
+        record.logPath,
+        'execution',
+        () =>
+          this.provider.execute({
+            plan,
+            ticketIndex: 0,
+            prompt,
+            onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+          }),
+        1,
+      );
       this.recordExecutionResult(record.metadataPath, record.logPath, result, result.sessionId ?? null);
       await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
         if (result.status === 'completed') {
@@ -525,7 +757,11 @@ export class SingleTicketRunner {
         }
         this.runtimeStore.appendLog(record.logPath, `run ${result.status}`);
       });
-      options.onProgress?.({ ticketLabel: ticket.label, message: `run ${result.status}`, sessionId: result.sessionId ?? null });
+      options.onProgress?.({
+        ticketLabel: ticket.label,
+        message: `run ${result.status}`,
+        sessionId: result.sessionId ?? null,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'provider execution failed';
       options.onProgress?.({ ticketLabel: ticket.label, message: `run failed: ${message}` });
@@ -541,7 +777,11 @@ export class SingleTicketRunner {
     return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome };
   }
 
-  private progressLogger(metadataPath: string, logPath: string, onProgress: AgentExecutionProgressCallback | undefined): AgentExecutionProgressCallback {
+  private progressLogger(
+    metadataPath: string,
+    logPath: string,
+    onProgress: AgentExecutionProgressCallback | undefined,
+  ): AgentExecutionProgressCallback {
     const observedSessionIds = new Set<string>();
     return (event) => {
       if (event.sessionId && !observedSessionIds.has(event.sessionId)) {
@@ -551,7 +791,8 @@ export class SingleTicketRunner {
           this.runtimeStore.updateMetadata(metadataPath, {
             PROVIDER_SESSION_ID: event.sessionId,
             PROVIDER_SESSION_REMOVABLE: false,
-            UNSAFE_REASON: metadata.UNSAFE_REASON === 'session capture pending' ? 'session still running' : metadata.UNSAFE_REASON,
+            UNSAFE_REASON:
+              metadata.UNSAFE_REASON === 'session capture pending' ? 'session still running' : metadata.UNSAFE_REASON,
           });
           this.runtimeStore.appendLog(logPath, `provider session observed: ${event.sessionId}`);
         }
@@ -563,21 +804,43 @@ export class SingleTicketRunner {
     };
   }
 
-  private recordExecutionResult(metadataPath: string, logPath: string, result: { status: string; sessionId?: string | null; removable?: boolean; unsafeReason?: string | null; output?: string[]; inspectionTargetIdentifier?: string | null }, sessionId: string | null): void {
+  private recordExecutionResult(
+    metadataPath: string,
+    logPath: string,
+    result: {
+      status: string;
+      sessionId?: string | null;
+      removable?: boolean;
+      unsafeReason?: string | null;
+      output?: string[];
+      inspectionTargetIdentifier?: string | null;
+    },
+    sessionId: string | null,
+  ): void {
     this.runtimeStore.appendLog(logPath, `provider session: ${sessionId ?? 'unknown'}`);
     this.runtimeStore.updateMetadata(metadataPath, {
       STATUS: normalizeStatus(result.status),
       PROVIDER_SESSION_ID: sessionId,
       PROVIDER_SESSION_REMOVABLE: result.removable ?? false,
       UNSAFE_REASON: result.unsafeReason ?? null,
-      FAILURE_KIND: result.status === 'completed' ? null : classifyProviderFailure(result.unsafeReason ?? (result.output ?? []).join('\n'))?.kind ?? 'unknown',
+      FAILURE_KIND:
+        result.status === 'completed'
+          ? null
+          : (classifyProviderFailure(result.unsafeReason ?? (result.output ?? []).join('\n'))?.kind ?? 'unknown'),
       INSPECTION_PROVIDER: result.inspectionTargetIdentifier ? 'tmux' : null,
       INSPECTION_TARGET_IDENTIFIER: result.inspectionTargetIdentifier ?? null,
     });
-    (result.output ?? []).forEach((line) => this.runtimeStore.appendLog(logPath, line));
+    (result.output ?? []).forEach((line) => {
+      this.runtimeStore.appendLog(logPath, line);
+    });
   }
 
-  private buildReviewerPrompt(ticketLabel: string, reviewerPromptText: string, sessionId: string | null, executionResult: { status: string; output?: string[] }): string {
+  private buildReviewerPrompt(
+    ticketLabel: string,
+    reviewerPromptText: string,
+    sessionId: string | null,
+    executionResult: { status: string; output?: string[] },
+  ): string {
     return [
       reviewerPromptText.trim(),
       '',
@@ -588,7 +851,12 @@ export class SingleTicketRunner {
     ].join('\n');
   }
 
-  private buildReviewerRepairPrompt(ticketLabel: string, reviewerPromptText: string, sessionId: string | null, executionResult: { status: string; output?: string[] }): string {
+  private buildReviewerRepairPrompt(
+    ticketLabel: string,
+    reviewerPromptText: string,
+    sessionId: string | null,
+    executionResult: { status: string; output?: string[] },
+  ): string {
     return [
       this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult),
       '',
@@ -596,7 +864,12 @@ export class SingleTicketRunner {
     ].join('\n');
   }
 
-  private buildFixupPrompt(ticketLabel: string, sessionId: string | null, cycleCount: number, review: ReturnType<typeof parseReviewerOutput>): string {
+  private buildFixupPrompt(
+    ticketLabel: string,
+    sessionId: string | null,
+    cycleCount: number,
+    review: ReturnType<typeof parseReviewerOutput>,
+  ): string {
     return [
       `AFK follow-up for ${ticketLabel}`,
       `Continue the same execution session: ${sessionId ?? 'unknown'}`,
@@ -611,26 +884,47 @@ export class SingleTicketRunner {
     ].join('\n');
   }
 
-  private buildReviewCycleEntry(cycle: number, decision: ReturnType<typeof decideReviewOutcome>): ReviewCycleHistoryEntry {
-    const hasRealFindings = decision.findings.some((finding) => finding.severity === 'major' || finding.severity === 'blocker');
+  private buildReviewCycleEntry(
+    cycle: number,
+    decision: ReturnType<typeof decideReviewOutcome>,
+  ): ReviewCycleHistoryEntry {
+    const hasRealFindings = decision.findings.some(
+      (finding) => finding.severity === 'major' || finding.severity === 'blocker',
+    );
     return {
       cycle,
-      outcome: decision.decision === 'approve' ? 'approve' : decision.decision === 'needs-human' ? 'handoff-required' : 'loop-required',
+      outcome:
+        decision.decision === 'approve'
+          ? 'approve'
+          : decision.decision === 'needs-human'
+            ? 'handoff-required'
+            : 'loop-required',
       reason: decision.reason,
       malformed: decision.fallback,
-      findings: decision.findings.map((finding) => ({ severity: finding.severity, summary: finding.title, detail: finding.detail })),
-      classification: decision.decision === 'approve'
-        ? (decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval')
-        : hasRealFindings
-          ? (decision.decision === 'needs-human' ? 'real-finding-handoff' : 'real-finding-loop')
-          : undefined,
+      findings: decision.findings.map((finding) => ({
+        severity: finding.severity,
+        summary: finding.title,
+        detail: finding.detail,
+      })),
+      classification:
+        decision.decision === 'approve'
+          ? decision.findings.length === 0
+            ? 'clean-approval'
+            : 'minor-risk-approval'
+          : hasRealFindings
+            ? decision.decision === 'needs-human'
+              ? 'real-finding-handoff'
+              : 'real-finding-loop'
+            : undefined,
     };
   }
 
   private buildFinalOutcomeRecord(outcome: ReviewTerminalOutcomeRecord): ReviewTerminalOutcomeRecord {
     return {
       ...outcome,
-      malformedOutputSnippet: outcome.malformedOutputSnippet ? this.boundSnippet(outcome.malformedOutputSnippet) : outcome.malformedOutputSnippet,
+      malformedOutputSnippet: outcome.malformedOutputSnippet
+        ? this.boundSnippet(outcome.malformedOutputSnippet)
+        : outcome.malformedOutputSnippet,
     };
   }
 
@@ -661,6 +955,13 @@ export class SingleTicketRunner {
 }
 
 function normalizeStatus(status: string): 'completed' | 'failed' | 'interrupted' | 'blocked' | 'unknown' {
-  if (status === 'completed' || status === 'failed' || status === 'interrupted' || status === 'blocked' || status === 'unknown') return status;
+  if (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'interrupted' ||
+    status === 'blocked' ||
+    status === 'unknown'
+  )
+    return status;
   return 'unknown';
 }

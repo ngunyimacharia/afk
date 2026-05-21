@@ -1,7 +1,16 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AfkStateSnapshot, DependencySnapshot, GitContext, LaunchModel, LaunchPlan, ReadinessSnapshot, ReviewerPromptTemplate, TicketRecord } from './types.js';
+import type {
+  AfkStateSnapshot,
+  DependencySnapshot,
+  GitContext,
+  LaunchModel,
+  LaunchPlan,
+  ReadinessSnapshot,
+  ReviewerPromptTemplate,
+  TicketRecord,
+} from './types.js';
 import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
 
 function runGit(repoRoot: string, args: string[]): string {
@@ -14,15 +23,28 @@ function ticketStatus(ticket?: TicketRecord): string {
 
 function readRuntimeStatus(repoRoot: string, feature: string, issueName: string): string {
   try {
-    const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`);
+    const metadataPath = path.join(
+      repoRoot,
+      '.scratch',
+      '.opencode-afk-logs',
+      'runtime-metadata',
+      `${feature}-${issueName}.json`,
+    );
     const parsed = JSON.parse(readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
-    return typeof parsed.STATUS === 'string' && parsed.STATUS.trim() ? parsed.STATUS : 'unknown (metadata missing status)';
+    return typeof parsed.STATUS === 'string' && parsed.STATUS.trim()
+      ? parsed.STATUS
+      : 'unknown (metadata missing status)';
   } catch {
     return 'unknown (metadata missing)';
   }
 }
 
-function sentinelState(repoRoot: string, feature: string, issueName: string, kind: 'done' | 'failed'): 'present' | 'missing' {
+function sentinelState(
+  repoRoot: string,
+  feature: string,
+  issueName: string,
+  kind: 'done' | 'failed',
+): 'present' | 'missing' {
   const target = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', `${feature}-${issueName}.${kind}`);
   return existsSync(target) ? 'present' : 'missing';
 }
@@ -69,9 +91,15 @@ function stringifyReadinessField(value: unknown): string {
   return 'unknown (state summary missing field)';
 }
 
-function buildDependencySnapshots(repoRoot: string, ticket: TicketRecord, tickets: TicketRecord[]): DependencySnapshot[] {
+function buildDependencySnapshots(
+  repoRoot: string,
+  ticket: TicketRecord,
+  tickets: TicketRecord[],
+): DependencySnapshot[] {
   return (ticket.dependsOn ?? []).map((dependencyIssue) => {
-    const dependencyTicket = tickets.find((entry) => entry.feature === ticket.feature && entry.issueName === dependencyIssue);
+    const dependencyTicket = tickets.find(
+      (entry) => entry.feature === ticket.feature && entry.issueName === dependencyIssue,
+    );
     return {
       label: `${ticket.feature}/${dependencyIssue}`,
       issueName: dependencyIssue,
@@ -83,7 +111,12 @@ function buildDependencySnapshots(repoRoot: string, ticket: TicketRecord, ticket
   });
 }
 
-function buildSnapshot(repoRoot: string, ticket: TicketRecord, tickets: TicketRecord[], checkout: PreparedCheckoutContext): AfkStateSnapshot {
+function buildSnapshot(
+  repoRoot: string,
+  ticket: TicketRecord,
+  tickets: TicketRecord[],
+  checkout: PreparedCheckoutContext,
+): AfkStateSnapshot {
   const generatedAt = new Date().toISOString();
   const repoRootResolved = path.resolve(repoRoot);
   const worktreePath = path.resolve(checkout.worktreePath);
@@ -134,7 +167,12 @@ export function buildLaunchPlan(
   reviewer?: { model?: LaunchModel; prompt?: ReviewerPromptTemplate },
   checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
 ): LaunchPlan {
-  const snapshots = Object.fromEntries(tickets.map((ticket) => [ticket.label, buildSnapshot(repoRoot, ticket, tickets, checkoutsByFeature?.[ticket.feature] ?? checkout)]));
+  const snapshots = Object.fromEntries(
+    tickets.map((ticket) => [
+      ticket.label,
+      buildSnapshot(repoRoot, ticket, tickets, checkoutsByFeature?.[ticket.feature] ?? checkout),
+    ]),
+  );
   return {
     repoRoot,
     model,

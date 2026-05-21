@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import type { RuntimeMetadataRecord } from './types.js';
@@ -60,7 +60,11 @@ function normalize(value: string | undefined): string {
 }
 
 function exists(target: string): boolean {
-  try { return statSync(target).isDirectory(); } catch { return false; }
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function parseFrontmatter(content: string): Record<string, unknown> {
@@ -75,13 +79,13 @@ function parseStatus(content: string, frontmatter: Record<string, unknown>): str
   if (typeof frontmatterStatus === 'string' && frontmatterStatus.trim()) return frontmatterStatus.trim();
   const statusLine = content.match(/^Status:\s*(.+)$/im)?.[1]?.trim();
   if (statusLine) return statusLine;
-  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|\Z)/im);
+  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|Z)/im);
   const headingBody = headingMatch?.[1]?.trim();
   return headingBody ? headingBody.split(/\r?\n/)[0].trim() : undefined;
 }
 
 function extractSummaries(content: string): SummaryAttempt[] {
-  const blocks = [...content.matchAll(/^##\s+AFK Summary\s*$([\s\S]*?)(?=^##\s+|\Z)/gim)];
+  const blocks = [...content.matchAll(/^##\s+AFK Summary\s*$([\s\S]*?)(?=^##\s+|Z)/gim)];
   return blocks.map((match, index) => {
     const text = (match[1] ?? '').trim();
     return { text, fields: parseFields(text), index };
@@ -105,12 +109,34 @@ function fieldValue(fields: Record<string, string>, ...names: string[]): string 
   return undefined;
 }
 
-function classify(status: string | undefined, attempt: SummaryAttempt): 'completed' | 'failed' | 'interrupted' | 'missing' | 'other' {
+function classify(
+  status: string | undefined,
+  attempt: SummaryAttempt,
+): 'completed' | 'failed' | 'interrupted' | 'missing' | 'other' {
   const normalized = normalize(status);
   const text = `${attempt.text} ${Object.values(attempt.fields).join(' ')}`.toLowerCase();
-  if (normalized.includes('done') || normalized.includes('closed') || normalized.includes('complete') || text.includes('completed') || text.includes('success')) return 'completed';
-  if (normalized.includes('fail') || normalized.includes('block') || text.includes('failed') || text.includes('blocked')) return 'failed';
-  if (normalized.includes('interrupt') || normalized.includes('incomplete') || text.includes('interrupted') || text.includes('incomplete')) return 'interrupted';
+  if (
+    normalized.includes('done') ||
+    normalized.includes('closed') ||
+    normalized.includes('complete') ||
+    text.includes('completed') ||
+    text.includes('success')
+  )
+    return 'completed';
+  if (
+    normalized.includes('fail') ||
+    normalized.includes('block') ||
+    text.includes('failed') ||
+    text.includes('blocked')
+  )
+    return 'failed';
+  if (
+    normalized.includes('interrupt') ||
+    normalized.includes('incomplete') ||
+    text.includes('interrupted') ||
+    text.includes('incomplete')
+  )
+    return 'interrupted';
   return 'other';
 }
 
@@ -148,30 +174,50 @@ function readRuntimeMetadata(repoRoot: string): RuntimeMetadataRecord[] {
 
 function formatAttempt(item: SummaryGroupItem): string {
   const { issue, attempt, metadata } = item;
-  const session = fieldValue(attempt?.fields ?? {}, 'session or run id', 'session/run id', 'session id') ?? metadata?.PROVIDER_SESSION_ID ?? undefined;
+  const session =
+    fieldValue(attempt?.fields ?? {}, 'session or run id', 'session/run id', 'session id') ??
+    metadata?.PROVIDER_SESSION_ID ??
+    undefined;
   const malformedReviewerCount = (metadata?.REVIEW_CYCLE_HISTORY ?? []).filter((entry) => entry.malformed).length;
   const reviewCycleCount = metadata?.REVIEW_CYCLE_HISTORY?.length;
   const fixupCycleCount = (metadata?.PHASE_HISTORY ?? []).filter((entry) => entry.name === 'fixup').length;
-  const readinessBlocker = metadata?.STATUS === 'blocked' ? metadata.FAILURE_KIND ?? metadata.UNSAFE_REASON ?? undefined : undefined;
+  const readinessBlocker =
+    metadata?.STATUS === 'blocked' ? (metadata.FAILURE_KIND ?? metadata.UNSAFE_REASON ?? undefined) : undefined;
   const bits = [
     `- ${issue.feature}/${issue.issueName}`,
     issue.status ? `status: ${issue.status}` : null,
     metadata?.STATUS ? `runtime: ${metadata.STATUS}` : null,
     metadata?.START_TIME ? `started: ${metadata.START_TIME}` : null,
-    fieldValue(attempt?.fields ?? {}, 'timestamp') ? `timestamp: ${fieldValue(attempt?.fields ?? {}, 'timestamp')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'timestamp')
+      ? `timestamp: ${fieldValue(attempt?.fields ?? {}, 'timestamp')}`
+      : null,
     session ? `session: ${session}` : null,
-    fieldValue(attempt?.fields ?? {}, 'outcome', 'result') ? `outcome: ${fieldValue(attempt?.fields ?? {}, 'outcome', 'result')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'outcome', 'result')
+      ? `outcome: ${fieldValue(attempt?.fields ?? {}, 'outcome', 'result')}`
+      : null,
     fieldValue(attempt?.fields ?? {}, 'commits') ? `commits: ${fieldValue(attempt?.fields ?? {}, 'commits')}` : null,
-    fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes') ? `changes: ${fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes')}` : null,
-    fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched') ? `touched: ${fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched')}` : null,
-    fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run') ? `verification: ${fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes')
+      ? `changes: ${fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes')}`
+      : null,
+    fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched')
+      ? `touched: ${fieldValue(attempt?.fields ?? {}, 'files or areas touched', 'touched areas', 'files touched')}`
+      : null,
+    fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run')
+      ? `verification: ${fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run')}`
+      : null,
     typeof reviewCycleCount === 'number' ? `review cycles: ${reviewCycleCount}` : null,
     metadata?.FAILURE_KIND ? `failure kind: ${metadata.FAILURE_KIND}` : null,
-    typeof malformedReviewerCount === 'number' && malformedReviewerCount > 0 ? `malformed reviewer outputs: ${malformedReviewerCount}` : null,
+    typeof malformedReviewerCount === 'number' && malformedReviewerCount > 0
+      ? `malformed reviewer outputs: ${malformedReviewerCount}`
+      : null,
     typeof fixupCycleCount === 'number' && fixupCycleCount > 0 ? `fixup cycles: ${fixupCycleCount}` : null,
     readinessBlocker ? `readiness blocker: ${readinessBlocker}` : null,
-    fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors') ? `blockers: ${fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors')}` : null,
-    fieldValue(attempt?.fields ?? {}, 'next action', 'next step') ? `next: ${fieldValue(attempt?.fields ?? {}, 'next action', 'next step')}` : null,
+    fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors')
+      ? `blockers: ${fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors')}`
+      : null,
+    fieldValue(attempt?.fields ?? {}, 'next action', 'next step')
+      ? `next: ${fieldValue(attempt?.fields ?? {}, 'next action', 'next step')}`
+      : null,
     attempt?.text ? attempt.text : null,
   ].filter(Boolean);
   return bits.join('\n');
@@ -198,13 +244,25 @@ function summarizeSlowPhases(metadata: RuntimeMetadataRecord[]): string[] {
   const topOverall = [...slowPhases]
     .sort((a, b) => b.durationMs - a.durationMs)
     .slice(0, 3)
-    .map((item) => `- ${item.ticket} ${item.phase}${typeof item.cycle === 'number' ? `#${item.cycle}` : ''}: ${item.durationMs}ms`);
+    .map(
+      (item) =>
+        `- ${item.ticket} ${item.phase}${typeof item.cycle === 'number' ? `#${item.cycle}` : ''}: ${item.durationMs}ms`,
+    );
 
   const byPhaseLines = [...byPhase.values()]
     .sort((a, b) => b.durationMs - a.durationMs)
-    .map((item) => `- ${item.phase}: ${item.ticket}${typeof item.cycle === 'number' ? `#${item.cycle}` : ''} (${item.durationMs}ms)`);
+    .map(
+      (item) =>
+        `- ${item.phase}: ${item.ticket}${typeof item.cycle === 'number' ? `#${item.cycle}` : ''} (${item.durationMs}ms)`,
+    );
 
-  return ['Overall slowest phases', ...(topOverall.length ? topOverall : ['- none']), '', 'Slowest by phase category', ...(byPhaseLines.length ? byPhaseLines : ['- none'])];
+  return [
+    'Overall slowest phases',
+    ...(topOverall.length ? topOverall : ['- none']),
+    '',
+    'Slowest by phase category',
+    ...(byPhaseLines.length ? byPhaseLines : ['- none']),
+  ];
 }
 
 function summarizeFailureKinds(metadata: RuntimeMetadataRecord[]): string[] {
@@ -218,8 +276,12 @@ function summarizeFailureKinds(metadata: RuntimeMetadataRecord[]): string[] {
     existing.durationMs += durationMs;
     groups.set(kind, existing);
   }
-  const sorted = [...groups.values()].sort((a, b) => b.durationMs - a.durationMs || b.count - a.count || a.kind.localeCompare(b.kind));
-  return sorted.length ? sorted.map((group) => `- ${group.kind}: ${group.count} run${group.count === 1 ? '' : 's'}, ${group.durationMs}ms`) : ['- none'];
+  const sorted = [...groups.values()].sort(
+    (a, b) => b.durationMs - a.durationMs || b.count - a.count || a.kind.localeCompare(b.kind),
+  );
+  return sorted.length
+    ? sorted.map((group) => `- ${group.kind}: ${group.count} run${group.count === 1 ? '' : 's'}, ${group.durationMs}ms`)
+    : ['- none'];
 }
 
 export class SummaryReporter {
@@ -240,9 +302,12 @@ export class SummaryReporter {
         missing.push(`- ${issue.feature}/${issue.issueName} (${issue.filePath})`);
         continue;
       }
-      if (issue.summaries.length > 1) repeated.push(`- ${issue.feature}/${issue.issueName}: ${issue.summaries.length} attempts`);
+      if (issue.summaries.length > 1)
+        repeated.push(`- ${issue.feature}/${issue.issueName}: ${issue.summaries.length} attempts`);
       for (const attempt of issue.summaries) {
-        const runtime = byTicket.get(`${issue.issueName}.md`) ?? metadata.find((entry) => entry.FEATURE_SLUG === issue.feature && entry.ISSUE_NAME === issue.issueName);
+        const runtime =
+          byTicket.get(`${issue.issueName}.md`) ??
+          metadata.find((entry) => entry.FEATURE_SLUG === issue.feature && entry.ISSUE_NAME === issue.issueName);
         const rendered = formatAttempt({ issue, attempt, metadata: runtime });
         const bucket = classify(issue.status, attempt);
         if (bucket === 'completed') completed.push(rendered);
@@ -286,7 +351,12 @@ export class SummaryReporter {
       scope: '.scratch/.opencode-afk-logs/',
       reason: 'fill missing summaries and clarify incomplete or contradictory AFK results',
     });
-    lines.push('', granted ? 'Raw logs were permitted for this invocation.' : 'Raw logs were not inspected because permission was denied.');
+    lines.push(
+      '',
+      granted
+        ? 'Raw logs were permitted for this invocation.'
+        : 'Raw logs were not inspected because permission was denied.',
+    );
     return { message: lines.join('\n'), rawLogsInspected: granted };
   }
 }

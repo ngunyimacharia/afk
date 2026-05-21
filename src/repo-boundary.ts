@@ -18,11 +18,18 @@ export function classifyPathAgainstRepoRoot(repoRoot: string, targetPath: string
   const resolvedTarget = path.resolve(normalizedTarget);
   const relative = path.relative(resolvedRepoRoot, resolvedTarget);
   const inside = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-  return { classification: inside ? 'inside-repo' : 'outside-repo', repoRoot: resolvedRepoRoot, target: resolvedTarget };
+  return {
+    classification: inside ? 'inside-repo' : 'outside-repo',
+    repoRoot: resolvedRepoRoot,
+    target: resolvedTarget,
+  };
 }
 
 export function areAllPathsInsideRepoRoot(repoRoot: string, targets: readonly string[]): boolean {
-  return targets.length > 0 && targets.every((target) => classifyPathAgainstRepoRoot(repoRoot, target).classification === 'inside-repo');
+  return (
+    targets.length > 0 &&
+    targets.every((target) => classifyPathAgainstRepoRoot(repoRoot, target).classification === 'inside-repo')
+  );
 }
 
 export interface AfkWriteBoundaryInput {
@@ -61,5 +68,5 @@ function isWithin(root: string, target: string): boolean {
 function normalizePermissionPath(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  return trimmed.replace(/\*+$/g, '').replace(/[\/]+$/g, '') || trimmed;
+  return trimmed.replace(/\*+$/g, '').replace(/[/]+$/g, '') || trimmed;
 }

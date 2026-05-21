@@ -32,10 +32,18 @@ export function validateSelectedTicketPath(repoRoot: string, ticket: TicketRecor
   if (!isWithinRoot(selectedPath, scratchRoot)) return null;
 
   if (!isWithinRoot(selectedPath, expectedIssuesRoot)) {
-    return launchBlock(ticket, ticket.path, `Invalid selected issue path for ${ticket.label}: must be under ${expectedIssuesRoot}`);
+    return launchBlock(
+      ticket,
+      ticket.path,
+      `Invalid selected issue path for ${ticket.label}: must be under ${expectedIssuesRoot}`,
+    );
   }
   if (selectedPath !== expectedPath) {
-    return launchBlock(ticket, ticket.path, `Invalid selected issue layout for ${ticket.label}: expected ${expectedPath}`);
+    return launchBlock(
+      ticket,
+      ticket.path,
+      `Invalid selected issue layout for ${ticket.label}: expected ${expectedPath}`,
+    );
   }
   if (!existsSync(selectedPath) || !safeIsFile(selectedPath)) {
     return launchBlock(ticket, ticket.path, `Selected issue path missing for ${ticket.label}: ${selectedPath}`);
@@ -62,7 +70,9 @@ function launchBlock(ticket: TicketRecord, selectedPath: string, message: string
 
 function isWithinRoot(candidatePath: string, rootPath: string): boolean {
   const relative = path.relative(rootPath, candidatePath);
-  return relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  return (
+    relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+  );
 }
 
 function safeIsFile(filePath: string): boolean {

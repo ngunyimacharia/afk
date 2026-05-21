@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -13,7 +13,12 @@ test('executes only approved cleanup targets', () => {
   mkdirSync(path.dirname(logPath), { recursive: true });
   writeFileSync(issuePath, 'x');
   writeFileSync(logPath, 'x');
-  const result = new CleanupExecutor().execute({ terminalTargets: [{ feature: 'feat', issueName: 'done', issuePath, logPath, reason: 'done' }], preservedIssues: [], preservedArtifacts: [], featureDirectoriesToDelete: [] });
+  const result = new CleanupExecutor().execute({
+    terminalTargets: [{ feature: 'feat', issueName: 'done', issuePath, logPath, reason: 'done' }],
+    preservedIssues: [],
+    preservedArtifacts: [],
+    featureDirectoriesToDelete: [],
+  });
   assert.equal(existsSync(issuePath), false);
   assert.equal(existsSync(logPath), false);
   assert.equal(result.deleted.length >= 2, true);

@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { decideAfkPermission, FakeAgentExecutionProvider, OpenCodeAgentExecutionProvider } from '../src/agent-execution-provider.js';
+import {
+  decideAfkPermission,
+  FakeAgentExecutionProvider,
+  OpenCodeAgentExecutionProvider,
+} from '../src/agent-execution-provider.js';
 import { PermissionCoordinator } from '../src/permission-coordinator.js';
 
 test('normalizes execution outcomes and session ids', async () => {
-  const provider = new FakeAgentExecutionProvider({ status: 'failed', sessionId: 'abc', removable: false, unsafeReason: 'sdk session id unavailable' });
+  const provider = new FakeAgentExecutionProvider({
+    status: 'failed',
+    sessionId: 'abc',
+    removable: false,
+    unsafeReason: 'sdk session id unavailable',
+  });
   const result = await provider.execute({ plan: undefined as never, ticketIndex: 0, prompt: '' });
   assert.equal(result.status, 'failed');
   assert.equal(result.sessionId, 'abc');
@@ -13,7 +22,12 @@ test('normalizes execution outcomes and session ids', async () => {
 });
 
 test('captures interrupted and unknown outcomes without mutation', async () => {
-  const provider = new FakeAgentExecutionProvider({ status: 'interrupted', sessionId: null, removable: true, output: ['stopping'] });
+  const provider = new FakeAgentExecutionProvider({
+    status: 'interrupted',
+    sessionId: null,
+    removable: true,
+    output: ['stopping'],
+  });
   const result = await provider.execute({ plan: undefined as never, ticketIndex: 1, prompt: 'run' });
   assert.equal(result.status, 'interrupted');
   assert.equal(result.sessionId, null);
@@ -61,7 +75,11 @@ test('opencode reviewer invocation does not force the silent review agent', asyn
   });
 
   const result = await provider.execute({
-    plan: { model: { id: 'openai/gpt-5.5' }, reviewerModel: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    plan: {
+      model: { id: 'openai/gpt-5.5' },
+      reviewerModel: { id: 'openai/gpt-5.5' },
+      tickets: [{ label: 'feat/01' }],
+    } as never,
     ticketIndex: 0,
     prompt: 'review',
     invocationMode: 'reviewer',
@@ -101,7 +119,11 @@ test('opencode reviewer does not resume implementation session', async () => {
   });
 
   await provider.execute({
-    plan: { model: { id: 'openai/gpt-5.5' }, reviewerModel: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    plan: {
+      model: { id: 'openai/gpt-5.5' },
+      reviewerModel: { id: 'openai/gpt-5.5' },
+      tickets: [{ label: 'feat/01' }],
+    } as never,
     ticketIndex: 0,
     prompt: 'review',
     invocationMode: 'reviewer',
@@ -191,7 +213,13 @@ test('opencode provider forwards permission progress events', async () => {
   const progress: string[] = [];
   const provider = new OpenCodeAgentExecutionProvider({
     run: async (input) => {
-      input.onProgress?.({ kind: 'permission', message: 'opencode permission required: external_directory for /tmp/*; requested ask', sessionId: 'session-42', permissionId: 'per_1', permissionPatterns: ['/tmp/*'] });
+      input.onProgress?.({
+        kind: 'permission',
+        message: 'opencode permission required: external_directory for /tmp/*; requested ask',
+        sessionId: 'session-42',
+        permissionId: 'per_1',
+        permissionPatterns: ['/tmp/*'],
+      });
       return { sessionId: 'session-42', output: ['ok'] };
     },
   });
@@ -214,13 +242,25 @@ test('opencode provider supplies AFK permission policy that allows assigned work
   let decision = '';
   const provider = new OpenCodeAgentExecutionProvider({
     run: async (input) => {
-      decision = await input.decidePermission?.({ sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.worktree/feature/*'] }) ?? '';
+      decision =
+        (await input.decidePermission?.({
+          sessionId: 'session-42',
+          permissionId: 'per_1',
+          type: 'external_directory',
+          title: 'external_directory',
+          patterns: ['/repo/.worktree/feature/*'],
+        })) ?? '';
       return { sessionId: 'session-42', output: ['ok'] };
     },
   });
 
   await provider.execute({
-    plan: { repoRoot: '/repo', checkout: { worktreePath: '/repo/.worktree/feature' }, model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat/01' }] } as never,
+    plan: {
+      repoRoot: '/repo',
+      checkout: { worktreePath: '/repo/.worktree/feature' },
+      model: { id: 'openai/gpt-5.4-mini' },
+      tickets: [{ label: 'feat/01' }],
+    } as never,
     ticketIndex: 0,
     prompt: 'run',
   });
@@ -234,7 +274,13 @@ test('external directory auto-reject does not enter manual coordinator history',
   });
 
   const decision = await decideAfkPermission(
-    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/tmp/worktree/*'] },
+    {
+      sessionId: 'session-42',
+      permissionId: 'per_1',
+      type: 'external_directory',
+      title: 'external_directory',
+      patterns: ['/tmp/worktree/*'],
+    },
     { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo' },
   );
 
@@ -248,7 +294,13 @@ test('external directory inside assigned worktree bypasses manual coordinator', 
   });
 
   const decision = await decideAfkPermission(
-    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.worktree/feature/*'] },
+    {
+      sessionId: 'session-42',
+      permissionId: 'per_1',
+      type: 'external_directory',
+      title: 'external_directory',
+      patterns: ['/repo/.worktree/feature/*'],
+    },
     { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
   );
 
@@ -258,7 +310,13 @@ test('external directory inside assigned worktree bypasses manual coordinator', 
 
 test('external directory under root source is rejected when worktree differs', async () => {
   const decision = await decideAfkPermission(
-    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/app/*'] },
+    {
+      sessionId: 'session-42',
+      permissionId: 'per_1',
+      type: 'external_directory',
+      title: 'external_directory',
+      patterns: ['/repo/app/*'],
+    },
     { ticketLabel: 'feat/01', repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
   );
 
@@ -267,7 +325,13 @@ test('external directory under root source is rejected when worktree differs', a
 
 test('external directory under root scratch is allowed', async () => {
   const decision = await decideAfkPermission(
-    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.scratch/feat/*'] },
+    {
+      sessionId: 'session-42',
+      permissionId: 'per_1',
+      type: 'external_directory',
+      title: 'external_directory',
+      patterns: ['/repo/.scratch/feat/*'],
+    },
     { ticketLabel: 'feat/01', repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
   );
 
@@ -276,15 +340,35 @@ test('external directory under root scratch is allowed', async () => {
 
 test('external directory under another worktree is rejected', async () => {
   const decision = await decideAfkPermission(
-    { sessionId: 'session-42', permissionId: 'per_1', type: 'external_directory', title: 'external_directory', patterns: ['/repo/.worktree/other/*'] },
-    { ticketLabel: 'feat/01', repoRoot: '/repo', worktreePath: '/repo/.worktree/feature', otherWorktreePaths: ['/repo/.worktree/other'] },
+    {
+      sessionId: 'session-42',
+      permissionId: 'per_1',
+      type: 'external_directory',
+      title: 'external_directory',
+      patterns: ['/repo/.worktree/other/*'],
+    },
+    {
+      ticketLabel: 'feat/01',
+      repoRoot: '/repo',
+      worktreePath: '/repo/.worktree/feature',
+      otherWorktreePaths: ['/repo/.worktree/other'],
+    },
   );
 
   assert.equal(decision, 'reject');
 });
 
 test('AFK permission policy leaves non-external requests to OpenCode defaults', async () => {
-  assert.equal(await decideAfkPermission({ sessionId: 'session-42', permissionId: 'per_2', type: 'bash', title: 'bash', patterns: ['bun test'] }), null);
+  assert.equal(
+    await decideAfkPermission({
+      sessionId: 'session-42',
+      permissionId: 'per_2',
+      type: 'bash',
+      title: 'bash',
+      patterns: ['bun test'],
+    }),
+    null,
+  );
 });
 
 test('shared permission coordinator serializes concurrent tickets FIFO', async () => {
@@ -305,23 +389,26 @@ test('shared permission coordinator serializes concurrent tickets FIFO', async (
     },
   });
 
-  const provider = new OpenCodeAgentExecutionProvider({
-    run: async (input) => {
-      const sessionId = input.title.includes('feat-a/001') ? 'session-a' : 'session-b';
-      const permissionId = sessionId === 'session-a' ? 'per-a' : 'per-b';
-      const decisionTask = input.decidePermission?.({
-        sessionId,
-        permissionId,
-        type: 'bash',
-        title: `bash-${permissionId}`,
-        patterns: ['bun test'],
-      });
-      await waitFor(() => releaseByPermission.has(permissionId));
-      releaseByPermission.get(permissionId)?.();
-      await decisionTask;
-      return { sessionId, output: ['ok'] };
+  const provider = new OpenCodeAgentExecutionProvider(
+    {
+      run: async (input) => {
+        const sessionId = input.title.includes('feat-a/001') ? 'session-a' : 'session-b';
+        const permissionId = sessionId === 'session-a' ? 'per-a' : 'per-b';
+        const decisionTask = input.decidePermission?.({
+          sessionId,
+          permissionId,
+          type: 'bash',
+          title: `bash-${permissionId}`,
+          patterns: ['bun test'],
+        });
+        await waitFor(() => releaseByPermission.has(permissionId));
+        releaseByPermission.get(permissionId)?.();
+        await decisionTask;
+        return { sessionId, output: ['ok'] };
+      },
     },
-  }, coordinator);
+    coordinator,
+  );
 
   const first = provider.execute({
     plan: { model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat-a/001' }] } as never,
@@ -338,10 +425,10 @@ test('shared permission coordinator serializes concurrent tickets FIFO', async (
 
   assert.deepEqual(promptOrder, ['feat-a/001:per-a', 'feat-b/001:per-b']);
   assert.deepEqual(activeByPrompt, [1, 1]);
-  assert.deepEqual(coordinator.history.map((entry) => `${entry.metadata.ticketLabel}:${entry.request.permissionId}`), [
-    'feat-a/001:per-a',
-    'feat-b/001:per-b',
-  ]);
+  assert.deepEqual(
+    coordinator.history.map((entry) => `${entry.metadata.ticketLabel}:${entry.request.permissionId}`),
+    ['feat-a/001:per-a', 'feat-b/001:per-b'],
+  );
 });
 
 async function waitFor(condition: () => boolean): Promise<void> {

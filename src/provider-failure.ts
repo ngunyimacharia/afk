@@ -21,15 +21,22 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
   const lower = normalizedReason.toLowerCase();
 
   if (lower.includes('model_not_available_for_integrator') || lower.includes('requested model is not available')) {
-    return { kind: 'model-unavailable', reason: normalizedReason, availableModels: parseAvailableModels(normalizedReason) };
+    return {
+      kind: 'model-unavailable',
+      reason: normalizedReason,
+      availableModels: parseAvailableModels(normalizedReason),
+    };
   }
   if (lower.includes('providerautherror') || lower.includes('authentication') || lower.includes('unauthorized')) {
     return { kind: 'auth', reason: normalizedReason, availableModels: [] };
   }
-  if (lower.includes('context overflow')) return { kind: 'context-overflow', reason: normalizedReason, availableModels: [] };
-  if (lower.includes('opencode session stale')) return { kind: 'opencode-session-stale', reason: normalizedReason, availableModels: [] };
+  if (lower.includes('context overflow'))
+    return { kind: 'context-overflow', reason: normalizedReason, availableModels: [] };
+  if (lower.includes('opencode session stale'))
+    return { kind: 'opencode-session-stale', reason: normalizedReason, availableModels: [] };
   if (isDependencyMissing(lower)) return { kind: 'dependency-missing', reason: normalizedReason, availableModels: [] };
-  if (isPatchContextMismatch(lower)) return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
+  if (isPatchContextMismatch(lower))
+    return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
   if (isPathNotFound(lower)) return { kind: 'path-not-found', reason: normalizedReason, availableModels: [] };
   if (lower.includes('tool failed:')) return { kind: 'tool-failed', reason: normalizedReason, availableModels: [] };
 

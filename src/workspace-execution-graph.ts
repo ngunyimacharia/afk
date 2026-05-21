@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
@@ -36,18 +36,32 @@ export function parseFeatureDependencies(repoRoot: string, feature: string): str
   return [];
 }
 
-export function refreshWorkspaceExecutionGraph(repoRoot: string, selectedFeatures: string[], concurrency: number): WorkspaceExecutionGraph {
+export function refreshWorkspaceExecutionGraph(
+  repoRoot: string,
+  selectedFeatures: string[],
+  concurrency: number,
+): WorkspaceExecutionGraph {
   const scratchRoot = path.join(repoRoot, '.scratch');
-  const availableFeatures = new Set(existsSync(scratchRoot) ? readdirSync(scratchRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name) : []);
+  const availableFeatures = new Set(
+    existsSync(scratchRoot)
+      ? readdirSync(scratchRoot, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+      : [],
+  );
   const allFeatures = expandSelectedFeatures(repoRoot, selectedFeatures, availableFeatures);
-  const dependencies = new Map(allFeatures.map((feature) => [feature, parseFeatureDependencies(repoRoot, feature)] as const));
+  const dependencies = new Map(
+    allFeatures.map((feature) => [feature, parseFeatureDependencies(repoRoot, feature)] as const),
+  );
   const cycle = findFeatureCycle(dependencies);
   if (cycle.length) throw new Error(`Feature dependency cycle: ${cycle.join(' -> ')}`);
   const refresh = new FeatureExecutionRefreshService(repoRoot);
   const features: Record<string, WorkspaceExecutionFeature> = {};
   for (const feature of allFeatures) {
     const graph = refresh.refresh(feature);
-    const blockingIssues = Object.entries(graph.tickets).filter(([, ticket]) => ticket.state !== 'complete' && ticket.state !== 'terminal').map(([issue]) => issue);
+    const blockingIssues = Object.entries(graph.tickets)
+      .filter(([, ticket]) => ticket.state !== 'complete' && ticket.state !== 'terminal')
+      .map(([issue]) => issue);
     const complete = blockingIssues.length === 0;
     const deps = dependencies.get(feature) ?? [];
     const blockedByFeatures = deps.filter((dep) => {
@@ -67,11 +81,20 @@ export function refreshWorkspaceExecutionGraph(repoRoot: string, selectedFeature
       if (selectedFeatures.includes(dependency)) continue;
       const upstream = features[dependency];
       if (upstream && upstream.state !== 'complete') {
-        throw new Error(`${feature} remains blocked by incomplete unselected upstream feature ${dependency}; blocking issues: ${upstream.blockingIssues.join(', ') || 'unknown'}`);
+        throw new Error(
+          `${feature} remains blocked by incomplete unselected upstream feature ${dependency}; blocking issues: ${upstream.blockingIssues.join(', ') || 'unknown'}`,
+        );
       }
     }
   }
-  const graph: WorkspaceExecutionGraph = { version: 1, generatedAt: new Date().toISOString(), selectedFeatures, concurrency, featureWaves: deriveFeatureWaves(dependencies), features };
+  const graph: WorkspaceExecutionGraph = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    selectedFeatures,
+    concurrency,
+    featureWaves: deriveFeatureWaves(dependencies),
+    features,
+  };
   const target = path.join(repoRoot, '.scratch', 'execution.json');
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, `${JSON.stringify(graph, null, 2)}\n`);
@@ -83,7 +106,11 @@ export function orderSelectedFeaturesByWaves(graph: WorkspaceExecutionGraph): st
   return graph.featureWaves.flat().filter((feature) => selected.has(feature));
 }
 
-function expandSelectedFeatures(repoRoot: string, selectedFeatures: string[], availableFeatures: Set<string>): string[] {
+function expandSelectedFeatures(
+  repoRoot: string,
+  selectedFeatures: string[],
+  availableFeatures: Set<string>,
+): string[] {
   const result = new Set<string>();
   const visit = (feature: string): void => {
     if (!availableFeatures.has(feature)) throw new Error(`Missing feature dependency reference: ${feature}`);
@@ -104,7 +131,9 @@ function deriveFeatureWaves(dependencies: Map<string, string[]>): string[][] {
   const remaining = new Set(dependencies.keys());
   const waves: string[][] = [];
   while (remaining.size) {
-    const wave = [...remaining].filter((feature) => (dependencies.get(feature) ?? []).every((dep) => !remaining.has(dep)));
+    const wave = [...remaining].filter((feature) =>
+      (dependencies.get(feature) ?? []).every((dep) => !remaining.has(dep)),
+    );
     if (!wave.length) break;
     waves.push(wave);
     for (const feature of wave) remaining.delete(feature);

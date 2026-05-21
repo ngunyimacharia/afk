@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -10,7 +10,12 @@ test('creates metadata, appends logs, and writes sentinels', () => {
   const store = new RuntimeStore({ repoRoot });
   const record = store.createRecord({ featureSlug: 'feat', issueName: '001', ticketPath: '/tmp/ticket.md' });
   store.appendLog(record.logPath, 'hello');
-  store.updateMetadata(record.metadataPath, { STATUS: 'completed', PROVIDER_SESSION_ID: 'session-1', PROVIDER_SESSION_REMOVABLE: true, UNSAFE_REASON: null });
+  store.updateMetadata(record.metadataPath, {
+    STATUS: 'completed',
+    PROVIDER_SESSION_ID: 'session-1',
+    PROVIDER_SESSION_REMOVABLE: true,
+    UNSAFE_REASON: null,
+  });
   store.markDone(record);
   store.markFailed(record, 'failed');
 
@@ -77,9 +82,15 @@ test('records phase history with deterministic timing', async () => {
   const store = new RuntimeStore({ repoRoot, now: () => tick++ * 10 });
   const record = store.createRecord({ featureSlug: 'feat', issueName: 'phase', ticketPath: '/tmp/ticket.md' });
 
-  await store.runPhase(record.metadataPath, record.logPath, 'execution', async () => {
-    await Promise.resolve();
-  }, 1);
+  await store.runPhase(
+    record.metadataPath,
+    record.logPath,
+    'execution',
+    async () => {
+      await Promise.resolve();
+    },
+    1,
+  );
 
   const metadata = JSON.parse(readFileSync(record.metadataPath, 'utf8')) as Record<string, unknown>;
   const phases = metadata.PHASE_HISTORY as Array<Record<string, unknown>>;
@@ -96,9 +107,15 @@ test('records phase history when phase action throws', async () => {
   const record = store.createRecord({ featureSlug: 'feat', issueName: 'phase-fail', ticketPath: '/tmp/ticket.md' });
 
   await assert.rejects(
-    store.runPhase(record.metadataPath, record.logPath, 'review', async () => {
-      throw new Error('boom');
-    }, 2),
+    store.runPhase(
+      record.metadataPath,
+      record.logPath,
+      'review',
+      async () => {
+        throw new Error('boom');
+      },
+      2,
+    ),
     /boom/,
   );
 
@@ -116,9 +133,18 @@ test('rejects runtime artifact path escapes outside log root', () => {
   const record = store.createRecord({ featureSlug: '..', issueName: 'escape', ticketPath: '/tmp/ticket.md' });
 
   assert.throws(() => store.appendLog(path.join(repoRoot, '..', 'escape.log'), 'boom'), /Invalid runtime log path/);
-  assert.throws(() => store.updateMetadata(path.join(repoRoot, '..', 'escape.json'), { STATUS: 'failed' }), /Invalid runtime metadata path/);
-  assert.throws(() => store.markDone({ ...record, doneSentinelPath: path.join(repoRoot, '..', 'done.sentinel') }), /Invalid done sentinel path/);
-  assert.throws(() => store.markFailed({ ...record, failedSentinelPath: path.join(repoRoot, '..', 'failed.sentinel') }, 'failed'), /Invalid failed sentinel path/);
+  assert.throws(
+    () => store.updateMetadata(path.join(repoRoot, '..', 'escape.json'), { STATUS: 'failed' }),
+    /Invalid runtime metadata path/,
+  );
+  assert.throws(
+    () => store.markDone({ ...record, doneSentinelPath: path.join(repoRoot, '..', 'done.sentinel') }),
+    /Invalid done sentinel path/,
+  );
+  assert.throws(
+    () => store.markFailed({ ...record, failedSentinelPath: path.join(repoRoot, '..', 'failed.sentinel') }, 'failed'),
+    /Invalid failed sentinel path/,
+  );
 });
 
 test('records review outcome metadata with additive classification fields', () => {

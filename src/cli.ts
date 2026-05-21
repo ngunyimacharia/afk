@@ -1,25 +1,26 @@
 import path from 'node:path';
-import { TicketRepository } from './ticket-repository.js';
-import { buildLaunchPlan } from './launch-context-builder.js';
-import { needsDisabledTestsDecision, WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
-import { runSync } from './sync/runner.js';
-import { RuntimeStore } from './runtime-store.js';
-import { SingleTicketRunner } from './single-ticket-runner.js';
-import { Scheduler } from './scheduler.js';
 import { OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
-import { SummaryReporter } from './summary-reporter.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
-import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
-import { confirmDisabledTestsForMissingEnv, isInteractiveLaunchAllowed, runInteractiveLaunchWizard, type PromptIO } from './interactive-launch.js';
-import { createProgressLine } from './progress-line.js';
-import type { OpenCodeSessionExecutor } from './opencode.js';
-import { classifyProviderFailure } from './provider-failure.js';
-import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
-import { orderSelectedFeaturesByWaves, refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
-import type { LaunchModel, TicketRecord } from './types.js';
-import { PermissionCoordinator } from './permission-coordinator.js';
+import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
+import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
+import { buildLaunchPlan } from './launch-context-builder.js';
+import type { OpenCodeSessionExecutor } from './opencode.js';
+import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
+import { PermissionCoordinator } from './permission-coordinator.js';
+import { createProgressLine } from './progress-line.js';
+import { loadAfkProjectConfig } from './project-config.js';
+import { classifyProviderFailure } from './provider-failure.js';
+import { RuntimeStore } from './runtime-store.js';
+import { Scheduler } from './scheduler.js';
+import { SingleTicketRunner } from './single-ticket-runner.js';
+import { SummaryReporter } from './summary-reporter.js';
+import { runSync } from './sync/runner.js';
+import { TicketRepository } from './ticket-repository.js';
+import type { LaunchModel, TicketRecord } from './types.js';
+import { orderSelectedFeaturesByWaves, refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
+import { WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
 
 function commandArg(): string | undefined {
   const knownCommands = new Set(['summary', 'cleanup', 'afk-summary', 'afk-cleanup', 'sync']);
@@ -70,23 +71,32 @@ export async function runAfk(
       ...(plan.preservedArtifacts.length ? plan.preservedArtifacts.map((artifact) => `- ${artifact}`) : ['- none']),
       '',
       'Feature directories to delete',
-      ...(plan.featureDirectoriesToDelete.length ? plan.featureDirectoriesToDelete.map((featureDir) => `- ${featureDir}`) : ['- none']),
+      ...(plan.featureDirectoriesToDelete.length
+        ? plan.featureDirectoriesToDelete.map((featureDir) => `- ${featureDir}`)
+        : ['- none']),
       '',
       'Cleanup executes immediately (no confirmation required).',
     ].join('\n');
     const executor = new CleanupExecutor();
     const result = executor.execute(plan);
-    return { code: 0, message: `${dryRun}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}` };
+    return {
+      code: 0,
+      message: `${dryRun}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
+    };
   }
   if (command === 'sync') return runSync();
+  const runtimeStore = new RuntimeStore({ repoRoot });
+  const launchPreferences = runtimeStore.readLaunchPreferences();
+  const projectConfig = loadAfkProjectConfig(repoRoot);
+  if (!projectConfig.config) return { code: 1, message: projectConfig.errors.join('\n') };
   const interactivity = isInteractiveLaunchAllowed(io, env);
-  if (!interactivity.ok) return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
+  if (!interactivity.ok)
+    return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
+  const activeProjectConfig = projectConfig.config;
   const repository = new TicketRepository(repoRoot);
   const tickets = repository.discoverTickets().filter((ticket) => repository.isEligible(ticket));
   if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
   const worktreePreparationService = new WorktreePreparationService();
-  const runtimeStore = new RuntimeStore({ repoRoot });
-  const launchPreferences = runtimeStore.readLaunchPreferences();
   let model: LaunchModel | undefined;
   let reviewerModel: LaunchModel | undefined;
   let reviewerPrompt: { id: string; label: string; path: string } | undefined;
@@ -107,7 +117,12 @@ export async function runAfk(
     reviewerPrompt = wizard.reviewerPrompt;
     selectedTickets = wizard.tickets ?? [];
     concurrency = wizard.concurrency ?? concurrency;
-    runtimeStore.writeLaunchPreferences({ harness: wizard.harness, modelId: model?.id, reviewerModelId: reviewerModel?.id, concurrency });
+    runtimeStore.writeLaunchPreferences({
+      harness: wizard.harness,
+      modelId: model?.id,
+      reviewerModelId: reviewerModel?.id,
+      concurrency,
+    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown OpenCode discovery error';
     return {
@@ -131,17 +146,13 @@ export async function runAfk(
   const firstTicket = selectedTickets[0];
   for (const feature of selectedFeatures) {
     if ((workspaceGraph.features[feature]?.dependsOnFeatures.length ?? 0) > 1) {
-      return { code: 1, message: `Fan-in branch automation deferred for ${feature}: multiple Depends-On-Features entries are not supported for automatic stacked branch preparation.` };
+      return {
+        code: 1,
+        message: `Fan-in branch automation deferred for ${feature}: multiple Depends-On-Features entries are not supported for automatic stacked branch preparation.`,
+      };
     }
   }
   const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
-  const disabledTestsFeatures = new Set<string>();
-  for (const feature of checkoutFeatures) {
-    if (!needsDisabledTestsDecision(repoRoot)) continue;
-    const confirmed = await confirmDisabledTestsForMissingEnv(io, feature);
-    if (!confirmed) return { code: 1, message: `Launch blocked: tests were detected but ${path.join(repoRoot, '.env.testing')} is missing. Add .env.testing or confirm tests are disabled for this AFK run.` };
-    disabledTestsFeatures.add(feature);
-  }
   let checkouts: ReturnType<WorktreePreparationService['prepare']>[];
   try {
     checkouts = checkoutFeatures.map((feature) => {
@@ -150,19 +161,34 @@ export async function runAfk(
         repoRoot,
         featureSlug: feature,
         baseRef: stackParent ? stackParent : undefined,
-        selectedTicketPaths: selectedTickets.filter((ticket) => ticket.feature === feature).map((ticket) => ticket.path),
-        testsDisabledByUser: disabledTestsFeatures.has(feature),
+        selectedTicketPaths: selectedTickets
+          .filter((ticket) => ticket.feature === feature)
+          .map((ticket) => ticket.path),
+        projectConfig: activeProjectConfig,
       });
     });
   } catch (error) {
-    if (error instanceof WorktreeReadinessBlockedError) return { code: 1, message: `Launch blocked by worktree readiness: ${error.message}` };
+    if (error instanceof WorktreeReadinessBlockedError)
+      return { code: 1, message: `Launch blocked by worktree readiness: ${error.message}` };
     throw error;
   }
   const checkoutsByFeature = Object.fromEntries(checkoutFeatures.map((feature, index) => [feature, checkouts[index]]));
   const checkout = checkoutsByFeature[firstTicket.feature];
-  const plan = buildLaunchPlan(repoRoot, model, selectedTickets, checkout, { model: reviewerModel, prompt: reviewerPrompt }, checkoutsByFeature);
+  const plan = buildLaunchPlan(
+    repoRoot,
+    model,
+    selectedTickets,
+    checkout,
+    { model: reviewerModel, prompt: reviewerPrompt },
+    checkoutsByFeature,
+  );
   const permissionCoordinator = new PermissionCoordinator({ ticketLabel: selectedTickets[0]?.label });
-  const runner = new SingleTicketRunner(runtimeStore, new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator), undefined, launchPreferences.budgets);
+  const runner = new SingleTicketRunner(
+    runtimeStore,
+    new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator),
+    undefined,
+    launchPreferences.budgets,
+  );
   const scheduler = new Scheduler(runner, concurrency);
   const progressLine = createProgressLine(io.stdout, { isPromptActive: () => permissionCoordinator.promptActive });
   try {
@@ -211,8 +237,13 @@ export function formatManualPermissionReviewLines(history: readonly PermissionDe
   ];
 }
 
-function orderSelectedTicketsByFeatureGraph(selectedTickets: TicketRecord[], graphs: Record<string, FeatureExecutionGraph>): TicketRecord[] {
-  const selectedByKey = new Map(selectedTickets.map((ticket) => [`${ticket.feature}/${ticket.issueName}`, ticket] as const));
+function orderSelectedTicketsByFeatureGraph(
+  selectedTickets: TicketRecord[],
+  graphs: Record<string, FeatureExecutionGraph>,
+): TicketRecord[] {
+  const selectedByKey = new Map(
+    selectedTickets.map((ticket) => [`${ticket.feature}/${ticket.issueName}`, ticket] as const),
+  );
   const ordered: TicketRecord[] = [];
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
 
@@ -220,10 +251,16 @@ function orderSelectedTicketsByFeatureGraph(selectedTickets: TicketRecord[], gra
     const graph = graphs[feature];
     const featureTickets = selectedTickets.filter((ticket) => ticket.feature === feature);
     const graphOrder = new Map<string, number>();
-    graph?.waves.flat().forEach((issue, index) => graphOrder.set(issue, index));
+    graph?.waves.flat().forEach((issue, index) => {
+      graphOrder.set(issue, index);
+    });
     featureTickets
-      .sort((left, right) => (graphOrder.get(left.issueName) ?? Number.MAX_SAFE_INTEGER) - (graphOrder.get(right.issueName) ?? Number.MAX_SAFE_INTEGER)
-        || left.issueName.localeCompare(right.issueName))
+      .sort(
+        (left, right) =>
+          (graphOrder.get(left.issueName) ?? Number.MAX_SAFE_INTEGER) -
+            (graphOrder.get(right.issueName) ?? Number.MAX_SAFE_INTEGER) ||
+          left.issueName.localeCompare(right.issueName),
+      )
       .forEach((ticket) => {
         if (selectedByKey.has(`${ticket.feature}/${ticket.issueName}`)) ordered.push(ticket);
       });
@@ -232,9 +269,14 @@ function orderSelectedTicketsByFeatureGraph(selectedTickets: TicketRecord[], gra
   return ordered;
 }
 
-function validateSelectedTicketDependencies(selectedTickets: TicketRecord[], allTickets: TicketRecord[]): string | null {
+function validateSelectedTicketDependencies(
+  selectedTickets: TicketRecord[],
+  allTickets: TicketRecord[],
+): string | null {
   const selected = new Set(selectedTickets.map((ticket) => `${ticket.feature}/${ticket.issueName}`));
-  const byKey = new Map<string, TicketRecord>(allTickets.map((ticket) => [`${ticket.feature}/${ticket.issueName}`, ticket]));
+  const byKey = new Map<string, TicketRecord>(
+    allTickets.map((ticket) => [`${ticket.feature}/${ticket.issueName}`, ticket]),
+  );
   const completeStatuses = new Set(['done', 'closed', 'complete', 'resolved']);
 
   for (const ticket of selectedTickets) {
@@ -252,14 +294,22 @@ function validateSelectedTicketDependencies(selectedTickets: TicketRecord[], all
   return null;
 }
 
-async function preflightSelectedModels(executor: OpenCodeSessionExecutor, model: LaunchModel, reviewerModel: LaunchModel): Promise<string | null> {
+async function preflightSelectedModels(
+  executor: OpenCodeSessionExecutor,
+  model: LaunchModel,
+  reviewerModel: LaunchModel,
+): Promise<string | null> {
   const implementationFailure = await preflightModel(executor, model, 'implementation');
   if (implementationFailure) return implementationFailure;
   if (reviewerModel.id === model.id) return null;
   return preflightModel(executor, reviewerModel, 'reviewer');
 }
 
-async function preflightModel(executor: OpenCodeSessionExecutor, model: LaunchModel, role: 'implementation' | 'reviewer'): Promise<string | null> {
+async function preflightModel(
+  executor: OpenCodeSessionExecutor,
+  model: LaunchModel,
+  role: 'implementation' | 'reviewer',
+): Promise<string | null> {
   try {
     const result = await executor.run({
       model,
@@ -286,7 +336,8 @@ export function detectPreflightFailureReason(output: string[]): string | null {
 export function formatPreflightFailure(modelId: string, role: 'implementation' | 'reviewer', reason: string): string {
   const classification = classifyProviderFailure(reason);
   const roleLabel = role === 'implementation' ? 'Implementation model' : 'Reviewer model';
-  const title = classification?.kind === 'model-unavailable' ? `${roleLabel} unavailable` : `${roleLabel} preflight failed`;
+  const title =
+    classification?.kind === 'model-unavailable' ? `${roleLabel} unavailable` : `${roleLabel} preflight failed`;
   const provider = modelId.includes('/') ? modelId.slice(0, modelId.indexOf('/')) : 'unknown';
   const lines = [
     title,
@@ -296,16 +347,25 @@ export function formatPreflightFailure(modelId: string, role: 'implementation' |
     `Reason: ${classification?.reason ?? reason}`,
   ];
   if (classification?.availableModels.length) {
-    lines.push('', 'Available models from provider error:', ...classification.availableModels.map((item) => `- ${item}`));
+    lines.push(
+      '',
+      'Available models from provider error:',
+      ...classification.availableModels.map((item) => `- ${item}`),
+    );
   }
-  const nextStep = classification?.kind === 'model-unavailable'
-    ? 'No tickets were started. Re-run `afk` and select an available model.'
-    : 'No tickets were started. Fix the OpenCode provider issue and re-run `afk`.';
+  const nextStep =
+    classification?.kind === 'model-unavailable'
+      ? 'No tickets were started. Re-run `afk` and select an available model.'
+      : 'No tickets were started. Fix the OpenCode provider issue and re-run `afk`.';
   lines.push('', nextStep);
   return lines.join('\n');
 }
 
-export function readRunOutcomeLines(runtimeStore: RuntimeStore, repoRoot: string, tickets: Array<{ feature: string; issueName: string; label: string }>): string[] {
+export function readRunOutcomeLines(
+  runtimeStore: RuntimeStore,
+  repoRoot: string,
+  tickets: Array<{ feature: string; issueName: string; label: string }>,
+): string[] {
   const ticketLines = tickets.map((ticket) => formatTicketRunOutcome(runtimeStore, repoRoot, ticket));
   const failed = ticketLines.filter((line) => line.includes('failed before review')).length;
   const blocked = ticketLines.filter((line) => line.includes('blocked')).length;
@@ -322,8 +382,18 @@ export function readRunOutcomeLines(runtimeStore: RuntimeStore, repoRoot: string
   return [aggregate, ...ticketLines.map((line) => `- ${line}`)];
 }
 
-function formatTicketRunOutcome(runtimeStore: RuntimeStore, repoRoot: string, ticket: { feature: string; issueName: string; label: string }): string {
-  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${ticket.feature}-${ticket.issueName}.json`);
+function formatTicketRunOutcome(
+  runtimeStore: RuntimeStore,
+  repoRoot: string,
+  ticket: { feature: string; issueName: string; label: string },
+): string {
+  const metadataPath = path.join(
+    repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    'runtime-metadata',
+    `${ticket.feature}-${ticket.issueName}.json`,
+  );
 
   try {
     const metadata = runtimeStore.readMetadata(metadataPath);
@@ -336,7 +406,8 @@ function formatTicketRunOutcome(runtimeStore: RuntimeStore, repoRoot: string, ti
     if (metadata.FINAL_REVIEW_OUTCOME === 'approved') {
       return `${ticket.label}: blocked (${metadata.FAILURE_KIND ?? 'approval-not-completed'}) - approved review without completed runtime`;
     }
-    if (metadata.STATUS === 'blocked') return `${ticket.label}: blocked before final review (${metadata.FAILURE_KIND ?? 'unknown'})`;
+    if (metadata.STATUS === 'blocked')
+      return `${ticket.label}: blocked before final review (${metadata.FAILURE_KIND ?? 'unknown'})`;
     if (metadata.STATUS === 'failed' || metadata.STATUS === 'interrupted') {
       return `${ticket.label}: failed before review (${metadata.FAILURE_KIND ?? 'unknown'}) - ${metadata.UNSAFE_REASON ?? 'unknown'}`;
     }

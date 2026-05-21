@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { OpenCodePermissionRequest } from '../src/opencode.js';
 import {
+  formatPermissionPromptMessage,
   PermissionCoordinator,
   PermissionPromptCancelledError,
   PermissionPromptNonInteractiveError,
-  formatPermissionPromptMessage,
 } from '../src/permission-coordinator.js';
-import type { OpenCodePermissionRequest } from '../src/opencode.js';
 
 function request(overrides: Partial<OpenCodePermissionRequest> = {}): OpenCodePermissionRequest {
   return {
@@ -65,7 +65,12 @@ test('captures queued count and metadata at prompt render time', async () => {
   const coordinator = new PermissionCoordinator({
     ticketLabel: 'manual-permission-queue/01',
     promptAdapter: async ({ request: input, metadata: info, message }) => {
-      metadata.push({ permissionId: input.permissionId, queuedCount: info.queuedCount, message, sessionId: info.sessionId });
+      metadata.push({
+        permissionId: input.permissionId,
+        queuedCount: info.queuedCount,
+        message,
+        sessionId: info.sessionId,
+      });
       if (input.permissionId === 'perm-1') {
         await new Promise<void>((resolve) => {
           releaseFirst = resolve;
@@ -83,11 +88,14 @@ test('captures queued count and metadata at prompt render time', async () => {
   releaseFirst?.();
   await Promise.all([first, second, third]);
 
-  assert.deepEqual(metadata.map((entry) => [entry.permissionId, entry.queuedCount]), [
-    ['perm-1', 2],
-    ['perm-2', 1],
-    ['perm-3', 0],
-  ]);
+  assert.deepEqual(
+    metadata.map((entry) => [entry.permissionId, entry.queuedCount]),
+    [
+      ['perm-1', 2],
+      ['perm-2', 1],
+      ['perm-3', 0],
+    ],
+  );
   assert.equal(metadata[0]?.sessionId, 'unknown');
   assert.match(metadata[0]?.message ?? '', /Ticket: manual-permission-queue\/01/);
   assert.match(metadata[0]?.message ?? '', /Permission ID: perm-1/);

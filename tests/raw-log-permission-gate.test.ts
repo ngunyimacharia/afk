@@ -3,8 +3,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { SummaryReporter } from '../src/summary-reporter.js';
 import type { RawLogPermissionRequest } from '../src/summary-reporter.js';
+import { SummaryReporter } from '../src/summary-reporter.js';
 
 test('summary reporter requests raw-log permission when configured', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));

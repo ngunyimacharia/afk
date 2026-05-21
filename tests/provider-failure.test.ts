@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classifyProviderFailure, formatProviderFailureMessage } from '../src/provider-failure.js';
 import { detectPreflightFailureReason, formatPreflightFailure } from '../src/cli.js';
+import { classifyProviderFailure, formatProviderFailureMessage } from '../src/provider-failure.js';
 
 test('classifies Copilot unavailable-model errors and extracts alternatives', () => {
   const classification = classifyProviderFailure(
@@ -42,23 +42,32 @@ test('ignores normal assistant text during preflight', () => {
 
 test('detects concrete provider failures during preflight', () => {
   assert.equal(
-    detectPreflightFailureReason(['thinking', 'The requested model is not available for integrator "copilot-language-server".']),
+    detectPreflightFailureReason([
+      'thinking',
+      'The requested model is not available for integrator "copilot-language-server".',
+    ]),
     'The requested model is not available for integrator "copilot-language-server".',
   );
 });
 
 test('classifies path-not-found failures', () => {
-  const classification = classifyProviderFailure('Tool failed: ENOENT: no such file or directory, open \"/tmp/missing.md\"');
+  const classification = classifyProviderFailure(
+    'Tool failed: ENOENT: no such file or directory, open "/tmp/missing.md"',
+  );
   assert.equal(classification?.kind, 'path-not-found');
 });
 
 test('classifies patch-context-mismatch failures', () => {
-  const classification = classifyProviderFailure('apply_patch verification failed: Failed to find expected lines in src/example.ts (context mismatch)');
+  const classification = classifyProviderFailure(
+    'apply_patch verification failed: Failed to find expected lines in src/example.ts (context mismatch)',
+  );
   assert.equal(classification?.kind, 'patch-context-mismatch');
 });
 
 test('classifies missing dependency failures', () => {
-  const classification = classifyProviderFailure('PHP Warning: require(vendor/autoload.php): Failed to open stream: No such file or directory');
+  const classification = classifyProviderFailure(
+    'PHP Warning: require(vendor/autoload.php): Failed to open stream: No such file or directory',
+  );
   assert.equal(classification?.kind, 'dependency-missing');
 });
 

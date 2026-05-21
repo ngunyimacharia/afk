@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { buildFeatureExecutionGraph, readFeatureExecutionGraph, writeFeatureExecutionGraph, type FeatureExecutionGraph } from './feature-execution-graph.js';
+import {
+  buildFeatureExecutionGraph,
+  type FeatureExecutionGraph,
+  readFeatureExecutionGraph,
+  writeFeatureExecutionGraph,
+} from './feature-execution-graph.js';
 import { TicketRepository } from './ticket-repository.js';
 
 export class FeatureExecutionRefreshService {

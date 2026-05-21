@@ -46,11 +46,17 @@ export function normalizeReviewerSeverity(value: unknown): ReviewerSeverity | un
 
 export function parseReviewerOutput(input: unknown): ParsedReviewerOutput {
   const raw = stringifyRaw(input);
-  const parsed = parsePayload(input);
-  if (!parsed) {
-    return fallbackParsedOutput(raw);
+  const payloads = parsePayloads(input);
+
+  for (let index = payloads.length - 1; index >= 0; index -= 1) {
+    const review = normalizeReviewerPayload(payloads[index], raw);
+    if (review) return review;
   }
 
+  return fallbackParsedOutput(raw);
+}
+
+function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string): ParsedReviewerOutput | null {
   const findingsPayload = Array.isArray(parsed.findings)
     ? parsed.findings
     : Array.isArray(parsed.issues)
@@ -62,12 +68,12 @@ export function parseReviewerOutput(input: unknown): ParsedReviewerOutput {
           : null;
   const summary = normalizeText(parsed.summary) || (findingsPayload ? 'Reviewer findings parsed.' : '');
   if (!findingsPayload) {
-    return fallbackParsedOutput(raw);
+    return null;
   }
 
   const findings = findingsPayload.map(normalizeFinding);
   if (findings.some((finding) => finding === undefined)) {
-    return fallbackParsedOutput(raw);
+    return null;
   }
 
   const normalizedFindings = findings as ReviewerFinding[];
@@ -87,14 +93,16 @@ export function decideReviewOutcome(
   const cycle = normalizePositiveInteger(options.cycle, 1);
   const maxCycles = normalizePositiveInteger(options.maxCycles ?? 3, 3);
   const highestSeverity = review.highestSeverity;
-  const decision: ReviewDecision = highestSeverity === 'minor' ? 'approve' : cycle >= maxCycles ? 'needs-human' : 'loop';
-  const reason = decision === 'approve'
-    ? 'Reviewer findings are minor only'
-    : decision === 'needs-human'
-      ? 'Reviewer cycle cap reached with unresolved major findings'
-      : review.fallback
-        ? 'Reviewer output was malformed and requires a retry'
-        : 'Reviewer findings include major or blocker severity';
+  const decision: ReviewDecision =
+    highestSeverity === 'minor' ? 'approve' : cycle >= maxCycles ? 'needs-human' : 'loop';
+  const reason =
+    decision === 'approve'
+      ? 'Reviewer findings are minor only'
+      : decision === 'needs-human'
+        ? 'Reviewer cycle cap reached with unresolved major findings'
+        : review.fallback
+          ? 'Reviewer output was malformed and requires a retry'
+          : 'Reviewer findings include major or blocker severity';
 
   return {
     decision,
@@ -107,22 +115,35 @@ export function decideReviewOutcome(
   };
 }
 
-function parsePayload(input: unknown): Record<string, unknown> | null {
-  if (input && typeof input === 'object' && !Array.isArray(input)) return input as Record<string, unknown>;
-  if (Array.isArray(input) && input.length === 1 && input[0] && typeof input[0] === 'object' && !Array.isArray(input[0])) return input[0] as Record<string, unknown>;
-  if (typeof input !== 'string') return null;
+function parsePayloads(input: unknown): Record<string, unknown>[] {
+  if (input && typeof input === 'object' && !Array.isArray(input)) return [input as Record<string, unknown>];
+  if (
+    Array.isArray(input) &&
+    input.length === 1 &&
+    input[0] &&
+    typeof input[0] === 'object' &&
+    !Array.isArray(input[0])
+  )
+    return [input[0] as Record<string, unknown>];
+  if (typeof input !== 'string') return [];
 
+  const payloads: Record<string, unknown>[] = [];
   for (const source of extractJsonCandidates(input)) {
     try {
       const value = JSON.parse(source) as unknown;
-      if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
-      if (Array.isArray(value) && value.length === 1 && value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])) return value[0] as Record<string, unknown>;
-    } catch {
-      continue;
-    }
+      if (value && typeof value === 'object' && !Array.isArray(value)) payloads.push(value as Record<string, unknown>);
+      if (
+        Array.isArray(value) &&
+        value.length === 1 &&
+        value[0] &&
+        typeof value[0] === 'object' &&
+        !Array.isArray(value[0])
+      )
+        payloads.push(value[0] as Record<string, unknown>);
+    } catch {}
   }
 
-  return null;
+  return payloads;
 }
 
 function extractJsonCandidates(raw: string): string[] {
@@ -130,12 +151,20 @@ function extractJsonCandidates(raw: string): string[] {
   const fence = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fence?.[1]) candidates.push(fence[1].trim());
   candidates.push(raw.trim());
-  const embeddedObject = findEmbeddedJsonObject(raw);
-  if (embeddedObject) candidates.push(embeddedObject);
-  return Array.from(new Set(candidates.filter(Boolean)));
+  candidates.push(...findEmbeddedJsonObjects(raw));
+  candidates.push(...findStandaloneJsonLines(raw));
+  return candidates.filter(Boolean);
 }
 
-function findEmbeddedJsonObject(raw: string): string | null {
+function findStandaloneJsonLines(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('{') && line.endsWith('}'));
+}
+
+function findEmbeddedJsonObjects(raw: string): string[] {
+  const objects: string[] = [];
   let depth = 0;
   let start = -1;
   let inString = false;
@@ -172,11 +201,11 @@ function findEmbeddedJsonObject(raw: string): string | null {
     if (char === '}') {
       if (depth === 0) continue;
       depth -= 1;
-      if (depth === 0 && start >= 0) return raw.slice(start, index + 1).trim();
+      if (depth === 0 && start >= 0) objects.push(raw.slice(start, index + 1).trim());
     }
   }
 
-  return null;
+  return objects;
 }
 
 function normalizeFinding(value: unknown): ReviewerFinding | undefined {
@@ -187,9 +216,19 @@ function normalizeFinding(value: unknown): ReviewerFinding | undefined {
 
   return {
     severity,
-    title: normalizeText(record.title) || normalizeText(record.summary) || normalizeText(record.message) || normalizeText(record.finding),
-    detail: normalizeText(record.detail) || normalizeText(record.description) || normalizeText(record.body) || normalizeText(record.message),
-    ...(normalizeText(record.suggested_fix ?? record.suggestedFix) ? { suggestedFix: normalizeText(record.suggested_fix ?? record.suggestedFix) } : {}),
+    title:
+      normalizeText(record.title) ||
+      normalizeText(record.summary) ||
+      normalizeText(record.message) ||
+      normalizeText(record.finding),
+    detail:
+      normalizeText(record.detail) ||
+      normalizeText(record.description) ||
+      normalizeText(record.body) ||
+      normalizeText(record.message),
+    ...(normalizeText(record.suggested_fix ?? record.suggestedFix)
+      ? { suggestedFix: normalizeText(record.suggested_fix ?? record.suggestedFix) }
+      : {}),
   };
 }
 

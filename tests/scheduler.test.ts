@@ -40,7 +40,14 @@ test('runs ready tickets in parallel and caps global concurrency', async () => {
       { path: '/tmp/b-2.md', feature: 'feat-b', issueName: '002', label: 'feat-b/002', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -75,7 +82,14 @@ test('continues independent queues when one ticket fails', async () => {
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -101,11 +115,25 @@ test('waits for dependency completion before launching dependent ticket', async 
     reviewerModel: { id: 'reviewer-model-1' },
     reviewerPrompt: { id: 'reviewer-default', path: '/tmp/reviewer-default.md' },
     tickets: [
-      { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true, dependsOn: ['001'] },
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
       { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -132,10 +160,24 @@ test('does not launch dependent ticket when dependency blocks', async () => {
     model: { id: 'model-1' },
     tickets: [
       { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
-      { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true, dependsOn: ['001'] },
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -149,18 +191,21 @@ test('serializes tickets that share a feature worktree', async () => {
   const activeFeatures = new Set<string>();
   const overlapViolations: string[] = [];
   const launches: string[] = [];
-  const scheduler = new Scheduler({
-    launch: async (plan: LaunchPlan) => {
-      const ticket = plan.tickets[0];
-      assert.ok(ticket);
-      if (activeFeatures.has(ticket.feature)) overlapViolations.push(ticket.feature);
-      activeFeatures.add(ticket.feature);
-      launches.push(ticket.label);
-      await new Promise((resolve) => setTimeout(resolve, ticket.feature === 'feat-a' ? 10 : 1));
-      activeFeatures.delete(ticket.feature);
-      return { scheduled: true, message: ticket.label };
-    },
-  } as never, 3);
+  const scheduler = new Scheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        if (activeFeatures.has(ticket.feature)) overlapViolations.push(ticket.feature);
+        activeFeatures.add(ticket.feature);
+        launches.push(ticket.label);
+        await new Promise((resolve) => setTimeout(resolve, ticket.feature === 'feat-a' ? 10 : 1));
+        activeFeatures.delete(ticket.feature);
+        return { scheduled: true, message: ticket.label };
+      },
+    } as never,
+    3,
+  );
 
   const plan = {
     repoRoot,
@@ -171,7 +216,14 @@ test('serializes tickets that share a feature worktree', async () => {
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree-a' },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree-a',
+    },
   };
 
   await scheduler.launch(plan as never);
@@ -202,11 +254,16 @@ test('returns structured launch-block evidence for invalid selected paths', asyn
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
-    tickets: [
-      { path: '/tmp/invalid.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
-    ],
+    tickets: [{ path: '/tmp/invalid.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true }],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/worktree' },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
   };
 
   const result = await scheduler.launch(plan as never);
@@ -218,14 +275,17 @@ test('returns structured launch-block evidence for invalid selected paths', asyn
 test('passes feature checkout and matching snapshot to runner', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-checkout-'));
   const seen: string[] = [];
-  const scheduler = new Scheduler({
-    launch: async (plan: LaunchPlan) => {
-      const ticket = plan.tickets[0];
-      assert.ok(ticket);
-      seen.push(`${ticket.label}:${plan.checkout.worktreePath}:${plan.snapshots?.[ticket.label]?.worktreePath}`);
-      return { scheduled: true, message: ticket.label };
-    },
-  } as never, 1);
+  const scheduler = new Scheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        seen.push(`${ticket.label}:${plan.checkout.worktreePath}:${plan.snapshots?.[ticket.label]?.worktreePath}`);
+        return { scheduled: true, message: ticket.label };
+      },
+    } as never,
+    1,
+  );
 
   const plan = {
     repoRoot,
@@ -235,10 +295,31 @@ test('passes feature checkout and matching snapshot to runner', async () => {
       { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
     ],
     gitContext: { commits: [] },
-    checkout: { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/tree-a' },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/tree-a',
+    },
     checkouts: {
-      'feat-a': { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'feat-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: '/tmp/tree-a' },
-      'feat-b': { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'feat-b', defaultBranchName: 'feat-b', effectiveBranchName: 'feat-b', worktreePath: '/tmp/tree-b' },
+      'feat-a': {
+        featureSlug: 'feat-a',
+        defaultWorktreeName: 'feat-a',
+        effectiveWorktreeName: 'feat-a',
+        defaultBranchName: 'feat-a',
+        effectiveBranchName: 'feat-a',
+        worktreePath: '/tmp/tree-a',
+      },
+      'feat-b': {
+        featureSlug: 'feat-b',
+        defaultWorktreeName: 'feat-b',
+        effectiveWorktreeName: 'feat-b',
+        defaultBranchName: 'feat-b',
+        effectiveBranchName: 'feat-b',
+        worktreePath: '/tmp/tree-b',
+      },
     },
     snapshots: {
       'feat-a/001': { featureSlug: 'feat-a', worktreePath: '/tmp/tree-a' },
@@ -248,8 +329,5 @@ test('passes feature checkout and matching snapshot to runner', async () => {
 
   await scheduler.launch(plan as never);
 
-  assert.deepEqual(seen, [
-    'feat-a/001:/tmp/tree-a:/tmp/tree-a',
-    'feat-b/001:/tmp/tree-b:/tmp/tree-b',
-  ]);
+  assert.deepEqual(seen, ['feat-a/001:/tmp/tree-a:/tmp/tree-a', 'feat-b/001:/tmp/tree-b:/tmp/tree-b']);
 });

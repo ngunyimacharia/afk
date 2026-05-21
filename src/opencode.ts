@@ -53,11 +53,15 @@ export async function discoverOpenCodeModels(): Promise<LaunchModel[]> {
 
 export function extractModelsFromProvidersPayload(payload: unknown): LaunchModel[] {
   const providers = Array.isArray((payload as { providers?: unknown[] } | null)?.providers)
-    ? ((payload as { providers: unknown[] }).providers)
+    ? (payload as { providers: unknown[] }).providers
     : [];
   const models: LaunchModel[] = [];
   for (const provider of providers) {
-    const providerObject = provider as { id?: string; providerID?: string; models?: Record<string, unknown> | unknown[] };
+    const providerObject = provider as {
+      id?: string;
+      providerID?: string;
+      models?: Record<string, unknown> | unknown[];
+    };
     const providerId = String(providerObject.id ?? providerObject.providerID ?? '').trim();
     if (!providerId) continue;
     const entries = normalizeModelEntries(providerObject.models);
@@ -73,7 +77,9 @@ export function extractModelsFromProvidersPayload(payload: unknown): LaunchModel
 }
 
 export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
-  constructor(private readonly factory: (options: { port: number }) => ReturnType<typeof createOpencode> = createOpencode) {}
+  constructor(
+    private readonly factory: (options: { port: number }) => ReturnType<typeof createOpencode> = createOpencode,
+  ) {}
 
   async run(input: {
     model: LaunchModel;
@@ -88,7 +94,11 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
   }): Promise<{ sessionId?: string | null; output: string[]; terminalError?: string | null }> {
     const [providerID, modelID] = parseModelId(input.model.id);
     if (!providerID || !modelID) {
-      return { sessionId: null, output: [`invalid model id: ${input.model.id}`], terminalError: `invalid model id: ${input.model.id}` };
+      return {
+        sessionId: null,
+        output: [`invalid model id: ${input.model.id}`],
+        terminalError: `invalid model id: ${input.model.id}`,
+      };
     }
     const sdk = await createAfkOpencodeWith(this.factory);
     const abortController = new AbortController();
@@ -103,14 +113,31 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
       if (isMeaningfulProgress(event)) lastMeaningfulProgressAt = Date.now();
     };
     try {
-      const sessionId = input.sessionId?.trim() || await createSession(sdk.client, input.title);
-      onProgress({ message: input.sessionId ? `resuming opencode session ${sessionId || 'unknown'}` : `created opencode session ${sessionId || 'unknown'}`, sessionId: sessionId || null });
+      const sessionId = input.sessionId?.trim() || (await createSession(sdk.client, input.title));
+      onProgress({
+        message: input.sessionId
+          ? `resuming opencode session ${sessionId || 'unknown'}`
+          : `created opencode session ${sessionId || 'unknown'}`,
+        sessionId: sessionId || null,
+      });
       if (sessionId) {
-        eventTask = consumeSessionEvents(sdk.client, sessionId, onProgress, abortController.signal, composePermissionDecisionProvider(input.decidePermission), terminalErrors);
+        eventTask = consumeSessionEvents(
+          sdk.client,
+          sessionId,
+          onProgress,
+          abortController.signal,
+          composePermissionDecisionProvider(input.decidePermission),
+          terminalErrors,
+        );
       }
       let promptText = input.prompt;
       while (true) {
-        onProgress({ message: staleRecoveries ? `sent recovery prompt to opencode (${staleRecoveries}/${maxStaleRecoveries})` : 'sent prompt to opencode', sessionId: sessionId || null });
+        onProgress({
+          message: staleRecoveries
+            ? `sent recovery prompt to opencode (${staleRecoveries}/${maxStaleRecoveries})`
+            : 'sent prompt to opencode',
+          sessionId: sessionId || null,
+        });
         const promptResult = await waitForPromptOrStale({
           prompt: sdk.client.session.prompt({
             path: { id: sessionId },
@@ -121,21 +148,35 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
         });
         if (promptResult === 'completed') break;
         staleRecoveries += 1;
-        onProgress({ message: `opencode session stale after ${formatDuration(staleProgressTimeoutMs)}; interrupting session`, sessionId: sessionId || null });
+        onProgress({
+          message: `opencode session stale after ${formatDuration(staleProgressTimeoutMs)}; interrupting session`,
+          sessionId: sessionId || null,
+        });
         await abortSession(sdk.client, sessionId, onProgress);
         if (staleRecoveries > maxStaleRecoveries) {
-          const sessionOutput = sessionId ? await readSessionOutput(sdk.client, sessionId) : { lines: [], terminalError: null };
+          const sessionOutput = sessionId
+            ? await readSessionOutput(sdk.client, sessionId)
+            : { lines: [], terminalError: null };
           const terminalError = `opencode session stale after ${maxStaleRecoveries} recovery attempts`;
           onProgress({ message: terminalError, sessionId: sessionId || null });
           return { sessionId: sessionId || null, output: sessionOutput.lines, terminalError };
         }
-        onProgress({ message: `opencode stale recovery attempt ${staleRecoveries}/${maxStaleRecoveries}`, sessionId: sessionId || null });
+        onProgress({
+          message: `opencode stale recovery attempt ${staleRecoveries}/${maxStaleRecoveries}`,
+          sessionId: sessionId || null,
+        });
         lastMeaningfulProgressAt = Date.now();
         promptText = buildStaleRecoveryPrompt(input.prompt, staleRecoveries, maxStaleRecoveries);
       }
       onProgress({ message: 'opencode prompt completed', sessionId: sessionId || null });
-      const sessionOutput = sessionId ? await readSessionOutput(sdk.client, sessionId) : { lines: [], terminalError: null };
-      return { sessionId: sessionId || null, output: sessionOutput.lines, terminalError: terminalErrors[0] ?? sessionOutput.terminalError ?? null };
+      const sessionOutput = sessionId
+        ? await readSessionOutput(sdk.client, sessionId)
+        : { lines: [], terminalError: null };
+      return {
+        sessionId: sessionId || null,
+        output: sessionOutput.lines,
+        terminalError: terminalErrors[0] ?? sessionOutput.terminalError ?? null,
+      };
     } finally {
       abortController.abort();
       await settleEventTask(eventTask);
@@ -145,12 +186,18 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
 }
 
 async function createSession(client: unknown, title: string): Promise<string> {
-  const sessionResponse = await (client as { session: { create: (options: unknown) => Promise<unknown> } }).session.create({ body: { title } });
+  const sessionResponse = await (
+    client as { session: { create: (options: unknown) => Promise<unknown> } }
+  ).session.create({ body: { title } });
   const session = unwrap(sessionResponse);
   return String(session?.id ?? '');
 }
 
-function buildPromptBody(input: { providerID: string; modelID: string; agent?: string; prompt: string }): { model: { providerID: string; modelID: string }; agent?: string; parts: Array<{ type: 'text'; text: string }> } {
+function buildPromptBody(input: { providerID: string; modelID: string; agent?: string; prompt: string }): {
+  model: { providerID: string; modelID: string };
+  agent?: string;
+  parts: Array<{ type: 'text'; text: string }>;
+} {
   return {
     model: { providerID: input.providerID, modelID: input.modelID },
     agent: input.agent,
@@ -158,7 +205,11 @@ function buildPromptBody(input: { providerID: string; modelID: string; agent?: s
   };
 }
 
-async function waitForPromptOrStale(input: { prompt: Promise<unknown>; staleProgressTimeoutMs: number; getLastMeaningfulProgressAt: () => number }): Promise<'completed' | 'stale'> {
+async function waitForPromptOrStale(input: {
+  prompt: Promise<unknown>;
+  staleProgressTimeoutMs: number;
+  getLastMeaningfulProgressAt: () => number;
+}): Promise<'completed' | 'stale'> {
   const prompt = input.prompt.then(() => 'completed' as const);
   prompt.catch(() => undefined);
   while (true) {
@@ -172,14 +223,21 @@ async function waitForPromptOrStale(input: { prompt: Promise<unknown>; staleProg
   }
 }
 
-async function abortSession(client: unknown, sessionId: string, onProgress: (event: OpenCodeSessionProgressEvent) => void): Promise<void> {
+async function abortSession(
+  client: unknown,
+  sessionId: string,
+  onProgress: (event: OpenCodeSessionProgressEvent) => void,
+): Promise<void> {
   try {
     const abort = (client as { session?: { abort?: (options: unknown) => Promise<unknown> } }).session?.abort;
     if (!abort) throw new Error('opencode session abort API is unavailable');
     await abort.call((client as { session?: unknown }).session, { path: { id: sessionId } });
     onProgress({ message: 'interrupted stale opencode session', sessionId });
   } catch (error) {
-    onProgress({ message: `opencode session interrupt failed: ${error instanceof Error ? error.message : 'unknown error'}`, sessionId });
+    onProgress({
+      message: `opencode session interrupt failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+      sessionId,
+    });
   }
 }
 
@@ -213,7 +271,9 @@ async function createAfkOpencode(): ReturnType<typeof createOpencode> {
   return createAfkOpencodeWith(createOpencode);
 }
 
-export function createAfkOpencodeWith(factory: (options: { port: number }) => ReturnType<typeof createOpencode>): ReturnType<typeof createOpencode> {
+export function createAfkOpencodeWith(
+  factory: (options: { port: number }) => ReturnType<typeof createOpencode>,
+): ReturnType<typeof createOpencode> {
   process.env.OPENCODE_PURE = 'true';
   return factory({ port: OPENCODE_EPHEMERAL_PORT });
 }
@@ -227,10 +287,7 @@ function composePermissionDecisionProvider(
 
 async function settleEventTask(task: Promise<void> | undefined): Promise<void> {
   if (!task) return;
-  await Promise.race([
-    task.catch(() => undefined),
-    new Promise<void>((resolve) => setTimeout(resolve, 250)),
-  ]);
+  await Promise.race([task.catch(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, 250))]);
 }
 
 async function consumeSessionEvents(
@@ -243,7 +300,9 @@ async function consumeSessionEvents(
 ): Promise<void> {
   const handledPermissions = new Set<string>();
   try {
-    const eventClient = (client as { event?: { subscribe?: (options?: unknown) => Promise<{ stream: AsyncIterable<unknown> }> } }).event;
+    const eventClient = (
+      client as { event?: { subscribe?: (options?: unknown) => Promise<{ stream: AsyncIterable<unknown> }> } }
+    ).event;
     if (!eventClient?.subscribe) return;
     const subscription = await eventClient.subscribe({ signal });
     for await (const event of subscription.stream) {
@@ -267,7 +326,11 @@ async function consumeSessionEvents(
       });
     }
   } catch (error) {
-    if (!signal.aborted) onProgress({ message: `opencode event stream unavailable: ${error instanceof Error ? error.message : 'unknown error'}`, sessionId });
+    if (!signal.aborted)
+      onProgress({
+        message: `opencode event stream unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
+        sessionId,
+      });
   }
 }
 
@@ -277,8 +340,13 @@ function parseTerminalSessionError(event: unknown, sessionId: string): string | 
   return formatMessageError(item.properties.error) ?? 'opencode session error';
 }
 
-async function replyToPermission(client: unknown, request: OpenCodePermissionRequest, decision: OpenCodePermissionDecision): Promise<void> {
-  const responder = (client as { postSessionIdPermissionsPermissionId?: (options: unknown) => Promise<unknown> }).postSessionIdPermissionsPermissionId;
+async function replyToPermission(
+  client: unknown,
+  request: OpenCodePermissionRequest,
+  decision: OpenCodePermissionDecision,
+): Promise<void> {
+  const responder = (client as { postSessionIdPermissionsPermissionId?: (options: unknown) => Promise<unknown> })
+    .postSessionIdPermissionsPermissionId;
   if (!responder) throw new Error('opencode permission response API is unavailable');
   await responder.call(client, {
     path: { id: request.sessionId, permissionID: request.permissionId },
@@ -286,7 +354,9 @@ async function replyToPermission(client: unknown, request: OpenCodePermissionReq
   });
 }
 
-async function defaultPermissionDecisionProvider(request: OpenCodePermissionRequest): Promise<OpenCodePermissionDecision | null> {
+async function defaultPermissionDecisionProvider(
+  request: OpenCodePermissionRequest,
+): Promise<OpenCodePermissionDecision | null> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
   const pattern = request.patterns.length ? `\nPattern: ${request.patterns.join(', ')}` : '';
   const response = await prompts(
@@ -303,7 +373,9 @@ async function defaultPermissionDecisionProvider(request: OpenCodePermissionRequ
     },
     { onCancel: () => true },
   );
-  return response.decision === 'once' || response.decision === 'always' || response.decision === 'reject' ? response.decision : 'reject';
+  return response.decision === 'once' || response.decision === 'always' || response.decision === 'reject'
+    ? response.decision
+    : 'reject';
 }
 
 export function formatOpenCodeEvent(event: unknown, sessionId: string): string | null {
@@ -311,19 +383,39 @@ export function formatOpenCodeEvent(event: unknown, sessionId: string): string |
 }
 
 export function parseOpenCodeEvent(event: unknown, sessionId: string): OpenCodeSessionProgressEvent | null {
-  const item = unwrapSseEvent(event) as { type?: string; properties?: { part?: unknown; info?: unknown; sessionID?: string; status?: unknown; error?: unknown; diff?: unknown[] } } | null;
+  const item = unwrapSseEvent(event) as {
+    type?: string;
+    properties?: {
+      part?: unknown;
+      info?: unknown;
+      sessionID?: string;
+      status?: unknown;
+      error?: unknown;
+      diff?: unknown[];
+    };
+  } | null;
   if (!item || typeof item !== 'object') return null;
-  if (item.type === 'permission.updated' || item.type === 'permission.asked') return formatPermissionRequest(item, sessionId);
+  if (item.type === 'permission.updated' || item.type === 'permission.asked')
+    return formatPermissionRequest(item, sessionId);
   if (item.type === 'permission.replied') return formatPermissionReply(item, sessionId);
-  if (item.type === 'message.part.updated') return messageProgress(formatOpenCodePart(item.properties?.part, sessionId, item.properties as { delta?: string }), sessionId);
+  if (item.type === 'message.part.updated')
+    return messageProgress(
+      formatOpenCodePart(item.properties?.part, sessionId, item.properties as { delta?: string }),
+      sessionId,
+    );
   if (item.type === 'message.updated') {
     const info = item.properties?.info as { sessionID?: string; finish?: string } | undefined;
-    if (info?.sessionID === sessionId && info.finish) return messageProgress(`assistant finished: ${info.finish}`, sessionId);
+    if (info?.sessionID === sessionId && info.finish)
+      return messageProgress(`assistant finished: ${info.finish}`, sessionId);
   }
-  if (item.type === 'session.status' && item.properties?.sessionID === sessionId) return messageProgress(formatSessionStatus(item.properties.status), sessionId);
-  if (item.type === 'session.idle' && item.properties?.sessionID === sessionId) return messageProgress('opencode session idle', sessionId);
-  if (item.type === 'session.error' && item.properties?.sessionID === sessionId) return messageProgress(formatMessageError(item.properties.error) ?? 'opencode session error', sessionId);
-  if (item.type === 'session.diff' && item.properties?.sessionID === sessionId) return messageProgress(formatSessionDiff(item.properties.diff), sessionId);
+  if (item.type === 'session.status' && item.properties?.sessionID === sessionId)
+    return messageProgress(formatSessionStatus(item.properties.status), sessionId);
+  if (item.type === 'session.idle' && item.properties?.sessionID === sessionId)
+    return messageProgress('opencode session idle', sessionId);
+  if (item.type === 'session.error' && item.properties?.sessionID === sessionId)
+    return messageProgress(formatMessageError(item.properties.error) ?? 'opencode session error', sessionId);
+  if (item.type === 'session.diff' && item.properties?.sessionID === sessionId)
+    return messageProgress(formatSessionDiff(item.properties.diff), sessionId);
   return null;
 }
 
@@ -338,7 +430,8 @@ function formatPermissionRequest(item: { properties?: unknown }, sessionId: stri
   const permissionType = readString(permission.permission) ?? readString(permission.type) ?? 'permission';
   const permissionTitle = readString(permission.title) ?? permissionType;
   const action = readObject(permission.action);
-  const actionName = readString(action?.action) ?? readString(action?.permission) ?? readString(permission.action) ?? 'decision';
+  const actionName =
+    readString(action?.action) ?? readString(action?.permission) ?? readString(permission.action) ?? 'decision';
   const target = patterns.length ? ` for ${patterns.join(', ')}` : '';
   const id = permissionId ? ` (${permissionId})` : '';
   return {
@@ -357,7 +450,12 @@ function formatPermissionReply(item: { properties?: unknown }, sessionId: string
   if (!properties || readString(properties.sessionID) !== sessionId) return null;
   const permissionId = readString(properties.permissionID) ?? null;
   const response = readString(properties.response) ?? 'answered';
-  return { kind: 'message', message: `opencode permission ${response}${permissionId ? ` (${permissionId})` : ''}`, sessionId, permissionId };
+  return {
+    kind: 'message',
+    message: `opencode permission ${response}${permissionId ? ` (${permissionId})` : ''}`,
+    sessionId,
+    permissionId,
+  };
 }
 
 function parsePermissionRequest(event: unknown, sessionId: string): OpenCodePermissionRequest | null {
@@ -384,7 +482,7 @@ function readPermissionProperties(value: unknown): Record<string, unknown> {
 }
 
 function readObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 function readString(value: unknown): string | undefined {
@@ -398,7 +496,12 @@ function readStringArray(value: unknown): string[] | undefined {
 }
 
 function unwrapSseEvent(event: unknown): unknown {
-  if (event && typeof event === 'object' && 'data' in (event as Record<string, unknown>) && !('type' in (event as Record<string, unknown>))) {
+  if (
+    event &&
+    typeof event === 'object' &&
+    'data' in (event as Record<string, unknown>) &&
+    !('type' in (event as Record<string, unknown>))
+  ) {
     return (event as { data: unknown }).data;
   }
   return event;
@@ -409,7 +512,8 @@ function formatSessionStatus(status: unknown): string | null {
   if (!item?.type) return null;
   if (item.type === 'busy') return 'opencode session busy';
   if (item.type === 'idle') return 'opencode session idle';
-  if (item.type === 'retry') return `opencode retry${item.attempt ? ` ${item.attempt}` : ''}${item.message ? `: ${item.message}` : ''}`;
+  if (item.type === 'retry')
+    return `opencode retry${item.attempt ? ` ${item.attempt}` : ''}${item.message ? `: ${item.message}` : ''}`;
   return `opencode session ${item.type}`;
 }
 
@@ -441,7 +545,13 @@ function formatToolPart(tool: string | undefined, state: unknown): string | null
 }
 
 function lastNonEmptyLine(value: string): string {
-  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) ?? '';
+  return (
+    value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) ?? ''
+  );
 }
 
 function parseModelId(value: string): [string, string] {
@@ -451,7 +561,9 @@ function parseModelId(value: string): [string, string] {
   return [trimmed.slice(0, slash), trimmed.slice(slash + 1)];
 }
 
-function normalizeModelEntries(models: Record<string, unknown> | unknown[] | undefined): Array<{ id?: string; modelID?: string; name?: string }> {
+function normalizeModelEntries(
+  models: Record<string, unknown> | unknown[] | undefined,
+): Array<{ id?: string; modelID?: string; name?: string }> {
   if (Array.isArray(models)) {
     return models as Array<{ id?: string; modelID?: string; name?: string }>;
   }
@@ -468,14 +580,20 @@ function normalizeModelEntries(models: Record<string, unknown> | unknown[] | und
   return output;
 }
 
-async function readSessionOutput(client: unknown, sessionId: string): Promise<{ lines: string[]; terminalError: string | null }> {
+async function readSessionOutput(
+  client: unknown,
+  sessionId: string,
+): Promise<{ lines: string[]; terminalError: string | null }> {
   const sessionClient = (client as { session?: { messages?: (options?: unknown) => Promise<unknown> } }).session;
   if (!sessionClient?.messages) return { lines: [], terminalError: null };
   const response = await callSessionMessages(sessionClient.messages.bind(sessionClient), sessionId);
   return extractSessionOutput(unwrap(response));
 }
 
-async function callSessionMessages(messages: (options?: unknown) => Promise<unknown>, sessionId: string): Promise<unknown> {
+async function callSessionMessages(
+  messages: (options?: unknown) => Promise<unknown>,
+  sessionId: string,
+): Promise<unknown> {
   try {
     return await messages({ path: { id: sessionId } });
   } catch (_error) {
@@ -492,7 +610,14 @@ export function extractSessionOutput(payload: unknown): { lines: string[]; termi
   const lines: string[] = [];
   const terminalErrors: string[] = [];
   for (const message of messages) {
-    const item = message as { info?: unknown; parts?: unknown[]; text?: string; content?: string; message?: string; output?: string } | null;
+    const item = message as {
+      info?: unknown;
+      parts?: unknown[];
+      text?: string;
+      content?: string;
+      message?: string;
+      output?: string;
+    } | null;
     const error = formatMessageError((item?.info as { error?: unknown } | undefined)?.error);
     if (error) {
       lines.push(error);
@@ -534,18 +659,29 @@ function formatMessageError(error: unknown): string | null {
 }
 
 function formatSessionPart(part: unknown): string[] {
-  const item = part as { type?: string; text?: string; content?: string; message?: string; output?: string; state?: { status?: string; error?: string; output?: string } } | null;
+  const item = part as {
+    type?: string;
+    text?: string;
+    content?: string;
+    message?: string;
+    output?: string;
+    state?: { status?: string; error?: string; output?: string };
+  } | null;
   if (!item || typeof item !== 'object') return [];
   if ((item.type === 'text' || item.type === 'reasoning') && item.text) return splitNonEmptyLines(item.text);
   if ((item.type === 'text' || item.type === 'reasoning') && item.content) return splitNonEmptyLines(item.content);
   if (item.type === 'text' && item.message) return splitNonEmptyLines(item.message);
   if (item.type === 'text' && item.output) return splitNonEmptyLines(item.output);
-  if (item.type === 'tool' && item.state?.status === 'error' && item.state.error) return [`tool failed: ${item.state.error}`];
+  if (item.type === 'tool' && item.state?.status === 'error' && item.state.error)
+    return [`tool failed: ${item.state.error}`];
   return [];
 }
 
 function splitNonEmptyLines(value: string): string[] {
-  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function uniqueNonEmpty(lines: string[]): string[] {

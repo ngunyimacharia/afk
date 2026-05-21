@@ -8,15 +8,31 @@ import { buildPrompt } from '../src/prompt-builder.js';
 
 test('prompt consumes prepared checkout context', () => {
   const prompt = buildPrompt({
-    checkout: { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat-tree', defaultBranchName: 'feat', effectiveBranchName: 'feat-tree', worktreePath: '/repo/.git/worktrees/feat-tree' },
-    ticket: { path: '/repo/.scratch/feat/issues/01.md', feature: 'feat', issueName: '01', label: 'feat/01', executorAfk: true },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat-tree',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat-tree',
+      worktreePath: '/repo/.git/worktrees/feat-tree',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
     ticketContent: 'Status: ready-for-agent\n',
   });
   assert.match(prompt, /Use this prepared checkout/);
   assert.match(prompt, /Working checkout: \/repo\/\.git\/worktrees\/feat-tree/);
   assert.match(prompt, /feat-tree/);
   assert.match(prompt, /Ticket file to update: \/repo\/\.scratch\/feat\/issues\/01\.md/);
-  assert.match(prompt, /Do not put the final AFK summary only in the assistant response, runtime log, or commit message/);
+  assert.match(
+    prompt,
+    /Do not put the final AFK summary only in the assistant response, runtime log, or commit message/,
+  );
   assert.match(prompt, /Status: ready-for-agent/);
   assert.doesNotMatch(prompt, /## AFK State Snapshot/);
   assert.match(prompt, /Access policy: source-code reads, searches, tests, and edits must use the Working checkout/);
@@ -41,28 +57,66 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
   writeFileSync(unrelatedScratchPath, 'super secret scratch text\n');
   mkdirSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata'), { recursive: true });
   mkdirSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels'), { recursive: true });
-  writeFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-01.json'), JSON.stringify({ STATUS: 'completed' }));
-  writeFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-02.json'), JSON.stringify({ STATUS: 'failed' }));
+  writeFileSync(
+    path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-01.json'),
+    JSON.stringify({ STATUS: 'completed' }),
+  );
+  writeFileSync(
+    path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-02.json'),
+    JSON.stringify({ STATUS: 'failed' }),
+  );
   writeFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'), 'done');
   writeFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-02.failed'), 'failed');
-  writeFileSync(path.join(repoRoot, '.scratch', 'feat', 'state-summary.json'), JSON.stringify({
-    dependencyCopyResult: 'copied node_modules',
-    envTestingStatus: 'present',
-    disabledTestDecision: 'none',
-    smokeTestResult: 'passed',
-    staticReadiness: 'ready',
-    styleReadiness: 'ready',
-  }));
+  writeFileSync(
+    path.join(repoRoot, '.scratch', 'feat', 'state-summary.json'),
+    JSON.stringify({
+      dependencyCopyResult: 'copied node_modules',
+      envTestingStatus: 'present',
+      disabledTestDecision: 'none',
+      smokeTestResult: 'passed',
+      staticReadiness: 'ready',
+      styleReadiness: 'ready',
+    }),
+  );
   writeFileSync(path.join(repoRoot, '.scratch', 'feat', 'PRD.md'), '# PRD\n');
   const plan = buildLaunchPlan(
     repoRoot,
     { id: 'exec' },
     [
-      { path: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'), feature: 'feat', issueName: '01', label: 'feat/01', executorAfk: true, status: 'done' },
-      { path: path.join(repoRoot, '.scratch', 'feat', 'issues', '02.md'), feature: 'feat', issueName: '02', label: 'feat/02', executorAfk: true, status: 'ready-for-agent' },
-      { path: ticketPath, feature: 'feat', issueName: '03', label: 'feat/03', executorAfk: true, status: 'ready-for-agent', dependsOn: ['01', '02'] },
+      {
+        path: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'),
+        feature: 'feat',
+        issueName: '01',
+        label: 'feat/01',
+        executorAfk: true,
+        status: 'done',
+      },
+      {
+        path: path.join(repoRoot, '.scratch', 'feat', 'issues', '02.md'),
+        feature: 'feat',
+        issueName: '02',
+        label: 'feat/02',
+        executorAfk: true,
+        status: 'ready-for-agent',
+      },
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: '03',
+        label: 'feat/03',
+        executorAfk: true,
+        status: 'ready-for-agent',
+        dependsOn: ['01', '02'],
+      },
     ],
-    { featureSlug: 'feat', defaultWorktreeName: 'feat', effectiveWorktreeName: 'feat-tree', defaultBranchName: 'feat', effectiveBranchName: 'feat-tree', worktreePath: repoRoot },
+    {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat-tree',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat-tree',
+      worktreePath: repoRoot,
+    },
   );
   const snapshot = plan.snapshots?.['feat/03'];
   assert.ok(snapshot);
@@ -75,12 +129,28 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
 
   assert.match(prompt, /## Dependencies/);
   assert.match(prompt, /## Shared Scratch Artifacts/);
-  assert.match(prompt, new RegExp(`Scratch feature path: ${path.join(repoRoot, '.scratch', 'feat').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-  assert.match(prompt, new RegExp(`Feature PRD: ${path.join(repoRoot, '.scratch', 'feat', 'PRD.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(
+    prompt,
+    new RegExp(
+      `Scratch feature path: ${path.join(repoRoot, '.scratch', 'feat').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    ),
+  );
+  assert.match(
+    prompt,
+    new RegExp(
+      `Feature PRD: ${path.join(repoRoot, '.scratch', 'feat', 'PRD.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    ),
+  );
   assert.equal(snapshot.scratchFeaturePath, path.join(repoRoot, '.scratch', 'feat'));
   assert.equal(snapshot.featurePrdPath, path.join(repoRoot, '.scratch', 'feat', 'PRD.md'));
-  assert.match(prompt, /feat\/01: ticket status=done; runtime=completed; done sentinel=present; failed sentinel=missing/);
-  assert.match(prompt, /feat\/02: ticket status=ready-for-agent; runtime=failed; done sentinel=missing; failed sentinel=present/);
+  assert.match(
+    prompt,
+    /feat\/01: ticket status=done; runtime=completed; done sentinel=present; failed sentinel=missing/,
+  );
+  assert.match(
+    prompt,
+    /feat\/02: ticket status=ready-for-agent; runtime=failed; done sentinel=missing; failed sentinel=present/,
+  );
   assert.match(prompt, /instruction: if feat\/01 is already done, do not implement it again/);
   assert.doesNotMatch(prompt, /Worktree HEAD:/);
   assert.doesNotMatch(prompt, /Launch `git status --short`:/);
@@ -97,8 +167,22 @@ test('launch plan snapshots use per-feature checkouts', () => {
   mkdirSync(path.dirname(ticketB), { recursive: true });
   writeFileSync(ticketA, 'Status: ready-for-agent\n');
   writeFileSync(ticketB, 'Status: ready-for-agent\n');
-  const checkoutA = { featureSlug: 'feat-a', defaultWorktreeName: 'feat-a', effectiveWorktreeName: 'tree-a', defaultBranchName: 'feat-a', effectiveBranchName: 'feat-a', worktreePath: path.join(repoRoot, '.worktree', 'tree-a') };
-  const checkoutB = { featureSlug: 'feat-b', defaultWorktreeName: 'feat-b', effectiveWorktreeName: 'tree-b', defaultBranchName: 'feat-b', effectiveBranchName: 'feat-b', worktreePath: path.join(repoRoot, '.worktree', 'tree-b') };
+  const checkoutA = {
+    featureSlug: 'feat-a',
+    defaultWorktreeName: 'feat-a',
+    effectiveWorktreeName: 'tree-a',
+    defaultBranchName: 'feat-a',
+    effectiveBranchName: 'feat-a',
+    worktreePath: path.join(repoRoot, '.worktree', 'tree-a'),
+  };
+  const checkoutB = {
+    featureSlug: 'feat-b',
+    defaultWorktreeName: 'feat-b',
+    effectiveWorktreeName: 'tree-b',
+    defaultBranchName: 'feat-b',
+    effectiveBranchName: 'feat-b',
+    worktreePath: path.join(repoRoot, '.worktree', 'tree-b'),
+  };
 
   const plan = buildLaunchPlan(
     repoRoot,

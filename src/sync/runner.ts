@@ -1,5 +1,5 @@
-import { AssetSyncEngine, formatSyncReport } from './engine.js';
 import { OpenCodeSyncAdapter } from './adapters/opencode.js';
+import { AssetSyncEngine, formatSyncReport } from './engine.js';
 import { ensureAfkGlobalGitIgnore } from './global-git-ignore.js';
 
 export async function runSync(): Promise<{ code: number; message: string }> {

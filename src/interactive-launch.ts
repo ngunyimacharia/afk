@@ -20,7 +20,10 @@ export interface LaunchWizardResult {
 export function isInteractiveLaunchAllowed(io: PromptIO, env: NodeJS.ProcessEnv): { ok: boolean; reason?: string } {
   if (env.CI) return { ok: false, reason: 'AFK launch requires an interactive TTY and does not run in CI.' };
   if (!io.stdin.isTTY || !io.stdout.isTTY) {
-    return { ok: false, reason: 'AFK launch requires an interactive terminal (TTY). Run `afk` directly in a terminal.' };
+    return {
+      ok: false,
+      reason: 'AFK launch requires an interactive terminal (TTY). Run `afk` directly in a terminal.',
+    };
   }
   return { ok: true };
 }
@@ -56,20 +59,15 @@ export async function runInteractiveLaunchWizard(input: {
   const concurrency = await promptConcurrency(input.io, input.preferences?.concurrency ?? 3);
   if (!concurrency) return { cancelled: true };
 
-  return { cancelled: false, harness: 'OpenCode', model, reviewerModel, reviewerPrompt, tickets: selectedTickets, concurrency };
-}
-
-export async function confirmDisabledTestsForMissingEnv(io: PromptIO, feature: string): Promise<boolean> {
-  const result = await prompts(
-    {
-      type: 'confirm',
-      name: 'value',
-      message: `Tests were detected for ${feature}, but source .env.testing is missing. Treat tests as disabled for this AFK run?`,
-      initial: false,
-    },
-    { onCancel: () => true },
-  );
-  return result.value === true;
+  return {
+    cancelled: false,
+    harness: 'OpenCode',
+    model,
+    reviewerModel,
+    reviewerPrompt,
+    tickets: selectedTickets,
+    concurrency,
+  };
 }
 
 interface PromptChoice {
@@ -94,7 +92,12 @@ export function prioritizeModelChoices(models: LaunchModel[], preferredModelId?:
   return [preferred, ...choices];
 }
 
-async function promptSingleSelect(io: PromptIO, title: string, options: string[] | PromptChoice[], initial?: number): Promise<string | null> {
+async function promptSingleSelect(
+  io: PromptIO,
+  title: string,
+  options: string[] | PromptChoice[],
+  initial?: number,
+): Promise<string | null> {
   const result = await prompts(
     {
       type: 'autocomplete',
@@ -105,7 +108,11 @@ async function promptSingleSelect(io: PromptIO, title: string, options: string[]
       suggest: async (input: string, choices: any[]) => {
         const query = input.trim().toLowerCase();
         if (!query) return choices;
-        return choices.filter((choice) => String(choice?.title ?? '').toLowerCase().includes(query));
+        return choices.filter((choice) =>
+          String(choice?.title ?? '')
+            .toLowerCase()
+            .includes(query),
+        );
       },
     },
     {
@@ -132,7 +139,11 @@ async function promptFeatureMultiSelect(io: PromptIO, tickets: TicketRecord[]): 
         suggest: async (input: string, choices: any[]) => {
           const query = input.trim().toLowerCase();
           if (!query) return choices;
-          return choices.filter((choice) => String(choice?.title ?? '').toLowerCase().includes(query));
+          return choices.filter((choice) =>
+            String(choice?.title ?? '')
+              .toLowerCase()
+              .includes(query),
+          );
         },
       },
       {

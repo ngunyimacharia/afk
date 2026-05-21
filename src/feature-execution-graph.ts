@@ -35,7 +35,12 @@ function executionPath(repoRoot: string, feature: string): string {
   return path.join(repoRoot, '.scratch', feature, 'execution.json');
 }
 
-export function buildFeatureExecutionGraph(repoRoot: string, feature: string, tickets: TicketRecord[], persist = true): FeatureExecutionGraph {
+export function buildFeatureExecutionGraph(
+  repoRoot: string,
+  feature: string,
+  tickets: TicketRecord[],
+  persist = true,
+): FeatureExecutionGraph {
   const byName = new Map(tickets.map((ticket) => [ticket.issueName, ticket] as const));
   const states = new Map<string, FeatureExecutionTicket>();
   const issues: FeatureExecutionIssue[] = [];
@@ -43,7 +48,9 @@ export function buildFeatureExecutionGraph(repoRoot: string, feature: string, ti
   for (const ticket of tickets) {
     const dependsOn = ticket.dependsOn ?? [];
     const status = normalizeStatus(ticket.status);
-    const failedRuntime = existsSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', `${feature}-${ticket.issueName}.failed`));
+    const failedRuntime = existsSync(
+      path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', `${feature}-${ticket.issueName}.failed`),
+    );
     const isTerminal = status ? TERMINAL_STATUSES.has(status) : false;
     const invalidDeps = dependsOn.filter((dep) => dep.includes('/') || dep.includes('\\') || dep.endsWith('.md'));
     const missingDeps = dependsOn.filter((dep) => !invalidDeps.includes(dep) && !byName.has(dep));
@@ -52,12 +59,25 @@ export function buildFeatureExecutionGraph(repoRoot: string, feature: string, ti
       if (!dependency) return false;
       return !COMPLETE_STATUSES.has(normalizeStatus(dependency.status) ?? '');
     });
-    const state: FeatureTicketState = COMPLETE_STATUSES.has(status ?? '') ? 'complete' : failedRuntime ? 'failed' : isTerminal ? 'terminal' : missingDeps.length || invalidDeps.length || blockedBy.length ? 'blocked' : 'ready';
-    for (const invalidDep of invalidDeps) issues.push({ feature, issue: ticket.issueName, reason: `invalid dependency reference: ${invalidDep}` });
+    const state: FeatureTicketState = COMPLETE_STATUSES.has(status ?? '')
+      ? 'complete'
+      : failedRuntime
+        ? 'failed'
+        : isTerminal
+          ? 'terminal'
+          : missingDeps.length || invalidDeps.length || blockedBy.length
+            ? 'blocked'
+            : 'ready';
+    for (const invalidDep of invalidDeps)
+      issues.push({ feature, issue: ticket.issueName, reason: `invalid dependency reference: ${invalidDep}` });
     if (missingDeps.length) {
       issues.push({ feature, issue: ticket.issueName, reason: `missing dependency: ${missingDeps.join(', ')}` });
     }
-    states.set(ticket.issueName, { state, dependsOn: [...dependsOn], blockedBy: [...new Set([...invalidDeps, ...missingDeps, ...blockedBy])] });
+    states.set(ticket.issueName, {
+      state,
+      dependsOn: [...dependsOn],
+      blockedBy: [...new Set([...invalidDeps, ...missingDeps, ...blockedBy])],
+    });
   }
 
   const cycle = findCycle(tickets);
@@ -68,7 +88,13 @@ export function buildFeatureExecutionGraph(repoRoot: string, feature: string, ti
   }
 
   const waves = deriveWaves(tickets, states, byName);
-  const graph: FeatureExecutionGraph = { feature, version: 1, generatedAt: new Date().toISOString(), waves, tickets: Object.fromEntries(states) };
+  const graph: FeatureExecutionGraph = {
+    feature,
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    waves,
+    tickets: Object.fromEntries(states),
+  };
   if (persist) writeFeatureExecutionGraph(repoRoot, feature, graph);
   return graph;
 }
@@ -87,7 +113,11 @@ export function writeFeatureExecutionGraph(repoRoot: string, feature: string, gr
   writeFileSync(target, `${JSON.stringify(graph, null, 2)}\n`);
 }
 
-function deriveWaves(tickets: TicketRecord[], states: Map<string, FeatureExecutionTicket>, byName: Map<string, TicketRecord>): string[][] {
+function deriveWaves(
+  tickets: TicketRecord[],
+  states: Map<string, FeatureExecutionTicket>,
+  byName: Map<string, TicketRecord>,
+): string[][] {
   const remaining = new Set(tickets.map((ticket) => ticket.issueName));
   const waves: string[][] = [];
   while (remaining.size) {

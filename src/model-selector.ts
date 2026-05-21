@@ -3,7 +3,10 @@ import type { LaunchModel } from './types.js';
 export type ModelChooser = (models: LaunchModel[]) => Promise<LaunchModel | null>;
 
 export class ModelSelector {
-  constructor(private readonly discoverModels: () => Promise<LaunchModel[]>, private readonly chooser: ModelChooser) {}
+  constructor(
+    private readonly discoverModels: () => Promise<LaunchModel[]>,
+    private readonly chooser: ModelChooser,
+  ) {}
 
   async selectModel(): Promise<LaunchModel> {
     const models = await this.discoverModels();

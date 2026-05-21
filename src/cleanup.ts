@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 
@@ -36,11 +36,19 @@ function normalize(value: string | undefined): string {
 }
 
 function exists(target: string): boolean {
-  try { return statSync(target).isDirectory(); } catch { return false; }
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function fileExists(target: string): boolean {
-  try { return statSync(target).isFile(); } catch { return false; }
+  try {
+    return statSync(target).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function parseFrontmatter(content: string): Record<string, unknown> {
@@ -55,7 +63,7 @@ function parseStatus(content: string, frontmatter: Record<string, unknown>): str
   if (typeof frontmatterStatus === 'string' && frontmatterStatus.trim()) return frontmatterStatus.trim();
   const statusLine = content.match(/^Status:\s*(.+)$/im)?.[1]?.trim();
   if (statusLine) return statusLine;
-  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|\Z)/im);
+  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|Z)/im);
   const headingBody = headingMatch?.[1]?.trim();
   return headingBody ? headingBody.split(/\r?\n/)[0].trim() : undefined;
 }
@@ -104,10 +112,20 @@ export class CleanupPlanner {
             feature: featureDir.name,
             issueName,
             issuePath,
-            logPath: fileExists(ticketLogPath(this.input.repoRoot, featureDir.name, issueName)) ? ticketLogPath(this.input.repoRoot, featureDir.name, issueName) : undefined,
-            metadataPath: fileExists(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)) ? ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName) : undefined,
-            doneSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done')) ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done') : undefined,
-            failedSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed')) ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed') : undefined,
+            logPath: fileExists(ticketLogPath(this.input.repoRoot, featureDir.name, issueName))
+              ? ticketLogPath(this.input.repoRoot, featureDir.name, issueName)
+              : undefined,
+            metadataPath: fileExists(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName))
+              ? ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)
+              : undefined,
+            doneSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done'))
+              ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done')
+              : undefined,
+            failedSentinelPath: fileExists(
+              ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed'),
+            )
+              ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed')
+              : undefined,
             reason: `terminal status: ${status}`,
           });
         } else {
@@ -115,7 +133,8 @@ export class CleanupPlanner {
           preservedIssues.push(issuePath);
         }
       }
-      if (!hasPending && issueFiles.length > 0) featureDirectoriesToDelete.push(path.join(scratchRoot, featureDir.name));
+      if (!hasPending && issueFiles.length > 0)
+        featureDirectoriesToDelete.push(path.join(scratchRoot, featureDir.name));
     }
 
     for (const target of terminalTargets) {
@@ -125,7 +144,9 @@ export class CleanupPlanner {
       if (target.failedSentinelPath) preservedArtifacts.push(target.failedSentinelPath);
     }
 
-    const workspaceExecutionPath = fileExists(path.join(scratchRoot, 'execution.json')) ? path.join(scratchRoot, 'execution.json') : undefined;
+    const workspaceExecutionPath = fileExists(path.join(scratchRoot, 'execution.json'))
+      ? path.join(scratchRoot, 'execution.json')
+      : undefined;
     return { terminalTargets, preservedIssues, preservedArtifacts, featureDirectoriesToDelete, workspaceExecutionPath };
   }
 }
@@ -141,14 +162,23 @@ export class CleanupExecutor {
         target.doneSentinelPath,
         target.failedSentinelPath,
       ].filter((value): value is string => Boolean(value))) {
-        try { rmSync(filePath, { force: true, recursive: false }); deleted.push(filePath); } catch {}
+        try {
+          rmSync(filePath, { force: true, recursive: false });
+          deleted.push(filePath);
+        } catch {}
       }
     }
     for (const featureDir of plan.featureDirectoriesToDelete) {
-      try { rmSync(featureDir, { force: true, recursive: true }); deleted.push(featureDir); } catch {}
+      try {
+        rmSync(featureDir, { force: true, recursive: true });
+        deleted.push(featureDir);
+      } catch {}
     }
     if (plan.workspaceExecutionPath) {
-      try { rmSync(plan.workspaceExecutionPath, { force: true, recursive: false }); deleted.push(plan.workspaceExecutionPath); } catch {}
+      try {
+        rmSync(plan.workspaceExecutionPath, { force: true, recursive: false });
+        deleted.push(plan.workspaceExecutionPath);
+      } catch {}
     }
     return { deleted };
   }

@@ -1,7 +1,6 @@
-import { promises as fs } from 'node:fs';
-import { constants } from 'node:fs';
+import { constants, promises as fs } from 'node:fs';
 import path from 'node:path';
-import { SyncAdapter, SyncReport, SyncActionStatus } from './types.js';
+import type { SyncActionStatus, SyncAdapter, SyncReport } from './types.js';
 
 function normalizeRoot(root: string): string {
   return path.resolve(root);
@@ -21,7 +20,10 @@ async function readIfFile(filePath: string): Promise<string | null> {
 }
 
 async function directoryExists(directoryPath: string): Promise<boolean> {
-  return fs.access(directoryPath, constants.R_OK).then(() => true, () => false);
+  return fs.access(directoryPath, constants.R_OK).then(
+    () => true,
+    () => false,
+  );
 }
 
 export class AssetSyncEngine {
@@ -41,7 +43,12 @@ export class AssetSyncEngine {
       for (const entry of entries) {
         if (!entry.isFile()) continue;
         if (category.extensions && !category.extensions.some((ext) => entry.name.endsWith(ext))) {
-          actions.push({ category: category.name, sourcePath: path.join(sourceRoot, entry.name), destinationPath: path.join(destinationRoot, entry.name), status: 'skipped' });
+          actions.push({
+            category: category.name,
+            sourcePath: path.join(sourceRoot, entry.name),
+            destinationPath: path.join(destinationRoot, entry.name),
+            status: 'skipped',
+          });
           continue;
         }
         const sourcePath = path.join(sourceRoot, entry.name);
@@ -50,7 +57,8 @@ export class AssetSyncEngine {
         ensureWithinRoot(destinationRoot, destinationPath);
         const sourceContent = await fs.readFile(sourcePath, 'utf8');
         const existing = await readIfFile(destinationPath);
-        const status: SyncActionStatus = existing === null ? 'created' : existing === sourceContent ? 'unchanged' : 'updated';
+        const status: SyncActionStatus =
+          existing === null ? 'created' : existing === sourceContent ? 'unchanged' : 'updated';
         actions.push({ category: category.name, sourcePath, destinationPath, status });
       }
     }
@@ -70,7 +78,13 @@ export class AssetSyncEngine {
 }
 
 export function formatSyncReport(report: SyncReport): string {
-  const lines = [`Adapter: ${report.adapterId}`, `Created: ${report.counts.created}`, `Updated: ${report.counts.updated}`, `Unchanged: ${report.counts.unchanged}`, `Skipped: ${report.counts.skipped}`];
+  const lines = [
+    `Adapter: ${report.adapterId}`,
+    `Created: ${report.counts.created}`,
+    `Updated: ${report.counts.updated}`,
+    `Unchanged: ${report.counts.unchanged}`,
+    `Skipped: ${report.counts.skipped}`,
+  ];
   for (const action of report.actions) {
     lines.push(`${action.status.toUpperCase()} ${action.category}: ${action.sourcePath} -> ${action.destinationPath}`);
   }

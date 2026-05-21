@@ -1,8 +1,8 @@
-import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
-import { classifyProviderFailure, formatProviderFailureMessage } from './provider-failure.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
+import { classifyProviderFailure, formatProviderFailureMessage } from './provider-failure.js';
 import { areAllPathsAllowedForAfkWrite } from './repo-boundary.js';
+import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 
 export type AgentInvocationMode = 'execution' | 'reviewer';
 
@@ -95,7 +95,11 @@ export function assertCommandAllowed(policy: AgentInvocationPolicy, command: Age
 }
 
 export class FakeAgentExecutionProvider implements AgentExecutionProvider {
-  constructor(private readonly result: AgentExecutionResult | ((request: AgentExecutionRequest) => AgentExecutionResult | Promise<AgentExecutionResult>)) {}
+  constructor(
+    private readonly result:
+      | AgentExecutionResult
+      | ((request: AgentExecutionRequest) => AgentExecutionResult | Promise<AgentExecutionResult>),
+  ) {}
 
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
     return typeof this.result === 'function' ? this.result(request) : this.result;
@@ -110,11 +114,16 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
 
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
     const ticket = request.plan.tickets[request.ticketIndex];
-    if (!ticket) return { status: 'failed', sessionId: null, removable: false, unsafeReason: 'ticket missing in launch request' };
+    if (!ticket)
+      return { status: 'failed', sessionId: null, removable: false, unsafeReason: 'ticket missing in launch request' };
     try {
       const invocationMode = request.invocationMode ?? 'execution';
-      const model = invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
-      request.onProgress?.({ ticketLabel: ticket.label, message: invocationMode === 'reviewer' ? 'starting opencode reviewer session' : 'starting opencode session' });
+      const model =
+        invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
+      request.onProgress?.({
+        ticketLabel: ticket.label,
+        message: invocationMode === 'reviewer' ? 'starting opencode reviewer session' : 'starting opencode session',
+      });
       const result = await this.executor.run({
         model,
         prompt: request.prompt,
@@ -122,30 +131,39 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         agent: invocationMode === 'reviewer' ? undefined : 'build',
         sessionId: invocationMode === 'execution' ? request.sessionId : null,
         onProgress: (event) => request.onProgress?.({ ticketLabel: ticket.label, ...event }),
-        decidePermission: (permissionRequest) => decideAfkPermission(permissionRequest, {
-          ticketLabel: ticket.label,
-          coordinator: this.permissionCoordinator,
-          repoRoot: request.plan.repoRoot,
-          worktreePath: request.plan.checkout?.worktreePath,
-          otherWorktreePaths: Object.values(request.plan.checkouts ?? {})
-            .map((checkout) => checkout.worktreePath)
-            .filter((worktreePath) => worktreePath !== request.plan.checkout?.worktreePath),
-        }),
+        decidePermission: (permissionRequest) =>
+          decideAfkPermission(permissionRequest, {
+            ticketLabel: ticket.label,
+            coordinator: this.permissionCoordinator,
+            repoRoot: request.plan.repoRoot,
+            worktreePath: request.plan.checkout?.worktreePath,
+            otherWorktreePaths: Object.values(request.plan.checkouts ?? {})
+              .map((checkout) => checkout.worktreePath)
+              .filter((worktreePath) => worktreePath !== request.plan.checkout?.worktreePath),
+          }),
       });
       const failureReason = result.terminalError ?? detectOpenCodeFailure(result.output ?? []);
       if (failureReason) {
         request.onProgress?.({
           ticketLabel: ticket.label,
           kind: 'failure',
-          message: formatProviderFailureMessage({ modelId: model?.id ?? 'unknown', mode: invocationMode, reason: failureReason }),
+          message: formatProviderFailureMessage({
+            modelId: model?.id ?? 'unknown',
+            mode: invocationMode,
+            reason: failureReason,
+          }),
           sessionId: result.sessionId ?? null,
         });
       }
       request.onProgress?.({
         ticketLabel: ticket.label,
         message: failureReason
-          ? invocationMode === 'reviewer' ? `opencode reviewer session failed: ${failureReason}` : `opencode session failed: ${failureReason}`
-          : invocationMode === 'reviewer' ? 'opencode reviewer session completed' : 'opencode session completed',
+          ? invocationMode === 'reviewer'
+            ? `opencode reviewer session failed: ${failureReason}`
+            : `opencode session failed: ${failureReason}`
+          : invocationMode === 'reviewer'
+            ? 'opencode reviewer session completed'
+            : 'opencode session completed',
         sessionId: result.sessionId ?? null,
       });
       return {
@@ -158,8 +176,13 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'opencode execution failed';
       const invocationMode = request.invocationMode ?? 'execution';
-      const model = invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
-      request.onProgress?.({ ticketLabel: ticket.label, kind: 'failure', message: formatProviderFailureMessage({ modelId: model?.id ?? 'unknown', mode: invocationMode, reason }) });
+      const model =
+        invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
+      request.onProgress?.({
+        ticketLabel: ticket.label,
+        kind: 'failure',
+        message: formatProviderFailureMessage({ modelId: model?.id ?? 'unknown', mode: invocationMode, reason }),
+      });
       request.onProgress?.({ ticketLabel: ticket.label, message: `opencode execution failed: ${reason}` });
       return {
         status: 'failed',
@@ -174,15 +197,26 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
 
 export async function decideAfkPermission(
   request: OpenCodePermissionRequest,
-  options: { ticketLabel?: string; coordinator?: PermissionCoordinator; repoRoot?: string; worktreePath?: string; otherWorktreePaths?: string[] } = {},
+  options: {
+    ticketLabel?: string;
+    coordinator?: PermissionCoordinator;
+    repoRoot?: string;
+    worktreePath?: string;
+    otherWorktreePaths?: string[];
+  } = {},
 ): Promise<OpenCodePermissionDecision | null> {
   if (request.type === 'external_directory' || isWriteLikePermission(request)) {
-    if (options.repoRoot && options.worktreePath && areAllPathsAllowedForAfkWrite({
-      repoRoot: options.repoRoot,
-      worktreePath: options.worktreePath,
-      otherWorktreePaths: options.otherWorktreePaths ?? [],
-      targets: request.patterns,
-    })) return 'always';
+    if (
+      options.repoRoot &&
+      options.worktreePath &&
+      areAllPathsAllowedForAfkWrite({
+        repoRoot: options.repoRoot,
+        worktreePath: options.worktreePath,
+        otherWorktreePaths: options.otherWorktreePaths ?? [],
+        targets: request.patterns,
+      })
+    )
+      return 'always';
     return 'reject';
   }
   if (options.coordinator) return options.coordinator.submitForTicket(options.ticketLabel ?? 'unknown-ticket', request);
@@ -192,10 +226,12 @@ export async function decideAfkPermission(
 export function detectOpenCodeFailure(output: string[]): string | null {
   const failure = output.find((line) => {
     const normalized = line.toLowerCase();
-    return normalized.includes('opencode error:')
-      || normalized.includes('requested model is not available')
-      || normalized.includes('providerautherror')
-      || normalized.includes('context overflow');
+    return (
+      normalized.includes('opencode error:') ||
+      normalized.includes('requested model is not available') ||
+      normalized.includes('providerautherror') ||
+      normalized.includes('context overflow')
+    );
   });
   return failure ?? null;
 }

@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const AFK_GLOBAL_GIT_IGNORE_ENTRIES = ['/.scratch/', '/.worktree/'];
+export const AFK_GLOBAL_GIT_IGNORE_ENTRIES = ['/.scratch/', '/.worktree/', '/afk.json'];
 
 type GitCommand = (args: string[], env: NodeJS.ProcessEnv) => string;
 
@@ -22,7 +22,9 @@ function defaultExcludesFile(home: string, env: NodeJS.ProcessEnv): string {
   return path.join(xdgConfigHome || path.join(home, '.config'), 'git', 'ignore');
 }
 
-export async function ensureAfkGlobalGitIgnore(input: { home?: string; env?: NodeJS.ProcessEnv; git?: GitCommand } = {}): Promise<{ excludesFile: string; added: string[] }> {
+export async function ensureAfkGlobalGitIgnore(
+  input: { home?: string; env?: NodeJS.ProcessEnv; git?: GitCommand } = {},
+): Promise<{ excludesFile: string; added: string[] }> {
   const home = input.home ?? os.homedir();
   const env = input.env ?? process.env;
   const git = input.git ?? runGit;

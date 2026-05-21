@@ -1,7 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { BudgetExceededEvent, BudgetPolicy, LaunchPreferences, PhaseHistoryEntry, ReviewCycleHistoryEntry, ReviewTerminalOutcomeRecord, RuntimeMetadataRecord } from './types.js';
 import { assertPathWithinRoot } from './path-validation.js';
+import type {
+  BudgetExceededEvent,
+  BudgetPolicy,
+  LaunchPreferences,
+  PhaseHistoryEntry,
+  ReviewCycleHistoryEntry,
+  ReviewTerminalOutcomeRecord,
+  RuntimeMetadataRecord,
+} from './types.js';
 
 export interface RuntimeStoreInput {
   repoRoot: string;
@@ -60,20 +68,30 @@ export class RuntimeStore {
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
       };
-      if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0) preferences.concurrency = value.concurrency;
+      if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)
+        preferences.concurrency = value.concurrency;
       const budgets = value.budgets;
       if (budgets && typeof budgets === 'object' && !Array.isArray(budgets)) {
         const budgetRecord = budgets as Record<string, unknown>;
         const parsed: Partial<BudgetPolicy> = {};
-        if (typeof budgetRecord.malformedReviewerRetries === 'number' && budgetRecord.malformedReviewerRetries >= 0) parsed.malformedReviewerRetries = Math.floor(budgetRecord.malformedReviewerRetries);
-        if (typeof budgetRecord.fixupCycleLimit === 'number' && budgetRecord.fixupCycleLimit > 0) parsed.fixupCycleLimit = Math.floor(budgetRecord.fixupCycleLimit);
-        if (typeof budgetRecord.providerFailureRetries === 'number' && budgetRecord.providerFailureRetries >= 0) parsed.providerFailureRetries = Math.floor(budgetRecord.providerFailureRetries);
-        if (typeof budgetRecord.ticketWallClockMs === 'number' && budgetRecord.ticketWallClockMs > 0) parsed.ticketWallClockMs = Math.floor(budgetRecord.ticketWallClockMs);
-        if (budgetRecord.phaseWallClockMs && typeof budgetRecord.phaseWallClockMs === 'object' && !Array.isArray(budgetRecord.phaseWallClockMs)) {
+        if (typeof budgetRecord.malformedReviewerRetries === 'number' && budgetRecord.malformedReviewerRetries >= 0)
+          parsed.malformedReviewerRetries = Math.floor(budgetRecord.malformedReviewerRetries);
+        if (typeof budgetRecord.fixupCycleLimit === 'number' && budgetRecord.fixupCycleLimit > 0)
+          parsed.fixupCycleLimit = Math.floor(budgetRecord.fixupCycleLimit);
+        if (typeof budgetRecord.providerFailureRetries === 'number' && budgetRecord.providerFailureRetries >= 0)
+          parsed.providerFailureRetries = Math.floor(budgetRecord.providerFailureRetries);
+        if (typeof budgetRecord.ticketWallClockMs === 'number' && budgetRecord.ticketWallClockMs > 0)
+          parsed.ticketWallClockMs = Math.floor(budgetRecord.ticketWallClockMs);
+        if (
+          budgetRecord.phaseWallClockMs &&
+          typeof budgetRecord.phaseWallClockMs === 'object' &&
+          !Array.isArray(budgetRecord.phaseWallClockMs)
+        ) {
           const phaseWallClockMs = budgetRecord.phaseWallClockMs as Record<string, unknown>;
           const phaseBudgets: Record<string, number> = {};
           for (const key of ['execution', 'review', 'fixup']) {
-            if (typeof phaseWallClockMs[key] === 'number' && (phaseWallClockMs[key] as number) > 0) phaseBudgets[key] = Math.floor(phaseWallClockMs[key] as number);
+            if (typeof phaseWallClockMs[key] === 'number' && (phaseWallClockMs[key] as number) > 0)
+              phaseBudgets[key] = Math.floor(phaseWallClockMs[key] as number);
           }
           if (Object.keys(phaseBudgets).length) parsed.phaseWallClockMs = phaseBudgets;
         }
@@ -164,7 +182,13 @@ export class RuntimeStore {
     return next;
   }
 
-  async runPhase<T>(metadataPath: string, logPath: string, name: string, action: () => Promise<T> | T, cycle?: number): Promise<T> {
+  async runPhase<T>(
+    metadataPath: string,
+    logPath: string,
+    name: string,
+    action: () => Promise<T> | T,
+    cycle?: number,
+  ): Promise<T> {
     const phase = this.startPhase(name, cycle);
     try {
       return await action();
@@ -202,7 +226,11 @@ export class RuntimeStore {
     return next;
   }
 
-  recordFinalReviewOutcome(metadataPath: string, logPath: string, outcome: ReviewTerminalOutcomeRecord): RuntimeMetadataRecord {
+  recordFinalReviewOutcome(
+    metadataPath: string,
+    logPath: string,
+    outcome: ReviewTerminalOutcomeRecord,
+  ): RuntimeMetadataRecord {
     const current = this.readMetadata(metadataPath);
     const next = this.writeMetadataAndReturn(metadataPath, {
       ...current,
