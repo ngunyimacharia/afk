@@ -7,7 +7,10 @@
     "test": "bun test tests/*.test.ts",
     "build": "tsc -p tsconfig.json",
     "build:exe": "bun run scripts/build-executable.ts",
-    "install:local": "bun run scripts/install-local.ts"
+    "install:local": "bun run scripts/install-local.ts",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.15.4",
@@ -16,6 +19,7 @@
     "yaml": "^2.7.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
     "@types/node": "^22.15.21",
     "@types/prompts": "^2.4.9",
     "tsx": "^4.19.2",
