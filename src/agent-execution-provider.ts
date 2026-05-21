@@ -226,6 +226,7 @@ export async function decideAfkPermission(
 export function detectOpenCodeFailure(output: string[]): string | null {
   const failure = output.find((line) => {
     const normalized = line.toLowerCase();
+    if (normalized === 'opencode error: aborted') return false;
     return (
       normalized.includes('opencode error:') ||
       normalized.includes('requested model is not available') ||

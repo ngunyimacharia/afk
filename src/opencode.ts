@@ -608,21 +608,22 @@ export function extractSessionOutputLines(payload: unknown): string[] {
 export function extractSessionOutput(payload: unknown): { lines: string[]; terminalError: string | null } {
   const messages = normalizeSessionMessages(payload);
   const lines: string[] = [];
-  const terminalErrors: string[] = [];
   for (const message of messages) {
     const item = message as {
+      role?: unknown;
       info?: unknown;
+      error?: unknown;
       parts?: unknown[];
       text?: string;
       content?: string;
       message?: string;
       output?: string;
     } | null;
-    const error = formatMessageError((item?.info as { error?: unknown } | undefined)?.error);
-    if (error) {
-      lines.push(error);
-      terminalErrors.push(error);
-    }
+    const errors = [
+      formatMessageError((item?.info as { error?: unknown } | undefined)?.error),
+      formatMessageError(item?.error),
+    ].filter((error): error is string => Boolean(error));
+    lines.push(...errors);
     for (const part of Array.isArray(item?.parts) ? item.parts : []) {
       const partLines = formatSessionPart(part);
       lines.push(...partLines);
@@ -631,7 +632,26 @@ export function extractSessionOutput(payload: unknown): { lines: string[]; termi
       if (typeof value === 'string') lines.push(...splitNonEmptyLines(value));
     }
   }
-  return { lines: uniqueNonEmpty(lines), terminalError: terminalErrors[0] ?? null };
+  return { lines: uniqueNonEmpty(lines), terminalError: extractFinalTurnTerminalError(messages) };
+}
+
+function extractFinalTurnTerminalError(messages: unknown[]): string | null {
+  let fallbackError: string | null = null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = messages[index] as { role?: unknown; info?: unknown; error?: unknown } | null;
+    const error =
+      formatMessageError((item?.info as { error?: unknown } | undefined)?.error) ?? formatMessageError(item?.error);
+    if (!fallbackError && error) fallbackError = error;
+    if (!isAssistantMessage(item)) continue;
+    return error ?? null;
+  }
+  return fallbackError;
+}
+
+function isAssistantMessage(message: { role?: unknown; info?: unknown } | null): boolean {
+  const role =
+    readString(message?.role) ?? readString((message?.info as { role?: unknown } | undefined)?.role) ?? null;
+  return role === 'assistant';
 }
 
 function normalizeSessionMessages(payload: unknown): unknown[] {
