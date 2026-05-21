@@ -27,8 +27,7 @@ test('progress line updates in place and finalizes once', () => {
   assert.match(output, /[|/\\-]: opencode session completed \[opencode: abc\]/);
   assert.doesNotMatch(output, /feat\/001/);
   assert.doesNotMatch(output, /AFK running/);
-  const escapeSequence = new RegExp('\\x1B\\[2K|\\r');
-  assert.match(output, escapeSequence);
+  assert.equal(output.includes('\x1B[2K') || output.includes('\r'), true);
   assert.equal(output.endsWith('\n'), true);
 });
 

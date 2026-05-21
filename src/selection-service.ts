@@ -9,6 +9,10 @@ export class SelectionService {
     const selected = await this.chooser(tickets);
     if (!selected?.length) return [];
     const seen = new Set<string>();
-    return selected.filter((ticket) => (seen.has(ticket.path) ? false : (seen.add(ticket.path), true)));
+    return selected.filter((ticket) => {
+      if (seen.has(ticket.path)) return false;
+      seen.add(ticket.path);
+      return true;
+    });
   }
 }

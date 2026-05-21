@@ -38,6 +38,9 @@ test('prompt consumes prepared checkout context', () => {
   assert.match(prompt, /Access policy: source-code reads, searches, tests, and edits must use the Working checkout/);
   assert.match(prompt, /Root repo writes are allowed only under the listed shared \.scratch artifact paths/);
   assert.match(prompt, /Search policy: search only inside the Working checkout/);
+  assert.match(prompt, /## Final Result Contract/);
+  assert.match(prompt, /^AFK_TICKET_RESULT: success$/m);
+  assert.match(prompt, /^AFK_TICKET_RESULT: failed$/m);
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
 });
 
@@ -119,10 +122,12 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
     },
   );
   const snapshot = plan.snapshots?.['feat/03'];
+  const ticket = plan.tickets[2];
   assert.ok(snapshot);
+  assert.ok(ticket);
   const prompt = buildPrompt({
     checkout: plan.checkout,
-    ticket: plan.tickets[2]!,
+    ticket,
     ticketContent: 'Status: ready-for-agent\n',
     snapshot,
   });

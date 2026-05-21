@@ -69,6 +69,7 @@ test('extracts terminal session errors separately from tool failures', () => {
   ]);
 
   assert.equal(output.terminalError, 'opencode error: Provider unavailable');
+  assert.equal(output.finalMessageText, null);
   assert.deepEqual(output.lines, ['opencode error: Provider unavailable', 'tool failed: File not found']);
 });
 
@@ -86,6 +87,7 @@ test('ignores recovered historical aborts when later assistant turn succeeds', (
   ]);
 
   assert.equal(output.terminalError, null);
+  assert.equal(output.finalMessageText, 'Recovered and completed');
   assert.deepEqual(output.lines, ['opencode error: Aborted', 'stale attempt aborted', 'Recovered and completed']);
 });
 
@@ -104,6 +106,7 @@ test('uses only the final assistant turn for terminal session errors', () => {
   ]);
 
   assert.equal(output.terminalError, 'opencode error: Provider unavailable');
+  assert.equal(output.finalMessageText, 'final failed turn');
   assert.deepEqual(output.lines, [
     'opencode error: Aborted',
     'earlier aborted turn',
@@ -299,7 +302,10 @@ test('recovers stale opencode prompts in the same session', async () => {
                 error: { name: 'MessageAbortedError', data: { message: 'Aborted' } },
                 parts: [{ type: 'text', text: 'stale attempt aborted' }],
               },
-              { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Recovered and completed' }] },
+              {
+                info: { role: 'assistant' },
+                parts: [{ type: 'text', text: 'Recovered and completed\nAFK_TICKET_RESULT: success' }],
+              },
             ],
           },
         },
@@ -318,7 +324,13 @@ test('recovers stale opencode prompts in the same session', async () => {
 
   assert.equal(result.sessionId, 'session-stale');
   assert.equal(result.terminalError, null);
-  assert.deepEqual(result.output, ['opencode error: Aborted', 'stale attempt aborted', 'Recovered and completed']);
+  assert.equal(result.finalMessageText, 'Recovered and completed\nAFK_TICKET_RESULT: success');
+  assert.deepEqual(result.output, [
+    'opencode error: Aborted',
+    'stale attempt aborted',
+    'Recovered and completed',
+    'AFK_TICKET_RESULT: success',
+  ]);
   assert.equal(createCalls, 1);
   assert.equal(abortCalls, 1);
   assert.deepEqual(promptPaths, ['session-stale', 'session-stale']);
@@ -365,3 +377,122 @@ test('stops same-session stale recovery after configured cap', async () => {
   assert.equal(abortCalls, 3);
   assert.deepEqual(promptPaths, ['session-stale-cap', 'session-stale-cap', 'session-stale-cap']);
 });
+
+test('does not mark a running opencode tool stale at the normal progress timeout', async () => {
+  const executor = new SDKOpenCodeSessionExecutor(
+    async () =>
+      ({
+        server: { url: 'http://127.0.0.1:1', close() {} },
+        client: {
+          event: {
+            subscribe: async () => ({
+              stream: oneEventAfterTick({
+                type: 'message.part.updated',
+                properties: {
+                  part: {
+                    sessionID: 'session-tool-running',
+                    type: 'tool',
+                    tool: 'bash',
+                    state: { status: 'running', title: 'Runs slow tests' },
+                  },
+                },
+              }),
+            }),
+          },
+          session: {
+            create: async () => ({ id: 'session-tool-running' }),
+            prompt: async () => {
+              await delay(30);
+              return { ok: true };
+            },
+            abort: async () => assert.fail('running tool should not be aborted at the normal stale timeout'),
+            messages: async () => [
+              {
+                role: 'assistant',
+                parts: [{ type: 'text', text: 'Slow tests completed\nAFK_TICKET_RESULT: success' }],
+              },
+            ],
+          },
+        },
+      }) as never,
+  );
+  const progress: string[] = [];
+
+  const result = await executor.run({
+    model: { id: 'openai/gpt-5.3-codex' },
+    title: 'afk: feat/01',
+    prompt: 'Original prompt',
+    staleProgressTimeoutMs: 5,
+    activeToolStaleTimeoutMs: 100,
+    onProgress: (event) => progress.push(event.message),
+  });
+
+  assert.equal(result.terminalError, null);
+  assert.equal(result.finalMessageText, 'Slow tests completed\nAFK_TICKET_RESULT: success');
+  assert.match(progress.join('\n'), /tool bash running: Runs slow tests/);
+  assert.doesNotMatch(progress.join('\n'), /opencode session stale after 5ms/);
+});
+
+test('marks a running opencode tool stale after the active tool timeout', async () => {
+  let abortCalls = 0;
+  const executor = new SDKOpenCodeSessionExecutor(
+    async () =>
+      ({
+        server: { url: 'http://127.0.0.1:1', close() {} },
+        client: {
+          event: {
+            subscribe: async () => ({
+              stream: oneEventAfterTick({
+                type: 'message.part.updated',
+                properties: {
+                  part: {
+                    sessionID: 'session-tool-stale',
+                    type: 'tool',
+                    tool: 'bash',
+                    state: { status: 'running', title: 'Runs hung tests' },
+                  },
+                },
+              }),
+            }),
+          },
+          session: {
+            create: async () => ({ id: 'session-tool-stale' }),
+            prompt: async () => new Promise(() => undefined),
+            abort: async () => {
+              abortCalls += 1;
+              return true;
+            },
+            messages: async () => [{ role: 'assistant', parts: [{ type: 'text', text: 'Partial work' }] }],
+          },
+        },
+      }) as never,
+  );
+  const progress: string[] = [];
+
+  const result = await executor.run({
+    model: { id: 'openai/gpt-5.3-codex' },
+    title: 'afk: feat/01',
+    prompt: 'Original prompt',
+    staleProgressTimeoutMs: 5,
+    activeToolStaleTimeoutMs: 25,
+    maxStaleRecoveries: 0,
+    onProgress: (event) => progress.push(event.message),
+  });
+
+  assert.equal(result.terminalError, 'opencode session stale after 0 recovery attempts');
+  assert.equal(abortCalls, 1);
+  assert.match(
+    progress.join('\n'),
+    /opencode tool stale after 25ms: tool bash running: Runs hung tests; interrupting session/,
+  );
+});
+
+async function* oneEventAfterTick(event: unknown): AsyncIterable<unknown> {
+  await delay(0);
+  yield event;
+  await new Promise(() => undefined);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

@@ -87,7 +87,7 @@ export function buildFeatureExecutionGraph(
     throw new Error(issues.map((issue) => `${issue.feature}/${issue.issue}: ${issue.reason}`).join('\n'));
   }
 
-  const waves = deriveWaves(tickets, states, byName);
+  const waves = deriveWaves(tickets, byName);
   const graph: FeatureExecutionGraph = {
     feature,
     version: 1,
@@ -113,11 +113,7 @@ export function writeFeatureExecutionGraph(repoRoot: string, feature: string, gr
   writeFileSync(target, `${JSON.stringify(graph, null, 2)}\n`);
 }
 
-function deriveWaves(
-  tickets: TicketRecord[],
-  states: Map<string, FeatureExecutionTicket>,
-  byName: Map<string, TicketRecord>,
-): string[][] {
+function deriveWaves(tickets: TicketRecord[], byName: Map<string, TicketRecord>): string[][] {
   const remaining = new Set(tickets.map((ticket) => ticket.issueName));
   const waves: string[][] = [];
   while (remaining.size) {

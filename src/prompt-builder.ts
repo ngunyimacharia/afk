@@ -45,6 +45,15 @@ export function buildPrompt(input: PromptInput): string {
     'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
     'If the ticket is complete, set its `Status:` line to `done` and append/update the `## AFK Summary` section in that file.',
     '',
+    '## Final Result Contract',
+    '',
+    'When and only when the ticket is complete, tests/verification have been run or documented, the ticket file has been updated, and all required commits are created, end your final assistant message with this exact line:',
+    'AFK_TICKET_RESULT: success',
+    '',
+    'If the ticket is incomplete, blocked, or failed, do not include the success line. End your final assistant message with these exact lines instead:',
+    'AFK_TICKET_RESULT: failed',
+    'Reason: <short reason>',
+    '',
     ...(input.reviewerPrompt
       ? ['## Reviewer Context', '', `Reviewer prompt: ${input.reviewerPrompt.id} (${input.reviewerPrompt.path})`, '']
       : []),

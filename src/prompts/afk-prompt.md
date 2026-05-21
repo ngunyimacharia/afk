@@ -13,4 +13,4 @@ Implement the provided ticket autonomously. Do not ask questions or wait for app
 7. Append or update `## AFK Summary` with timestamp, session/run ID, status, outcome, commits, changed areas, verification, blockers/errors, and next action.
 8. Do not read or edit `.scratch/` except the provided ticket file and scheduler-generated status files explicitly named by the launcher.
 9. Do not run broad process cleanup or delete external temp/system paths. Only stop explicit processes you created for this ticket.
-10. When complete, output `<promise>NO MORE TASKS</promise>`.
+10. When complete, output the launcher-provided `AFK_TICKET_RESULT` sentinel exactly as instructed.

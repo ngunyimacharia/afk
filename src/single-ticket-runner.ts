@@ -127,16 +127,9 @@ export class SingleTicketRunner {
     let useReviewerRepairPrompt = false;
     const ticketStartEpoch = Date.now();
 
-    const outcome: SingleTicketRunResult['outcome'] = 'failed';
     try {
       while (true) {
-        const ticketBudget = this.checkTicketBudget(
-          record.metadataPath,
-          record.logPath,
-          budgets,
-          ticketStartEpoch,
-          reviewCycle + 1,
-        );
+        const ticketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
         if (ticketBudget) return this.handoffForBudget(ticket.label, record, options, ticketBudget, sessionId);
         if (executeBeforeReview && fixupCycles >= budgets.fixupCycleLimit && reviewCycle > 0) {
           return this.handoffForBudget(
@@ -174,13 +167,7 @@ export class SingleTicketRunner {
             sessionId = executionResult.sessionId ?? sessionId;
             latestExecutionResult = executionResult;
             this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
-            const executionBudget = this.checkPhaseBudget(
-              record.metadataPath,
-              record.logPath,
-              budgets,
-              'execution',
-              reviewCycle + 1,
-            );
+            const executionBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'execution', reviewCycle + 1);
             if (executionBudget)
               return this.handoffForBudget(ticket.label, record, options, executionBudget, sessionId);
             if (executionResult.status !== 'completed') {
@@ -250,21 +237,9 @@ export class SingleTicketRunner {
           reviewCycle + 1,
         );
         useReviewerRepairPrompt = false;
-        const reviewBudget = this.checkPhaseBudget(
-          record.metadataPath,
-          record.logPath,
-          budgets,
-          'review',
-          reviewCycle + 1,
-        );
+        const reviewBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'review', reviewCycle + 1);
         if (reviewBudget) return this.handoffForBudget(ticket.label, record, options, reviewBudget, sessionId);
-        const afterReviewTicketBudget = this.checkTicketBudget(
-          record.metadataPath,
-          record.logPath,
-          budgets,
-          ticketStartEpoch,
-          reviewCycle + 1,
-        );
+        const afterReviewTicketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
         if (afterReviewTicketBudget)
           return this.handoffForBudget(ticket.label, record, options, afterReviewTicketBudget, sessionId);
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
@@ -432,7 +407,7 @@ export class SingleTicketRunner {
           () => this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review),
           reviewCycle,
         );
-        const fixupBudget = this.checkPhaseBudget(record.metadataPath, record.logPath, budgets, 'fixup', reviewCycle);
+        const fixupBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'fixup', reviewCycle);
         if (fixupBudget) return this.handoffForBudget(ticket.label, record, options, fixupBudget, sessionId);
         executeBeforeReview = true;
       }
@@ -458,8 +433,6 @@ export class SingleTicketRunner {
   }
 
   private checkTicketBudget(
-    metadataPath: string,
-    logPath: string,
     budgets: BudgetPolicy,
     ticketStartEpoch: number,
     cycle: number,
@@ -480,7 +453,6 @@ export class SingleTicketRunner {
 
   private checkPhaseBudget(
     metadataPath: string,
-    logPath: string,
     budgets: BudgetPolicy,
     phase: BudgetPhaseName,
     cycle: number,

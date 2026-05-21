@@ -15,7 +15,7 @@ function ensureWithinRoot(root: string, candidate: string): void {
 
 async function readIfFile(filePath: string): Promise<string | null> {
   const stat = await fs.stat(filePath).catch(() => null);
-  if (!stat || !stat.isFile()) return null;
+  if (!stat?.isFile()) return null;
   return fs.readFile(filePath, 'utf8');
 }
 

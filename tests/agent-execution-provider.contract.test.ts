@@ -4,6 +4,7 @@ import {
   decideAfkPermission,
   FakeAgentExecutionProvider,
   OpenCodeAgentExecutionProvider,
+  parseAfkTicketResult,
 } from '../src/agent-execution-provider.js';
 import { SDKOpenCodeSessionExecutor } from '../src/opencode.js';
 import { PermissionCoordinator } from '../src/permission-coordinator.js';
@@ -64,6 +65,22 @@ test('opencode provider maps successful execution to completed result', async ()
     'feat/01: created opencode session session-42',
     'feat/01: opencode session completed',
   ]);
+});
+
+test('parses final AFK ticket result sentinels exactly', () => {
+  assert.deepEqual(parseAfkTicketResult('Done\nAFK_TICKET_RESULT: success'), { status: 'success' });
+  assert.deepEqual(parseAfkTicketResult('AFK_TICKET_RESULT: failed\nReason: blocked'), {
+    status: 'failed',
+    reason: 'blocked',
+  });
+  assert.deepEqual(parseAfkTicketResult('AFK_TICKET_RESULT: SUCCESS'), {
+    status: 'unknown',
+    reason: 'final AFK result sentinel missing',
+  });
+  assert.deepEqual(parseAfkTicketResult('AFK_TICKET_RESULT: success\nAFK_TICKET_RESULT: failed'), {
+    status: 'unknown',
+    reason: 'final AFK result sentinel is ambiguous',
+  });
 });
 
 test('opencode reviewer invocation does not force the silent review agent', async () => {
@@ -213,7 +230,7 @@ test('opencode provider completes when actual session output has recovered histo
                 },
                 {
                   role: 'assistant',
-                  parts: [{ type: 'text', text: 'Recovered and completed' }],
+                  parts: [{ type: 'text', text: 'Recovered and completed\nAFK_TICKET_RESULT: success' }],
                 },
               ],
             },
@@ -233,9 +250,72 @@ test('opencode provider completes when actual session output has recovered histo
   assert.equal(result.sessionId, 'session-recovered-abort');
   assert.equal(result.removable, true);
   assert.equal(result.unsafeReason, null);
-  assert.deepEqual(result.output, ['opencode error: Aborted', 'stale attempt aborted', 'Recovered and completed']);
+  assert.deepEqual(result.output, [
+    'opencode error: Aborted',
+    'stale attempt aborted',
+    'Recovered and completed',
+    'AFK_TICKET_RESULT: success',
+  ]);
   assert.doesNotMatch(progress.join('\n'), /provider failure/);
   assert.match(progress.join('\n'), /opencode session completed/);
+});
+
+test('opencode execution with final success sentinel ignores terminal-looking history', async () => {
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async () => ({
+      sessionId: 'session-final-sentinel',
+      output: ['opencode error: provider unavailable', 'later recovered'],
+      terminalError: 'opencode error: provider unavailable',
+      finalMessageText: 'Implemented and committed.\nAFK_TICKET_RESULT: success',
+    }),
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.unsafeReason, null);
+});
+
+test('opencode execution without final result sentinel fails clearly', async () => {
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async () => ({
+      sessionId: 'session-missing-sentinel',
+      output: ['Implemented and committed.'],
+      finalMessageText: 'Implemented and committed.',
+    }),
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.unsafeReason, 'final AFK result sentinel missing');
+});
+
+test('opencode execution with final failed sentinel fails with reason', async () => {
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async () => ({
+      sessionId: 'session-failed-sentinel',
+      output: ['Blocked.'],
+      finalMessageText: 'Blocked.\nAFK_TICKET_RESULT: failed\nReason: missing dependency',
+    }),
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.unsafeReason, 'AFK ticket failed: missing dependency');
 });
 
 test('opencode provider fails on structured terminal session errors', async () => {
@@ -354,6 +434,46 @@ test('external directory inside assigned worktree bypasses manual coordinator', 
 
   assert.equal(decision, 'always');
   assert.equal(coordinator.history.length, 0);
+});
+
+test('read inside assigned worktree bypasses manual coordinator', async () => {
+  const coordinator = new PermissionCoordinator({
+    promptAdapter: async () => 'once',
+  });
+
+  const decision = await decideAfkPermission(
+    {
+      sessionId: 'session-42',
+      permissionId: 'per_1',
+      type: 'read',
+      title: 'read',
+      patterns: ['.worktree/feature/.env.testing'],
+    },
+    { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
+  );
+
+  assert.equal(decision, 'always');
+  assert.equal(coordinator.history.length, 0);
+});
+
+test('read outside assigned worktree still enters manual coordinator', async () => {
+  const coordinator = new PermissionCoordinator({
+    promptAdapter: async () => 'once',
+  });
+
+  const decision = await decideAfkPermission(
+    {
+      sessionId: 'session-42',
+      permissionId: 'per_1',
+      type: 'read',
+      title: 'read',
+      patterns: ['/repo/.worktree/other/.env.testing'],
+    },
+    { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
+  );
+
+  assert.equal(decision, 'once');
+  assert.equal(coordinator.history.length, 1);
 });
 
 test('external directory under root source is rejected when worktree differs', async () => {

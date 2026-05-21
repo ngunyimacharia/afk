@@ -75,6 +75,10 @@ interface PromptChoice {
   value: string;
 }
 
+interface PromptSuggestChoice {
+  title?: string;
+}
+
 export function formatModelSelectionTitle(model: LaunchModel): string {
   const slash = model.id.indexOf('/');
   if (slash <= 0 || slash === model.id.length - 1) return model.label ?? model.id;
@@ -93,7 +97,7 @@ export function prioritizeModelChoices(models: LaunchModel[], preferredModelId?:
 }
 
 async function promptSingleSelect(
-  io: PromptIO,
+  _io: PromptIO,
   title: string,
   options: string[] | PromptChoice[],
   initial?: number,
@@ -105,7 +109,7 @@ async function promptSingleSelect(
       message: title,
       choices: options.map((option) => (typeof option === 'string' ? { title: option, value: option } : option)),
       initial,
-      suggest: async (input: string, choices: any[]) => {
+      suggest: async (input: string, choices: PromptSuggestChoice[]) => {
         const query = input.trim().toLowerCase();
         if (!query) return choices;
         return choices.filter((choice) =>
@@ -136,7 +140,7 @@ async function promptFeatureMultiSelect(io: PromptIO, tickets: TicketRecord[]): 
         }),
         instructions: true,
         min: 0,
-        suggest: async (input: string, choices: any[]) => {
+        suggest: async (input: string, choices: PromptSuggestChoice[]) => {
           const query = input.trim().toLowerCase();
           if (!query) return choices;
           return choices.filter((choice) =>

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   areAllPathsAllowedForAfkWrite,
+  areAllPathsInAssignedWorktree,
   areAllPathsInsideRepoRoot,
   classifyPathAgainstRepoRoot,
 } from '../src/repo-boundary.js';
@@ -61,4 +62,27 @@ test('allows AFK writes only in assigned worktree or root scratch', () => {
   assert.equal(areAllPathsAllowedForAfkWrite({ ...input, targets: ['/repo/app/File.php'] }), false);
   assert.equal(areAllPathsAllowedForAfkWrite({ ...input, targets: ['/repo/.worktree/other/app/File.php'] }), false);
   assert.equal(areAllPathsAllowedForAfkWrite({ ...input, targets: ['/tmp/outside.php'] }), false);
+});
+
+test('resolves relative permission paths against repo root', () => {
+  const input = {
+    repoRoot: '/repo',
+    worktreePath: '/repo/.worktree/feature',
+    otherWorktreePaths: ['/repo/.worktree/other'],
+  };
+
+  assert.equal(areAllPathsAllowedForAfkWrite({ ...input, targets: ['.worktree/feature/app/File.php'] }), true);
+  assert.equal(areAllPathsAllowedForAfkWrite({ ...input, targets: ['.worktree/other/app/File.php'] }), false);
+});
+
+test('recognizes all files inside assigned worktree', () => {
+  const input = {
+    repoRoot: '/repo',
+    worktreePath: '/repo/.worktree/feature',
+  };
+
+  assert.equal(areAllPathsInAssignedWorktree({ ...input, targets: ['/repo/.worktree/feature/.env.testing'] }), true);
+  assert.equal(areAllPathsInAssignedWorktree({ ...input, targets: ['.worktree/feature/.env.testing'] }), true);
+  assert.equal(areAllPathsInAssignedWorktree({ ...input, targets: ['/repo/.scratch/feature/issues/01.md'] }), false);
+  assert.equal(areAllPathsInAssignedWorktree({ ...input, targets: ['/repo/.worktree/other/.env.testing'] }), false);
 });

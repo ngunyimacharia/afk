@@ -94,7 +94,8 @@ export async function runAfk(
     return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
   const activeProjectConfig = projectConfig.config;
   const repository = new TicketRepository(repoRoot);
-  const tickets = repository.discoverTickets().filter((ticket) => repository.isEligible(ticket));
+  const allTickets = repository.discoverTickets();
+  const tickets = allTickets.filter((ticket) => repository.isEligible(ticket));
   if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
   const worktreePreparationService = new WorktreePreparationService();
   let model: LaunchModel | undefined;
@@ -139,7 +140,7 @@ export async function runAfk(
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
   const refresh = new FeatureExecutionRefreshService(repoRoot);
   const featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
-  const orderingBlock = validateSelectedTicketDependencies(selectedTickets, tickets);
+  const orderingBlock = validateSelectedTicketDependencies(selectedTickets, allTickets);
   if (orderingBlock) return { code: 1, message: orderingBlock };
   selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
   const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
@@ -269,7 +270,7 @@ function orderSelectedTicketsByFeatureGraph(
   return ordered;
 }
 
-function validateSelectedTicketDependencies(
+export function validateSelectedTicketDependencies(
   selectedTickets: TicketRecord[],
   allTickets: TicketRecord[],
 ): string | null {

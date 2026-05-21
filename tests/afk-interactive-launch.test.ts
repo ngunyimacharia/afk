@@ -3,9 +3,15 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { formatManualPermissionReviewLines, readRunOutcomeLines, runAfk } from '../src/cli.js';
+import {
+  formatManualPermissionReviewLines,
+  readRunOutcomeLines,
+  runAfk,
+  validateSelectedTicketDependencies,
+} from '../src/cli.js';
 import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/interactive-launch.js';
 import { RuntimeStore } from '../src/runtime-store.js';
+import { TicketRepository } from '../src/ticket-repository.js';
 
 test('default afk launch fails early without interactive tty', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
@@ -165,6 +171,27 @@ test('run outcome summary includes every selected ticket', () => {
   assert.match(lines[0] ?? '', /1 failed before review/);
   assert.match(lines.join('\n'), /feat-a\/01: failed before review \(path-not-found\)/);
   assert.match(lines.join('\n'), /feat-b\/02: approved/);
+});
+
+test('launch dependency validation sees completed tickets filtered from eligible choices', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-deps-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: done\n---\n');
+  writeFileSync(
+    path.join(issuesDir, '02.md'),
+    '---\nfeature: feat\nstatus: ready-for-agent\nDepends-On:\n  - 01\n---\n',
+  );
+
+  const repository = new TicketRepository(repoRoot);
+  const allTickets = repository.discoverTickets();
+  const eligibleTickets = allTickets.filter((ticket) => repository.isEligible(ticket));
+
+  assert.deepEqual(
+    eligibleTickets.map((ticket) => ticket.issueName),
+    ['02'],
+  );
+  assert.equal(validateSelectedTicketDependencies(eligibleTickets, allTickets), null);
 });
 
 function writeMinimalAfkConfig(repoRoot: string): void {

@@ -1,7 +1,7 @@
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
-import { classifyProviderFailure, formatProviderFailureMessage } from './provider-failure.js';
-import { areAllPathsAllowedForAfkWrite } from './repo-boundary.js';
+import { formatProviderFailureMessage } from './provider-failure.js';
+import { areAllPathsAllowedForAfkWrite, areAllPathsInAssignedWorktree } from './repo-boundary.js';
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 
 export type AgentInvocationMode = 'execution' | 'reviewer';
@@ -142,7 +142,10 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
               .filter((worktreePath) => worktreePath !== request.plan.checkout?.worktreePath),
           }),
       });
-      const failureReason = result.terminalError ?? detectOpenCodeFailure(result.output ?? []);
+      const finalResult = invocationMode === 'execution' ? parseAfkTicketResult(result.finalMessageText) : null;
+      const failureReason = finalResult
+        ? formatAfkTicketFailure(finalResult)
+        : (result.terminalError ?? detectOpenCodeFailure(result.output ?? []));
       if (failureReason) {
         request.onProgress?.({
           ticketLabel: ticket.label,
@@ -205,6 +208,19 @@ export async function decideAfkPermission(
     otherWorktreePaths?: string[];
   } = {},
 ): Promise<OpenCodePermissionDecision | null> {
+  if (isReadLikePermission(request)) {
+    if (
+      options.repoRoot &&
+      options.worktreePath &&
+      areAllPathsInAssignedWorktree({
+        repoRoot: options.repoRoot,
+        worktreePath: options.worktreePath,
+        targets: request.patterns,
+      })
+    )
+      return 'always';
+  }
+
   if (request.type === 'external_directory' || isWriteLikePermission(request)) {
     if (
       options.repoRoot &&
@@ -235,6 +251,42 @@ export function detectOpenCodeFailure(output: string[]): string | null {
     );
   });
   return failure ?? null;
+}
+
+export type AfkTicketResult =
+  | { status: 'success' }
+  | { status: 'failed'; reason?: string }
+  | { status: 'unknown'; reason: string };
+
+export function parseAfkTicketResult(finalMessageText: string | null | undefined): AfkTicketResult | null {
+  if (typeof finalMessageText !== 'string') return null;
+
+  const lines = finalMessageText.split(/\r?\n/).map((line) => line.trim());
+  const hasSuccess = lines.includes('AFK_TICKET_RESULT: success');
+  const hasFailed = lines.includes('AFK_TICKET_RESULT: failed');
+  if (hasSuccess && hasFailed) return { status: 'unknown', reason: 'final AFK result sentinel is ambiguous' };
+  if (hasSuccess) return { status: 'success' };
+  if (hasFailed) return { status: 'failed', reason: extractAfkFailureReason(lines) };
+  return { status: 'unknown', reason: 'final AFK result sentinel missing' };
+}
+
+function formatAfkTicketFailure(result: AfkTicketResult): string | null {
+  if (result.status === 'success') return null;
+  if (result.status === 'failed') return result.reason ? `AFK ticket failed: ${result.reason}` : 'AFK ticket failed';
+  return result.reason;
+}
+
+function extractAfkFailureReason(lines: string[]): string | undefined {
+  const reason = lines
+    .find((line) => line.startsWith('Reason:'))
+    ?.replace(/^Reason:\s*/, '')
+    .trim();
+  return reason || undefined;
+}
+
+function isReadLikePermission(request: OpenCodePermissionRequest): boolean {
+  const value = `${request.type} ${request.title}`.toLowerCase();
+  return /\bread\b/.test(value) && request.patterns.length > 0;
 }
 
 function isWriteLikePermission(request: OpenCodePermissionRequest): boolean {

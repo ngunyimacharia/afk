@@ -4,7 +4,10 @@ import type { LaunchModel } from './types.js';
 
 const OPENCODE_EPHEMERAL_PORT = 0;
 const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 120_000;
+const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_MAX_STALE_RECOVERIES = 3;
+
+type OpenCodeActivityKind = 'assistant' | 'tool' | 'permission' | 'session' | 'diff' | 'other';
 
 export type OpenCodePermissionDecision = 'once' | 'always' | 'reject';
 
@@ -12,10 +15,18 @@ export interface OpenCodeSessionProgressEvent {
   message: string;
   sessionId?: string | null;
   kind?: 'message' | 'permission';
+  activity?: OpenCodeActivityKind;
+  toolName?: string | null;
+  toolStatus?: string | null;
   permissionId?: string | null;
   permissionPatterns?: string[];
   permissionType?: string | null;
   permissionTitle?: string | null;
+}
+
+interface OpenCodeActiveToolState {
+  message: string;
+  lastSeenAt: number;
 }
 
 export interface OpenCodeSessionExecutor {
@@ -26,10 +37,16 @@ export interface OpenCodeSessionExecutor {
     agent?: string;
     sessionId?: string | null;
     staleProgressTimeoutMs?: number;
+    activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
-  }): Promise<{ sessionId?: string | null; output: string[]; terminalError?: string | null }>;
+  }): Promise<{
+    sessionId?: string | null;
+    output: string[];
+    terminalError?: string | null;
+    finalMessageText?: string | null;
+  }>;
 }
 
 export interface OpenCodePermissionRequest {
@@ -73,7 +90,11 @@ export function extractModelsFromProvidersPayload(payload: unknown): LaunchModel
     }
   }
   const seen = new Set<string>();
-  return models.filter((model) => (seen.has(model.id) ? false : (seen.add(model.id), true)));
+  return models.filter((model) => {
+    if (seen.has(model.id)) return false;
+    seen.add(model.id);
+    return true;
+  });
 }
 
 export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
@@ -88,16 +109,23 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     agent?: string;
     sessionId?: string | null;
     staleProgressTimeoutMs?: number;
+    activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
-  }): Promise<{ sessionId?: string | null; output: string[]; terminalError?: string | null }> {
+  }): Promise<{
+    sessionId?: string | null;
+    output: string[];
+    terminalError?: string | null;
+    finalMessageText?: string | null;
+  }> {
     const [providerID, modelID] = parseModelId(input.model.id);
     if (!providerID || !modelID) {
       return {
         sessionId: null,
         output: [`invalid model id: ${input.model.id}`],
         terminalError: `invalid model id: ${input.model.id}`,
+        finalMessageText: null,
       };
     }
     const sdk = await createAfkOpencodeWith(this.factory);
@@ -105,12 +133,17 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     let eventTask: Promise<void> | undefined;
     const terminalErrors: string[] = [];
     let lastMeaningfulProgressAt = Date.now();
+    let activeTool: OpenCodeActiveToolState | null = null;
     let staleRecoveries = 0;
     const staleProgressTimeoutMs = input.staleProgressTimeoutMs ?? DEFAULT_STALE_PROGRESS_TIMEOUT_MS;
+    const activeToolStaleTimeoutMs = input.activeToolStaleTimeoutMs ?? DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS;
     const maxStaleRecoveries = input.maxStaleRecoveries ?? DEFAULT_MAX_STALE_RECOVERIES;
     const onProgress = (event: OpenCodeSessionProgressEvent) => {
       input.onProgress?.(event);
-      if (isMeaningfulProgress(event)) lastMeaningfulProgressAt = Date.now();
+      if (!isMeaningfulProgress(event)) return;
+      const now = Date.now();
+      lastMeaningfulProgressAt = now;
+      activeTool = updateActiveToolState(activeTool, event, now);
     };
     try {
       const sessionId = input.sessionId?.trim() || (await createSession(sdk.client, input.title));
@@ -144,38 +177,44 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
             body: buildPromptBody({ providerID, modelID, agent: input.agent, prompt: promptText }),
           }),
           staleProgressTimeoutMs,
+          activeToolStaleTimeoutMs,
           getLastMeaningfulProgressAt: () => lastMeaningfulProgressAt,
+          getActiveTool: () => activeTool,
         });
         if (promptResult === 'completed') break;
         staleRecoveries += 1;
         onProgress({
-          message: `opencode session stale after ${formatDuration(staleProgressTimeoutMs)}; interrupting session`,
+          message: promptResult.message,
           sessionId: sessionId || null,
         });
         await abortSession(sdk.client, sessionId, onProgress);
         if (staleRecoveries > maxStaleRecoveries) {
           const sessionOutput = sessionId
             ? await readSessionOutput(sdk.client, sessionId)
-            : { lines: [], terminalError: null };
+            : { lines: [], terminalError: null, finalMessageText: null };
           const terminalError = `opencode session stale after ${maxStaleRecoveries} recovery attempts`;
           onProgress({ message: terminalError, sessionId: sessionId || null });
-          return { sessionId: sessionId || null, output: sessionOutput.lines, terminalError };
+          return { sessionId: sessionId || null, output: sessionOutput.lines, terminalError, finalMessageText: null };
         }
         onProgress({
           message: `opencode stale recovery attempt ${staleRecoveries}/${maxStaleRecoveries}`,
           sessionId: sessionId || null,
         });
         lastMeaningfulProgressAt = Date.now();
+        activeTool = null;
         promptText = buildStaleRecoveryPrompt(input.prompt, staleRecoveries, maxStaleRecoveries);
       }
       onProgress({ message: 'opencode prompt completed', sessionId: sessionId || null });
       const sessionOutput = sessionId
         ? await readSessionOutput(sdk.client, sessionId)
-        : { lines: [], terminalError: null };
+        : { lines: [], terminalError: null, finalMessageText: null };
       return {
         sessionId: sessionId || null,
         output: sessionOutput.lines,
-        terminalError: terminalErrors[0] ?? sessionOutput.terminalError ?? null,
+        terminalError: sessionOutput.finalMessageText
+          ? null
+          : (terminalErrors[0] ?? sessionOutput.terminalError ?? null),
+        finalMessageText: sessionOutput.finalMessageText,
       };
     } finally {
       abortController.abort();
@@ -189,7 +228,7 @@ async function createSession(client: unknown, title: string): Promise<string> {
   const sessionResponse = await (
     client as { session: { create: (options: unknown) => Promise<unknown> } }
   ).session.create({ body: { title } });
-  const session = unwrap(sessionResponse);
+  const session = unwrap(sessionResponse) as { id?: unknown } | null;
   return String(session?.id ?? '');
 }
 
@@ -208,13 +247,25 @@ function buildPromptBody(input: { providerID: string; modelID: string; agent?: s
 async function waitForPromptOrStale(input: {
   prompt: Promise<unknown>;
   staleProgressTimeoutMs: number;
+  activeToolStaleTimeoutMs: number;
   getLastMeaningfulProgressAt: () => number;
-}): Promise<'completed' | 'stale'> {
+  getActiveTool: () => OpenCodeActiveToolState | null;
+}): Promise<'completed' | { status: 'stale'; message: string }> {
   const prompt = input.prompt.then(() => 'completed' as const);
   prompt.catch(() => undefined);
   while (true) {
-    const remaining = input.staleProgressTimeoutMs - (Date.now() - input.getLastMeaningfulProgressAt());
-    if (remaining <= 0) return 'stale';
+    const activeTool = input.getActiveTool();
+    const timeoutMs = activeTool ? input.activeToolStaleTimeoutMs : input.staleProgressTimeoutMs;
+    const lastProgressAt = activeTool ? activeTool.lastSeenAt : input.getLastMeaningfulProgressAt();
+    const remaining = timeoutMs - (Date.now() - lastProgressAt);
+    if (remaining <= 0) {
+      return {
+        status: 'stale',
+        message: activeTool
+          ? `opencode tool stale after ${formatDuration(timeoutMs)}: ${activeTool.message}; interrupting session`
+          : `opencode session stale after ${formatDuration(timeoutMs)}; interrupting session`,
+      };
+    }
     const result = await Promise.race([
       prompt,
       new Promise<'tick'>((resolve) => setTimeout(() => resolve('tick'), Math.min(remaining, 1_000))),
@@ -249,6 +300,7 @@ function buildStaleRecoveryPrompt(originalPrompt: string, attempt: number, maxAt
     'Continue in this same session. Use the existing transcript, current worktree state, and any completed work already present.',
     'Do not restart discovery from scratch unless the current state requires it.',
     'Continue the original AFK ticket requirements. Before exiting, update the ticket file with the final status and append/update `## AFK Summary` if complete.',
+    'End your final assistant message with exactly one AFK result sentinel line: `AFK_TICKET_RESULT: success` when complete, or `AFK_TICKET_RESULT: failed` when incomplete or blocked.',
     '',
     'Original AFK prompt for reference:',
     originalPrompt,
@@ -259,6 +311,19 @@ function isMeaningfulProgress(event: OpenCodeSessionProgressEvent): boolean {
   if (event.kind === 'permission') return true;
   if (event.message === 'opencode session busy' || event.message === 'opencode session idle') return false;
   return Boolean(event.message.trim());
+}
+
+function updateActiveToolState(
+  current: OpenCodeActiveToolState | null,
+  event: OpenCodeSessionProgressEvent,
+  now: number,
+): OpenCodeActiveToolState | null {
+  if (event.activity !== 'tool') return current;
+  if (event.toolStatus === 'running') {
+    return { message: event.message, lastSeenAt: now };
+  }
+  if (event.toolStatus === 'completed' || event.toolStatus === 'error') return null;
+  return current ? { ...current, message: event.message, lastSeenAt: now } : current;
 }
 
 function formatDuration(ms: number): string {
@@ -399,28 +464,31 @@ export function parseOpenCodeEvent(event: unknown, sessionId: string): OpenCodeS
     return formatPermissionRequest(item, sessionId);
   if (item.type === 'permission.replied') return formatPermissionReply(item, sessionId);
   if (item.type === 'message.part.updated')
-    return messageProgress(
-      formatOpenCodePart(item.properties?.part, sessionId, item.properties as { delta?: string }),
-      sessionId,
-    );
+    return formatOpenCodePart(item.properties?.part, sessionId, item.properties as { delta?: string });
   if (item.type === 'message.updated') {
     const info = item.properties?.info as { sessionID?: string; finish?: string } | undefined;
     if (info?.sessionID === sessionId && info.finish)
-      return messageProgress(`assistant finished: ${info.finish}`, sessionId);
+      return messageProgress(`assistant finished: ${info.finish}`, sessionId, { activity: 'assistant' });
   }
   if (item.type === 'session.status' && item.properties?.sessionID === sessionId)
-    return messageProgress(formatSessionStatus(item.properties.status), sessionId);
+    return messageProgress(formatSessionStatus(item.properties.status), sessionId, { activity: 'session' });
   if (item.type === 'session.idle' && item.properties?.sessionID === sessionId)
-    return messageProgress('opencode session idle', sessionId);
+    return messageProgress('opencode session idle', sessionId, { activity: 'session' });
   if (item.type === 'session.error' && item.properties?.sessionID === sessionId)
-    return messageProgress(formatMessageError(item.properties.error) ?? 'opencode session error', sessionId);
+    return messageProgress(formatMessageError(item.properties.error) ?? 'opencode session error', sessionId, {
+      activity: 'session',
+    });
   if (item.type === 'session.diff' && item.properties?.sessionID === sessionId)
-    return messageProgress(formatSessionDiff(item.properties.diff), sessionId);
+    return messageProgress(formatSessionDiff(item.properties.diff), sessionId, { activity: 'diff' });
   return null;
 }
 
-function messageProgress(message: string | null, sessionId: string): OpenCodeSessionProgressEvent | null {
-  return message ? { kind: 'message', message, sessionId } : null;
+function messageProgress(
+  message: string | null,
+  sessionId: string,
+  extra: Partial<OpenCodeSessionProgressEvent> = {},
+): OpenCodeSessionProgressEvent | null {
+  return message ? { kind: 'message', message, sessionId, ...extra } : null;
 }
 
 function formatPermissionRequest(item: { properties?: unknown }, sessionId: string): OpenCodeSessionProgressEvent {
@@ -436,6 +504,7 @@ function formatPermissionRequest(item: { properties?: unknown }, sessionId: stri
   const id = permissionId ? ` (${permissionId})` : '';
   return {
     kind: 'permission',
+    activity: 'permission',
     message: `opencode permission required: ${permissionType}${target}; ${permissionTitle}; requested ${actionName}${id}`,
     sessionId,
     permissionId,
@@ -452,6 +521,7 @@ function formatPermissionReply(item: { properties?: unknown }, sessionId: string
   const response = readString(properties.response) ?? 'answered';
   return {
     kind: 'message',
+    activity: 'permission',
     message: `opencode permission ${response}${permissionId ? ` (${permissionId})` : ''}`,
     sessionId,
     permissionId,
@@ -522,16 +592,20 @@ function formatSessionDiff(diff: unknown[] | undefined): string | null {
   return `updated diff: ${diff.length} file${diff.length === 1 ? '' : 's'}`;
 }
 
-function formatOpenCodePart(part: unknown, sessionId: string, eventProperties?: { delta?: string }): string | null {
+function formatOpenCodePart(
+  part: unknown,
+  sessionId: string,
+  eventProperties?: { delta?: string },
+): OpenCodeSessionProgressEvent | null {
   const item = part as { sessionID?: string; type?: string; text?: string; tool?: string; state?: unknown } | null;
   if (!item || item.sessionID !== sessionId) return null;
   if ((item.type === 'text' || item.type === 'reasoning') && (eventProperties?.delta || item.text)) {
     const text = lastNonEmptyLine(eventProperties?.delta ?? item.text ?? '');
-    return text ? `${item.type}: ${text}` : null;
+    return messageProgress(text ? `${item.type}: ${text}` : null, sessionId, { activity: 'assistant' });
   }
-  if (item.type === 'tool') return formatToolPart(item.tool, item.state);
-  if (item.type === 'patch') return 'updated patch';
-  return item.type ? `updated ${item.type}` : null;
+  if (item.type === 'tool') return formatToolProgress(item.tool, item.state, sessionId);
+  if (item.type === 'patch') return messageProgress('updated patch', sessionId, { activity: 'other' });
+  return messageProgress(item.type ? `updated ${item.type}` : null, sessionId, { activity: 'other' });
 }
 
 function formatToolPart(tool: string | undefined, state: unknown): string | null {
@@ -542,6 +616,19 @@ function formatToolPart(tool: string | undefined, state: unknown): string | null
   if (value.status === 'completed') return `${name} completed${value.title ? `: ${value.title}` : ''}`;
   if (value.status === 'error') return `${name} failed${value.error ? `: ${value.error}` : ''}`;
   return `${name} ${value.status}`;
+}
+
+function formatToolProgress(
+  tool: string | undefined,
+  state: unknown,
+  sessionId: string,
+): OpenCodeSessionProgressEvent | null {
+  const value = state as { status?: string } | null;
+  return messageProgress(formatToolPart(tool, state), sessionId, {
+    activity: 'tool',
+    toolName: tool ?? null,
+    toolStatus: value?.status ?? null,
+  });
 }
 
 function lastNonEmptyLine(value: string): string {
@@ -583,9 +670,9 @@ function normalizeModelEntries(
 async function readSessionOutput(
   client: unknown,
   sessionId: string,
-): Promise<{ lines: string[]; terminalError: string | null }> {
+): Promise<{ lines: string[]; terminalError: string | null; finalMessageText: string | null }> {
   const sessionClient = (client as { session?: { messages?: (options?: unknown) => Promise<unknown> } }).session;
-  if (!sessionClient?.messages) return { lines: [], terminalError: null };
+  if (!sessionClient?.messages) return { lines: [], terminalError: null, finalMessageText: null };
   const response = await callSessionMessages(sessionClient.messages.bind(sessionClient), sessionId);
   return extractSessionOutput(unwrap(response));
 }
@@ -605,7 +692,11 @@ export function extractSessionOutputLines(payload: unknown): string[] {
   return extractSessionOutput(payload).lines;
 }
 
-export function extractSessionOutput(payload: unknown): { lines: string[]; terminalError: string | null } {
+export function extractSessionOutput(payload: unknown): {
+  lines: string[];
+  terminalError: string | null;
+  finalMessageText: string | null;
+} {
   const messages = normalizeSessionMessages(payload);
   const lines: string[] = [];
   for (const message of messages) {
@@ -632,7 +723,33 @@ export function extractSessionOutput(payload: unknown): { lines: string[]; termi
       if (typeof value === 'string') lines.push(...splitNonEmptyLines(value));
     }
   }
-  return { lines: uniqueNonEmpty(lines), terminalError: extractFinalTurnTerminalError(messages) };
+  return {
+    lines: uniqueNonEmpty(lines),
+    terminalError: extractFinalTurnTerminalError(messages),
+    finalMessageText: extractFinalAssistantMessageText(messages),
+  };
+}
+
+function extractFinalAssistantMessageText(messages: unknown[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = messages[index] as {
+      role?: unknown;
+      info?: unknown;
+      parts?: unknown[];
+      text?: string;
+      content?: string;
+      message?: string;
+      output?: string;
+    } | null;
+    if (!isAssistantMessage(item)) continue;
+    const lines: string[] = [];
+    for (const part of Array.isArray(item?.parts) ? item.parts : []) lines.push(...formatSessionPart(part));
+    for (const value of [item?.text, item?.content, item?.message, item?.output]) {
+      if (typeof value === 'string') lines.push(...splitNonEmptyLines(value));
+    }
+    return lines.join('\n') || null;
+  }
+  return null;
 }
 
 function extractFinalTurnTerminalError(messages: unknown[]): string | null {
@@ -649,8 +766,7 @@ function extractFinalTurnTerminalError(messages: unknown[]): string | null {
 }
 
 function isAssistantMessage(message: { role?: unknown; info?: unknown } | null): boolean {
-  const role =
-    readString(message?.role) ?? readString((message?.info as { role?: unknown } | undefined)?.role) ?? null;
+  const role = readString(message?.role) ?? readString((message?.info as { role?: unknown } | undefined)?.role) ?? null;
   return role === 'assistant';
 }
 
@@ -706,10 +822,14 @@ function splitNonEmptyLines(value: string): string[] {
 
 function uniqueNonEmpty(lines: string[]): string[] {
   const seen = new Set<string>();
-  return lines.filter((line) => line && (seen.has(line) ? false : (seen.add(line), true)));
+  return lines.filter((line) => {
+    if (!line || seen.has(line)) return false;
+    seen.add(line);
+    return true;
+  });
 }
 
-function unwrap<T>(value: T): any {
+function unwrap<T>(value: T): unknown {
   if (value && typeof value === 'object' && 'data' in (value as Record<string, unknown>)) {
     return (value as unknown as { data: unknown }).data;
   }
