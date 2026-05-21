@@ -77,15 +77,12 @@ function parseFrontmatter(content: string): Record<string, unknown> {
 function parseStatus(content: string, frontmatter: Record<string, unknown>): string | undefined {
   const frontmatterStatus = frontmatter.status;
   if (typeof frontmatterStatus === 'string' && frontmatterStatus.trim()) return frontmatterStatus.trim();
-  const statusLine = content.match(/^Status:\s*(.+)$/im)?.[1]?.trim();
-  if (statusLine) return statusLine;
-  const headingMatch = content.match(/^##\s+Status\s*$([\s\S]*?)(?:^##\s+|Z)/im);
-  const headingBody = headingMatch?.[1]?.trim();
-  return headingBody ? headingBody.split(/\r?\n/)[0].trim() : undefined;
+  void content;
+  return undefined;
 }
 
 function extractSummaries(content: string): SummaryAttempt[] {
-  const blocks = [...content.matchAll(/^##\s+AFK Summary\s*$([\s\S]*?)(?=^##\s+|Z)/gim)];
+  const blocks = [...content.matchAll(/(?:^|\r?\n)##\s+AFK Summary\s*\r?\n([\s\S]*?)(?=(?:\r?\n##\s+)|$)/gi)];
   return blocks.map((match, index) => {
     const text = (match[1] ?? '').trim();
     return { text, fields: parseFields(text), index };
