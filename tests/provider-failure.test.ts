@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { detectPreflightFailureReason, formatPreflightFailure } from '../src/cli.js';
-import { classifyProviderFailure, formatProviderFailureMessage } from '../src/provider-failure.js';
+import { classifyProviderFailure, detectKimiFailure, formatProviderFailureMessage } from '../src/provider-failure.js';
 
 test('classifies Copilot unavailable-model errors and extracts alternatives', () => {
   const classification = classifyProviderFailure(
@@ -74,4 +74,18 @@ test('classifies missing dependency failures', () => {
 test('classifies stale opencode sessions', () => {
   const classification = classifyProviderFailure('opencode session stale after 3 recovery attempts');
   assert.equal(classification?.kind, 'opencode-session-stale');
+});
+
+test('classifies stale kimi sessions', () => {
+  const classification = classifyProviderFailure('kimi session stale after 3 recovery attempts');
+  assert.equal(classification?.kind, 'kimi-session-stale');
+});
+
+test('detects kimi-specific failures in output', () => {
+  assert.equal(detectKimiFailure(['kimi error: CLI not found']), 'kimi error: CLI not found');
+  assert.equal(detectKimiFailure(['some normal output', 'kimi error: LLM not set']), 'kimi error: LLM not set');
+  assert.equal(detectKimiFailure(['kimi error: chat provider error']), 'kimi error: chat provider error');
+  assert.equal(detectKimiFailure(['context overflow']), 'context overflow');
+  assert.equal(detectKimiFailure(['max steps reached']), 'max steps reached');
+  assert.equal(detectKimiFailure(['all good here']), null);
 });
