@@ -1,6 +1,6 @@
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
-import { formatProviderFailureMessage } from './provider-failure.js';
+import { detectKimiFailure, formatProviderFailureMessage } from './provider-failure.js';
 import { areAllPathsAllowedForAfkWrite, areAllPathsInAssignedWorktree } from './repo-boundary.js';
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 
@@ -106,9 +106,17 @@ export class FakeAgentExecutionProvider implements AgentExecutionProvider {
   }
 }
 
-export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
+export interface BaseSDKAgentExecutionProviderConfig {
+  providerName: string;
+  agentName?: string;
+  failureDetector: (output: string[]) => string | null;
+  sessionIdUnavailableReason: string;
+}
+
+export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
   constructor(
     private readonly executor: OpenCodeSessionExecutor,
+    private readonly config: BaseSDKAgentExecutionProviderConfig,
     private readonly permissionCoordinator?: PermissionCoordinator,
   ) {}
 
@@ -120,16 +128,21 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
       const invocationMode = request.invocationMode ?? 'execution';
       const model =
         invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
+      const providerName = this.config.providerName;
       request.onProgress?.({
         ticketLabel: ticket.label,
-        message: invocationMode === 'reviewer' ? 'starting opencode reviewer session' : 'starting opencode session',
+        message:
+          invocationMode === 'reviewer'
+            ? `starting ${providerName} reviewer session`
+            : `starting ${providerName} session`,
       });
       const result = await this.executor.run({
         model,
         prompt: request.prompt,
         title: invocationMode === 'reviewer' ? `afk review: ${ticket.label}` : `afk: ${ticket.label}`,
-        agent: invocationMode === 'reviewer' ? undefined : 'build',
+        agent: invocationMode === 'reviewer' ? undefined : this.config.agentName,
         sessionId: invocationMode === 'execution' ? request.sessionId : null,
+        workDir: request.plan.checkout?.worktreePath,
         onProgress: (event) => request.onProgress?.({ ticketLabel: ticket.label, ...event }),
         decidePermission: (permissionRequest) =>
           decideAfkPermission(permissionRequest, {
@@ -145,7 +158,7 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
       const finalResult = invocationMode === 'execution' ? parseAfkTicketResult(result.finalMessageText) : null;
       const failureReason = finalResult
         ? formatAfkTicketFailure(finalResult)
-        : (result.terminalError ?? detectOpenCodeFailure(result.output ?? []));
+        : (result.terminalError ?? this.config.failureDetector(result.output ?? []));
       if (failureReason) {
         request.onProgress?.({
           ticketLabel: ticket.label,
@@ -162,11 +175,11 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         ticketLabel: ticket.label,
         message: failureReason
           ? invocationMode === 'reviewer'
-            ? `opencode reviewer session failed: ${failureReason}`
-            : `opencode session failed: ${failureReason}`
+            ? `${providerName} reviewer session failed: ${failureReason}`
+            : `${providerName} session failed: ${failureReason}`
           : invocationMode === 'reviewer'
-            ? 'opencode reviewer session completed'
-            : 'opencode session completed',
+            ? `${providerName} reviewer session completed`
+            : `${providerName} session completed`,
         sessionId: result.sessionId ?? null,
       });
       return {
@@ -174,10 +187,10 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         sessionId: result.sessionId ?? null,
         removable: !failureReason,
         output: result.output,
-        unsafeReason: failureReason ?? (result.sessionId ? null : 'session id unavailable from opencode'),
+        unsafeReason: failureReason ?? (result.sessionId ? null : this.config.sessionIdUnavailableReason),
       };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'opencode execution failed';
+      const reason = error instanceof Error ? error.message : `${this.config.providerName} execution failed`;
       const invocationMode = request.invocationMode ?? 'execution';
       const model =
         invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
@@ -186,15 +199,59 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         kind: 'failure',
         message: formatProviderFailureMessage({ modelId: model?.id ?? 'unknown', mode: invocationMode, reason }),
       });
-      request.onProgress?.({ ticketLabel: ticket.label, message: `opencode execution failed: ${reason}` });
+      request.onProgress?.({
+        ticketLabel: ticket.label,
+        message: `${this.config.providerName} execution failed: ${reason}`,
+      });
       return {
         status: 'failed',
         sessionId: null,
         removable: false,
         unsafeReason: reason,
-        output: ['opencode execution failed'],
+        output: [`${this.config.providerName} execution failed`],
       };
     }
+  }
+}
+
+export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
+  private readonly base: BaseSDKAgentExecutionProvider;
+
+  constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
+    this.base = new BaseSDKAgentExecutionProvider(
+      executor,
+      {
+        providerName: 'opencode',
+        agentName: 'build',
+        failureDetector: detectOpenCodeFailure,
+        sessionIdUnavailableReason: 'session id unavailable from opencode',
+      },
+      permissionCoordinator,
+    );
+  }
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    return this.base.execute(request);
+  }
+}
+
+export class KimiAgentExecutionProvider implements AgentExecutionProvider {
+  private readonly base: BaseSDKAgentExecutionProvider;
+
+  constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
+    this.base = new BaseSDKAgentExecutionProvider(
+      executor,
+      {
+        providerName: 'kimi',
+        failureDetector: detectKimiFailure,
+        sessionIdUnavailableReason: 'session id unavailable from kimi',
+      },
+      permissionCoordinator,
+    );
+  }
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    return this.base.execute(request);
   }
 }
 
