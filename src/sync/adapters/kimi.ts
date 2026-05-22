@@ -13,14 +13,14 @@ export const KimiSyncAdapter: SyncAdapter = {
     return [
       {
         name: 'skills',
-        sourceRoot: 'artifacts/kimi/skills',
+        sourceRoot: 'artifacts/skills',
         destinationRoot: path.join(configRoot, 'skills'),
         destinationBase: configRoot,
         extensions: ['.md', '.toml', '.json'],
       },
       {
         name: 'prompts',
-        sourceRoot: 'artifacts/kimi/prompts',
+        sourceRoot: 'artifacts/prompts',
         destinationRoot: path.join(configRoot, 'prompts'),
         destinationBase: configRoot,
         extensions: ['.md'],

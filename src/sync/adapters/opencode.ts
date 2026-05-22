@@ -12,23 +12,16 @@ export const OpenCodeSyncAdapter: SyncAdapter = {
     const configRoot = openCodeConfigRoot();
     return [
       {
-        name: 'agents',
-        sourceRoot: 'artifacts/opencode/agents',
+        name: 'skills',
+        sourceRoot: 'artifacts/skills',
         destinationRoot: path.join(configRoot, 'agents'),
         destinationBase: configRoot,
         extensions: ['.md'],
       },
       {
         name: 'prompts',
-        sourceRoot: 'artifacts/opencode/prompts',
+        sourceRoot: 'artifacts/prompts',
         destinationRoot: path.join(configRoot, 'prompts'),
-        destinationBase: configRoot,
-        extensions: ['.md'],
-      },
-      {
-        name: 'commands',
-        sourceRoot: 'artifacts/opencode/commands',
-        destinationRoot: path.join(configRoot, 'command'),
         destinationBase: configRoot,
         extensions: ['.md'],
       },

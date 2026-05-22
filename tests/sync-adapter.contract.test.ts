@@ -8,10 +8,10 @@ import { formatSyncReport } from '../src/sync/engine.js';
 
 test('adapter provides mappings without hard-coded core paths', () => {
   const categories = OpenCodeSyncAdapter.assetCategories();
-  assert.equal(categories.length, 3);
+  assert.equal(categories.length, 2);
   assert.deepEqual(
     categories.map((c) => path.basename(c.destinationRoot)),
-    ['agents', 'prompts', 'command'],
+    ['agents', 'prompts'],
   );
   assert.deepEqual(
     categories.map((c) => c.destinationBase),
@@ -25,14 +25,14 @@ test('sync report renders reviewable counts and actions', () => {
     counts: { created: 1, updated: 2, unchanged: 3, skipped: 4 },
     actions: [
       {
-        category: 'agents',
-        sourcePath: 'artifacts/opencode/agents/a.md',
+        category: 'skills',
+        sourcePath: 'artifacts/skills/a.md',
         destinationPath: '~/.config/opencode/agents/a.md',
         status: 'created',
       },
       {
         category: 'prompts',
-        sourcePath: 'artifacts/opencode/prompts/b.md',
+        sourcePath: 'artifacts/prompts/b.md',
         destinationPath: '~/.config/opencode/prompts/b.md',
         status: 'updated',
       },
@@ -41,20 +41,20 @@ test('sync report renders reviewable counts and actions', () => {
 
   assert.match(output, /Adapter: opencode/);
   assert.match(output, /Created: 1/);
-  assert.match(output, /UPDATED prompts: artifacts\/opencode\/prompts\/b\.md -> ~\/\.config\/opencode\/prompts\/b\.md/);
+  assert.match(output, /UPDATED prompts: artifacts\/prompts\/b\.md -> ~\/\.config\/opencode\/prompts\/b\.md/);
 });
 
 test('internal AFK prompt is not a syncable opencode artifact', async () => {
-  await assert.rejects(access('artifacts/opencode/prompts/afk-prompt.md'));
+  await assert.rejects(access('artifacts/prompts/afk-prompt.md'));
   await assert.doesNotReject(access('src/prompts/afk-prompt.md'));
 });
 
-test('interview-me agent is a syncable opencode artifact', async () => {
-  await assert.doesNotReject(access('artifacts/opencode/agents/interview-me.md'));
+test('interview-me skill is a syncable artifact', async () => {
+  await assert.doesNotReject(access('artifacts/skills/interview-me.md'));
 });
 
-test('afk-config command is a syncable opencode slash command', async () => {
-  await assert.doesNotReject(access('artifacts/opencode/commands/afk-config.md'));
+test('afk-config skill is a syncable artifact', async () => {
+  await assert.doesNotReject(access('artifacts/skills/afk-config.md'));
 });
 
 test('kimi adapter provides mappings without hard-coded core paths', () => {
@@ -77,13 +77,13 @@ test('kimi sync report renders reviewable counts and actions', () => {
     actions: [
       {
         category: 'skills',
-        sourcePath: 'artifacts/kimi/skills/a.md',
+        sourcePath: 'artifacts/skills/a.md',
         destinationPath: '~/.kimi/skills/a.md',
         status: 'created',
       },
       {
         category: 'prompts',
-        sourcePath: 'artifacts/kimi/prompts/b.md',
+        sourcePath: 'artifacts/prompts/b.md',
         destinationPath: '~/.kimi/prompts/b.md',
         status: 'updated',
       },
@@ -92,5 +92,5 @@ test('kimi sync report renders reviewable counts and actions', () => {
 
   assert.match(output, /Adapter: kimi/);
   assert.match(output, /Created: 1/);
-  assert.match(output, /UPDATED prompts: artifacts\/kimi\/prompts\/b\.md -> ~\/\.kimi\/prompts\/b\.md/);
+  assert.match(output, /UPDATED prompts: artifacts\/prompts\/b\.md -> ~\/\.kimi\/prompts\/b\.md/);
 });

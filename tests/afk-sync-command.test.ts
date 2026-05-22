@@ -9,17 +9,16 @@ import { AssetSyncEngine, formatSyncReport } from '../src/sync/engine.js';
 
 async function makeFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'afk-opencode-sync-'));
-  const artifacts = path.join(root, 'artifacts', 'opencode');
+  const artifacts = path.join(root, 'artifacts');
   const opencode = path.join(root, '.config', 'opencode');
-  await mkdir(path.join(artifacts, 'agents'), { recursive: true });
+  await mkdir(path.join(artifacts, 'skills'), { recursive: true });
   await mkdir(path.join(artifacts, 'prompts'), { recursive: true });
-  await mkdir(path.join(artifacts, 'commands'), { recursive: true });
   return { root, artifacts, opencode };
 }
 
 async function makeKimiFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'afk-kimi-sync-'));
-  const artifacts = path.join(root, 'artifacts', 'kimi');
+  const artifacts = path.join(root, 'artifacts');
   const kimi = path.join(root, '.kimi');
   await mkdir(path.join(artifacts, 'skills'), { recursive: true });
   await mkdir(path.join(artifacts, 'prompts'), { recursive: true });
@@ -28,33 +27,31 @@ async function makeKimiFixture() {
 
 test('syncs initial opencode asset categories into the destination tree', async () => {
   const { artifacts, opencode } = await makeFixture();
-  await writeFile(path.join(artifacts, 'agents', 'alpha.md'), '# alpha');
+  await writeFile(path.join(artifacts, 'skills', 'alpha.md'), '# alpha');
   await writeFile(path.join(artifacts, 'prompts', 'beta.md'), '# beta');
-  await writeFile(path.join(artifacts, 'commands', 'gamma.md'), '# gamma');
 
   const engine = new AssetSyncEngine({
     id: 'opencode',
     assetCategories: () =>
       OpenCodeSyncAdapter.assetCategories().map((category) => {
-        const relativeSource = category.sourceRoot.replace('artifacts/opencode/', '');
+        const relativeSource = path.basename(category.sourceRoot);
         const relativeDestination = path.basename(category.destinationRoot);
         return {
           ...category,
           sourceRoot: path.join(artifacts, relativeSource),
-          destinationRoot: path.join(opencode, relativeDestination === 'command' ? 'command' : relativeDestination),
+          destinationRoot: path.join(opencode, relativeDestination),
           destinationBase: opencode,
         };
       }),
   });
 
   const first = await engine.execute();
-  assert.equal(first.counts.created, 3);
+  assert.equal(first.counts.created, 2);
   assert.equal(await readFile(path.join(opencode, 'agents', 'alpha.md'), 'utf8'), '# alpha');
   assert.equal(await readFile(path.join(opencode, 'prompts', 'beta.md'), 'utf8'), '# beta');
-  assert.equal(await readFile(path.join(opencode, 'command', 'gamma.md'), 'utf8'), '# gamma');
 
   const second = await engine.execute();
-  assert.equal(second.counts.unchanged, 3);
+  assert.equal(second.counts.unchanged, 2);
 });
 
 test('syncs initial kimi asset categories into the destination tree', async () => {
@@ -66,7 +63,7 @@ test('syncs initial kimi asset categories into the destination tree', async () =
     id: 'kimi',
     assetCategories: () =>
       KimiSyncAdapter.assetCategories().map((category) => {
-        const relativeSource = category.sourceRoot.replace('artifacts/kimi/', '');
+        const relativeSource = path.basename(category.sourceRoot);
         const relativeDestination = path.basename(category.destinationRoot);
         return {
           ...category,
