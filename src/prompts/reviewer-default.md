@@ -16,10 +16,23 @@ Severity values: `blocker` for data loss/security/core workflow breakage; `major
 
 ## Output Format
 
-Return strict JSON only. Do not include markdown fences, headings, bullets, prose, or any text before/after the JSON object.
+You must return **exactly one JSON object** with no other text.
 
-Required schema: {"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string","suggestedFix":"string optional"}]}
+Rules:
+- Do NOT wrap the output in markdown code fences (no ```json).
+- Do NOT include any text before or after the JSON object.
+- Do NOT split keys or values across multiple lines. The entire JSON must be a single continuous block of text.
+- Every string must be on the same line as its surrounding quotes. Example: {"summary":"This is correct","findings":[]}
+- Do NOT pretty-print, indent, or add newlines inside the JSON object.
 
-Clean pass example: {"summary":"Reviewed implementation and tests; no material issues found.","findings":[]}
+Required schema:
+{"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string","suggestedFix":"string optional"}]}
 
-Finding example: {"summary":"Blocking issues found.","findings":[{"severity":"major","title":"Acceptance criterion unmet","detail":"Specific evidence-backed issue."}]}
+Clean pass example:
+{"summary":"Reviewed implementation and tests; no material issues found.","findings":[]}
+
+Finding example:
+{"summary":"Blocking issues found.","findings":[{"severity":"major","title":"Acceptance criterion unmet","detail":"Specific evidence-backed issue."}]}
+
+If you have no findings, output exactly:
+{"summary":"Clean pass.","findings":[]}

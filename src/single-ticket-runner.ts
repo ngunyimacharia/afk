@@ -28,9 +28,9 @@ const REVIEWER_EMPTY_OUTPUT_FAILURE_KIND = 'reviewer-empty-output';
 const LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND = 'launcher-context-mismatch';
 const MISSING_AFK_SUMMARY_FAILURE_KIND = 'missing-afk-summary';
 const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
-  'The previous reviewer response was malformed.',
-  'Return JSON only with this exact shape: {"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string"}]}.',
-  'Do not include markdown fences, commentary, or extra fields.',
+  'The previous reviewer response was malformed and could not be parsed.',
+  'Return EXACTLY ONE LINE of raw JSON. No markdown fences. No line breaks inside the JSON.',
+  'Valid example: {"summary":"One regression found","findings":[{"severity":"major","title":"Pagination bug","detail":"Job dispatches without page parameter."}]}',
 ].join(' ');
 const MAX_MALFORMED_OUTPUT_SNIPPET_CHARS = 500;
 const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
