@@ -36,6 +36,7 @@ export interface OpenCodeSessionExecutor {
     title: string;
     agent?: string;
     sessionId?: string | null;
+    workDir?: string;
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
@@ -58,13 +59,17 @@ export interface OpenCodePermissionRequest {
 }
 
 export async function discoverOpenCodeModels(): Promise<LaunchModel[]> {
-  const sdk = await createAfkOpencode();
   try {
-    const response = await sdk.client.config.providers();
-    const payload = unwrap(response);
-    return extractModelsFromProvidersPayload(payload);
-  } finally {
-    sdk.server.close();
+    const sdk = await createAfkOpencode();
+    try {
+      const response = await sdk.client.config.providers();
+      const payload = unwrap(response);
+      return extractModelsFromProvidersPayload(payload);
+    } finally {
+      sdk.server.close();
+    }
+  } catch {
+    return [];
   }
 }
 
@@ -292,11 +297,16 @@ async function abortSession(
   }
 }
 
-function buildStaleRecoveryPrompt(originalPrompt: string, attempt: number, maxAttempts: number): string {
+export function buildStaleRecoveryPrompt(
+  originalPrompt: string,
+  attempt: number,
+  maxAttempts: number,
+  providerName = 'OpenCode',
+): string {
   return [
     `AFK stale-session recovery attempt ${attempt}/${maxAttempts}.`,
     '',
-    'The previous turn in this same OpenCode session appeared stale and was interrupted.',
+    `The previous turn in this same ${providerName} session appeared stale and was interrupted.`,
     'Continue in this same session. Use the existing transcript, current worktree state, and any completed work already present.',
     'Do not restart discovery from scratch unless the current state requires it.',
     'Continue the original AFK ticket requirements. Before exiting, update the ticket file with the final status and append/update `## AFK Summary` if complete.',
