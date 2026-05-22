@@ -25,7 +25,7 @@ export interface LaunchModel {
 }
 
 export interface LaunchPreferences {
-  harness?: 'OpenCode';
+  harness?: 'OpenCode' | 'Kimi';
   modelId?: string;
   reviewerModelId?: string;
   concurrency?: number;
