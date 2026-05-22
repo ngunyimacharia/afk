@@ -173,6 +173,24 @@ test('formats prompt message including optional patterns', () => {
   assert.doesNotMatch(withoutPatterns, /Patterns:/);
 });
 
+test('autoApprove option always returns always without prompting', async () => {
+  let promptCalled = false;
+  const coordinator = new PermissionCoordinator({
+    ticketLabel: 'feat/01',
+    autoApprove: true,
+    promptAdapter: async () => {
+      promptCalled = true;
+      return 'once';
+    },
+  });
+
+  const decision = await coordinator.submit(request({ permissionId: 'perm-auto' }));
+  assert.equal(decision, 'always');
+  assert.equal(promptCalled, false);
+  assert.equal(coordinator.history.length, 1);
+  assert.equal(coordinator.history[0]?.decision, 'always');
+});
+
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (condition()) return;

@@ -44,11 +44,12 @@ test('reads empty launch preferences when missing or malformed', () => {
 test('round-trips launch preferences', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
   const store = new RuntimeStore({ repoRoot });
-  store.writeLaunchPreferences({ harness: 'OpenCode', modelId: 'provider/exec', reviewerModelId: 'provider/review' });
+  store.writeLaunchPreferences({ harness: 'OpenCode', modelId: 'provider/exec', reviewerHarness: 'Kimi', reviewerModelId: 'provider/review' });
 
   assert.deepEqual(store.readLaunchPreferences(), {
     harness: 'OpenCode',
     modelId: 'provider/exec',
+    reviewerHarness: 'Kimi',
     reviewerModelId: 'provider/review',
   });
 });

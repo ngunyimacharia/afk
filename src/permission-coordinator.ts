@@ -49,6 +49,7 @@ export interface PermissionCoordinatorOptions {
   ticketLabel?: string;
   promptAdapter?: PermissionPromptAdapter;
   now?: () => Date;
+  autoApprove?: boolean;
 }
 
 export class PermissionPromptCancelledError extends Error {
@@ -77,7 +78,9 @@ export class PermissionCoordinator {
 
   constructor(options: PermissionCoordinatorOptions) {
     this.defaultTicketLabel = options.ticketLabel ?? 'unknown-ticket';
-    this.promptAdapter = options.promptAdapter ?? createManualPermissionPromptAdapter();
+    this.promptAdapter = options.autoApprove
+      ? createAutoApproveAdapter()
+      : (options.promptAdapter ?? createManualPermissionPromptAdapter());
     this.now = options.now ?? (() => new Date());
   }
 
@@ -199,6 +202,10 @@ export function createManualPermissionPromptAdapter(): PermissionPromptAdapter {
 
     return response.decision;
   };
+}
+
+export function createAutoApproveAdapter(): PermissionPromptAdapter {
+  return async () => 'always';
 }
 
 export function formatPermissionPromptMessage(metadata: PermissionPromptMetadata): string {

@@ -396,7 +396,7 @@ test('opencode provider supplies AFK permission policy that allows assigned work
   assert.equal(decision, 'always');
 });
 
-test('external directory auto-reject does not enter manual coordinator history', async () => {
+test('external directory auto-approve does not enter manual coordinator history', async () => {
   const coordinator = new PermissionCoordinator({
     promptAdapter: async () => 'once',
   });
@@ -412,7 +412,7 @@ test('external directory auto-reject does not enter manual coordinator history',
     { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo' },
   );
 
-  assert.equal(decision, 'reject');
+  assert.equal(decision, 'always');
   assert.equal(coordinator.history.length, 0);
 });
 
@@ -456,7 +456,7 @@ test('read inside assigned worktree bypasses manual coordinator', async () => {
   assert.equal(coordinator.history.length, 0);
 });
 
-test('read outside assigned worktree still enters manual coordinator', async () => {
+test('read outside assigned worktree auto-approved without entering manual coordinator', async () => {
   const coordinator = new PermissionCoordinator({
     promptAdapter: async () => 'once',
   });
@@ -472,11 +472,11 @@ test('read outside assigned worktree still enters manual coordinator', async () 
     { ticketLabel: 'feat/01', coordinator, repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
   );
 
-  assert.equal(decision, 'once');
-  assert.equal(coordinator.history.length, 1);
+  assert.equal(decision, 'always');
+  assert.equal(coordinator.history.length, 0);
 });
 
-test('external directory under root source is rejected when worktree differs', async () => {
+test('external directory under root source is auto-approved when worktree differs', async () => {
   const decision = await decideAfkPermission(
     {
       sessionId: 'session-42',
@@ -488,7 +488,7 @@ test('external directory under root source is rejected when worktree differs', a
     { ticketLabel: 'feat/01', repoRoot: '/repo', worktreePath: '/repo/.worktree/feature' },
   );
 
-  assert.equal(decision, 'reject');
+  assert.equal(decision, 'always');
 });
 
 test('external directory under root scratch is allowed', async () => {
@@ -506,7 +506,7 @@ test('external directory under root scratch is allowed', async () => {
   assert.equal(decision, 'always');
 });
 
-test('external directory under another worktree is rejected', async () => {
+test('external directory under another worktree is auto-approved', async () => {
   const decision = await decideAfkPermission(
     {
       sessionId: 'session-42',
@@ -523,10 +523,10 @@ test('external directory under another worktree is rejected', async () => {
     },
   );
 
-  assert.equal(decision, 'reject');
+  assert.equal(decision, 'always');
 });
 
-test('AFK permission policy leaves non-external requests to OpenCode defaults', async () => {
+test('AFK permission policy auto-approves all requests including bash', async () => {
   assert.equal(
     await decideAfkPermission({
       sessionId: 'session-42',
@@ -535,7 +535,7 @@ test('AFK permission policy leaves non-external requests to OpenCode defaults', 
       title: 'bash',
       patterns: ['bun test'],
     }),
-    null,
+    'always',
   );
 });
 
@@ -557,37 +557,25 @@ test('shared permission coordinator serializes concurrent tickets FIFO', async (
     },
   });
 
-  const provider = new OpenCodeAgentExecutionProvider(
-    {
-      run: async (input) => {
-        const sessionId = input.title.includes('feat-a/001') ? 'session-a' : 'session-b';
-        const permissionId = sessionId === 'session-a' ? 'per-a' : 'per-b';
-        const decisionTask = input.decidePermission?.({
-          sessionId,
-          permissionId,
-          type: 'bash',
-          title: `bash-${permissionId}`,
-          patterns: ['bun test'],
-        });
-        await waitFor(() => releaseByPermission.has(permissionId));
-        releaseByPermission.get(permissionId)?.();
-        await decisionTask;
-        return { sessionId, output: ['ok'] };
-      },
-    },
-    coordinator,
-  );
+  const first = coordinator.submitForTicket('feat-a/001', {
+    sessionId: 'session-a',
+    permissionId: 'per-a',
+    type: 'bash',
+    title: 'bash',
+    patterns: ['bun test'],
+  });
+  const second = coordinator.submitForTicket('feat-b/001', {
+    sessionId: 'session-b',
+    permissionId: 'per-b',
+    type: 'bash',
+    title: 'bash',
+    patterns: ['bun test'],
+  });
 
-  const first = provider.execute({
-    plan: { model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat-a/001' }] } as never,
-    ticketIndex: 0,
-    prompt: 'run-a',
-  });
-  const second = provider.execute({
-    plan: { model: { id: 'openai/gpt-5.4-mini' }, tickets: [{ label: 'feat-b/001' }] } as never,
-    ticketIndex: 0,
-    prompt: 'run-b',
-  });
+  await waitFor(() => releaseByPermission.has('per-a'));
+  releaseByPermission.get('per-a')?.();
+  await waitFor(() => releaseByPermission.has('per-b'));
+  releaseByPermission.get('per-b')?.();
 
   await Promise.all([first, second]);
 

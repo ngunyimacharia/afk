@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { KimiAgentExecutionProvider, OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
+import { CompositeAgentExecutionProvider, KimiAgentExecutionProvider, OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
@@ -118,6 +118,7 @@ export async function runAfk(
   let selectedTickets: TicketRecord[] = [];
   let concurrency = 3;
   let harness: 'OpenCode' | 'Kimi' = 'OpenCode';
+  let reviewerHarness: 'OpenCode' | 'Kimi' = 'OpenCode';
 
   const harnessModelCache: Record<string, LaunchModel[]> = {};
   const availableHarnesses: string[] = [];
@@ -162,6 +163,7 @@ export async function runAfk(
     });
     if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
     harness = wizard.harness ?? 'OpenCode';
+    reviewerHarness = wizard.reviewerHarness ?? harness;
     model = wizard.model;
     reviewerModel = wizard.reviewerModel;
     reviewerPrompt = wizard.reviewerPrompt;
@@ -170,6 +172,7 @@ export async function runAfk(
     runtimeStore.writeLaunchPreferences({
       harness: wizard.harness,
       modelId: model?.id,
+      reviewerHarness: wizard.reviewerHarness,
       reviewerModelId: reviewerModel?.id,
       concurrency,
     });
@@ -183,8 +186,9 @@ export async function runAfk(
   if (!model) return { code: 0, message: 'Launch cancelled' };
   if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
   if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
-  const sessionExecutor = harness === 'Kimi' ? new KimiSessionExecutor() : new SDKOpenCodeSessionExecutor();
-  const preflight = await preflightSelectedModels(sessionExecutor, model, reviewerModel, harness);
+  const implementationExecutor = harness === 'Kimi' ? new KimiSessionExecutor() : new SDKOpenCodeSessionExecutor();
+  const reviewerExecutor = reviewerHarness === 'Kimi' ? new KimiSessionExecutor() : new SDKOpenCodeSessionExecutor();
+  const preflight = await preflightSelectedModels(implementationExecutor, model, reviewerExecutor, reviewerModel, harness, reviewerHarness);
   if (preflight) return { code: 1, message: preflight };
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
   selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
@@ -235,20 +239,32 @@ export async function runAfk(
     model,
     selectedTickets,
     checkout,
-    { model: reviewerModel, prompt: reviewerPrompt },
+    { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
     checkoutsByFeature,
   );
-  const permissionCoordinator = new PermissionCoordinator({ ticketLabel: selectedTickets[0]?.label });
+  const permissionCoordinator = new PermissionCoordinator({
+    ticketLabel: selectedTickets[0]?.label,
+    autoApprove: true,
+  });
+  const executionProvider =
+    harness === 'Kimi'
+      ? new KimiAgentExecutionProvider(implementationExecutor, permissionCoordinator)
+      : new OpenCodeAgentExecutionProvider(implementationExecutor, permissionCoordinator);
+  const reviewerProvider =
+    reviewerHarness === 'Kimi'
+      ? new KimiAgentExecutionProvider(reviewerExecutor, permissionCoordinator)
+      : new OpenCodeAgentExecutionProvider(reviewerExecutor, permissionCoordinator);
   const runner = new SingleTicketRunner(
     runtimeStore,
-    harness === 'Kimi'
-      ? new KimiAgentExecutionProvider(sessionExecutor, permissionCoordinator)
-      : new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator),
+    new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     undefined,
     launchPreferences.budgets,
   );
   const scheduler = new Scheduler(runner, concurrency);
-  const progressLine = createProgressLine(io.stdout, { isPromptActive: () => permissionCoordinator.promptActive });
+  const progressLine = createProgressLine(io.stdout, {
+    isPromptActive: () => permissionCoordinator.promptActive,
+    providerName: harness === 'Kimi' ? 'kimi' : 'opencode',
+  });
   const runId = randomUUID();
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
@@ -260,7 +276,9 @@ export async function runAfk(
     code: 0,
     message: [
       `Selected model: ${plan.model.id}`,
+      `Selected harness: ${harness}`,
       `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
+      `Selected reviewer harness: ${reviewerHarness}`,
       `Reviewer prompt: ${plan.reviewerPrompt?.id ?? 'unknown'}`,
       `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
       `Selected features (${selectedFeatures.length}): ${selectedFeatures.join(', ')}`,
@@ -375,15 +393,17 @@ export function expandSelectedFeaturesToAllTickets(
 }
 
 async function preflightSelectedModels(
-  executor: OpenCodeSessionExecutor,
+  implementationExecutor: OpenCodeSessionExecutor,
   model: LaunchModel,
+  reviewerExecutor: OpenCodeSessionExecutor,
   reviewerModel: LaunchModel,
   harness: 'OpenCode' | 'Kimi',
+  reviewerHarness: 'OpenCode' | 'Kimi',
 ): Promise<string | null> {
-  const implementationFailure = await preflightModel(executor, model, 'implementation', harness);
+  const implementationFailure = await preflightModel(implementationExecutor, model, 'implementation', harness);
   if (implementationFailure) return implementationFailure;
-  if (reviewerModel.id === model.id) return null;
-  return preflightModel(executor, reviewerModel, 'reviewer', harness);
+  if (reviewerModel.id === model.id && reviewerHarness === harness) return null;
+  return preflightModel(reviewerExecutor, reviewerModel, 'reviewer', reviewerHarness);
 }
 
 async function preflightModel(

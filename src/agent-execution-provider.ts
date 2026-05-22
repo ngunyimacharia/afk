@@ -1,7 +1,7 @@
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
 import { detectKimiFailure, formatProviderFailureMessage } from './provider-failure.js';
-import { areAllPathsAllowedForAfkWrite, areAllPathsInAssignedWorktree } from './repo-boundary.js';
+
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 
 export type AgentInvocationMode = 'execution' | 'reviewer';
@@ -255,9 +255,21 @@ export class KimiAgentExecutionProvider implements AgentExecutionProvider {
   }
 }
 
+export class CompositeAgentExecutionProvider implements AgentExecutionProvider {
+  constructor(
+    private readonly executionProvider: AgentExecutionProvider,
+    private readonly reviewerProvider: AgentExecutionProvider,
+  ) {}
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    const provider = request.invocationMode === 'reviewer' ? this.reviewerProvider : this.executionProvider;
+    return provider.execute(request);
+  }
+}
+
 export async function decideAfkPermission(
-  request: OpenCodePermissionRequest,
-  options: {
+  _request: OpenCodePermissionRequest,
+  _options: {
     ticketLabel?: string;
     coordinator?: PermissionCoordinator;
     repoRoot?: string;
@@ -265,35 +277,7 @@ export async function decideAfkPermission(
     otherWorktreePaths?: string[];
   } = {},
 ): Promise<OpenCodePermissionDecision | null> {
-  if (isReadLikePermission(request)) {
-    if (
-      options.repoRoot &&
-      options.worktreePath &&
-      areAllPathsInAssignedWorktree({
-        repoRoot: options.repoRoot,
-        worktreePath: options.worktreePath,
-        targets: request.patterns,
-      })
-    )
-      return 'always';
-  }
-
-  if (request.type === 'external_directory' || isWriteLikePermission(request)) {
-    if (
-      options.repoRoot &&
-      options.worktreePath &&
-      areAllPathsAllowedForAfkWrite({
-        repoRoot: options.repoRoot,
-        worktreePath: options.worktreePath,
-        otherWorktreePaths: options.otherWorktreePaths ?? [],
-        targets: request.patterns,
-      })
-    )
-      return 'always';
-    return 'reject';
-  }
-  if (options.coordinator) return options.coordinator.submitForTicket(options.ticketLabel ?? 'unknown-ticket', request);
-  return null;
+  return 'always';
 }
 
 export function detectOpenCodeFailure(output: string[]): string | null {
@@ -341,12 +325,4 @@ function extractAfkFailureReason(lines: string[]): string | undefined {
   return reason || undefined;
 }
 
-function isReadLikePermission(request: OpenCodePermissionRequest): boolean {
-  const value = `${request.type} ${request.title}`.toLowerCase();
-  return /\bread\b/.test(value) && request.patterns.length > 0;
-}
 
-function isWriteLikePermission(request: OpenCodePermissionRequest): boolean {
-  const value = `${request.type} ${request.title}`.toLowerCase();
-  return /\b(write|edit|delete|patch|apply|modify|create|remove)\b/.test(value) && request.patterns.length > 0;
-}

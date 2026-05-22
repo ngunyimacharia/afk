@@ -65,8 +65,9 @@ export class RuntimeStore {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
       const preferences: LaunchPreferences = {
-        harness: value.harness === 'OpenCode' ? 'OpenCode' : undefined,
+        harness: value.harness === 'OpenCode' || value.harness === 'Kimi' ? value.harness : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
+        reviewerHarness: value.reviewerHarness === 'OpenCode' || value.reviewerHarness === 'Kimi' ? value.reviewerHarness : undefined,
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)

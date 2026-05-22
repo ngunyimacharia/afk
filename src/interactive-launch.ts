@@ -11,6 +11,7 @@ export interface LaunchWizardResult {
   cancelled: boolean;
   harness?: 'OpenCode' | 'Kimi';
   model?: LaunchModel;
+  reviewerHarness?: 'OpenCode' | 'Kimi';
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
@@ -43,7 +44,7 @@ export async function runInteractiveLaunchWizard(input: {
   }
 
   const harnessInitial = input.preferences?.harness ? harnessChoices.indexOf(input.preferences.harness) : undefined;
-  const harness = await promptSingleSelect(input.io, 'Select harness', harnessChoices, harnessInitial);
+  const harness = await promptSingleSelect(input.io, 'Select implementation harness', harnessChoices, harnessInitial);
   if (!harness) return { cancelled: true };
 
   const models = await input.discoverModels(harness);
@@ -58,10 +59,29 @@ export async function runInteractiveLaunchWizard(input: {
   const model = models.find((item) => item.id === selectedModelId);
   if (!model) return { cancelled: true };
 
-  const reviewerModelChoices = prioritizeModelChoices(models, input.preferences?.reviewerModelId);
+  const reviewerHarnessChoices = harnessChoices.map((choice) => (choice === harness ? `${choice} (same as implementation)` : choice));
+  const reviewerHarnessInitial = input.preferences?.reviewerHarness
+    ? harnessChoices.indexOf(input.preferences.reviewerHarness)
+    : harnessChoices.indexOf(harness);
+  const selectedReviewerHarnessDisplay = await promptSingleSelect(
+    input.io,
+    'Select reviewer harness',
+    reviewerHarnessChoices,
+    reviewerHarnessInitial >= 0 ? reviewerHarnessInitial : undefined,
+  );
+  if (!selectedReviewerHarnessDisplay) return { cancelled: true };
+  const reviewerHarness = selectedReviewerHarnessDisplay.replace(/ \(same as implementation\)$/, '') as 'OpenCode' | 'Kimi';
+
+  const reviewerModels = reviewerHarness === harness ? models : await input.discoverModels(reviewerHarness);
+  if (!reviewerModels.length) {
+    input.io.stdout.write(`No models available for ${reviewerHarness}. Configure the provider and run \`afk\` again.\n`);
+    return { cancelled: true };
+  }
+
+  const reviewerModelChoices = prioritizeModelChoices(reviewerModels, input.preferences?.reviewerModelId);
   const selectedReviewerModelId = await promptSingleSelect(input.io, 'Select reviewer model', reviewerModelChoices, 0);
   if (!selectedReviewerModelId) return { cancelled: true };
-  const reviewerModel = models.find((item) => item.id === selectedReviewerModelId);
+  const reviewerModel = reviewerModels.find((item) => item.id === selectedReviewerModelId);
   if (!reviewerModel) return { cancelled: true };
 
   const reviewerPrompt = resolveReviewerPromptTemplate();
@@ -75,6 +95,7 @@ export async function runInteractiveLaunchWizard(input: {
     cancelled: false,
     harness: harness as 'OpenCode' | 'Kimi',
     model,
+    reviewerHarness: reviewerHarness as 'OpenCode' | 'Kimi',
     reviewerModel,
     reviewerPrompt,
     tickets: selectedTickets,
