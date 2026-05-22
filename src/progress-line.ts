@@ -8,11 +8,12 @@ export interface ProgressLine {
 
 export interface ProgressLineOptions {
   isPromptActive?: () => boolean;
+  providerName?: string;
 }
 
 export function createProgressLine(stdout: NodeJS.WriteStream, options: ProgressLineOptions = {}): ProgressLine {
   if (!stdout.isTTY) return new NoopProgressLine();
-  return new LogUpdateProgressLine(stdout, options.isPromptActive ?? (() => false));
+  return new LogUpdateProgressLine(stdout, options.isPromptActive ?? (() => false), options.providerName);
 }
 
 class NoopProgressLine implements ProgressLine {
@@ -29,12 +30,15 @@ class LogUpdateProgressLine implements ProgressLine {
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private hasRendered = false;
   private activePermissionKey: string | undefined;
+  private readonly providerName: string;
 
   constructor(
     private readonly stdout: NodeJS.WriteStream,
     private readonly isPromptActive: () => boolean,
+    providerName?: string,
   ) {
     this.logUpdate = createLogUpdate(stdout, { showCursor: true });
+    this.providerName = providerName || 'opencode';
   }
 
   update(event: AgentExecutionProgressEvent): void {
@@ -97,7 +101,7 @@ class LogUpdateProgressLine implements ProgressLine {
     const spinner = LogUpdateProgressLine.spinnerFrames[this.spinnerFrame];
     const prefix = active > 1 ? `${spinner} ${active} active` : spinner;
     const session =
-      event.sessionId && !event.message.includes(event.sessionId) ? ` [opencode: ${event.sessionId}]` : '';
+      event.sessionId && !event.message.includes(event.sessionId) ? ` [${this.providerName}: ${event.sessionId}]` : '';
     return `${prefix}: ${event.message}${session}`;
   }
 
@@ -108,7 +112,7 @@ class LogUpdateProgressLine implements ProgressLine {
     this.stopSpinner();
     if (this.hasRendered) this.logUpdate.done();
     const session =
-      event.sessionId && !event.message.includes(event.sessionId) ? ` [opencode: ${event.sessionId}]` : '';
+      event.sessionId && !event.message.includes(event.sessionId) ? ` [${this.providerName}: ${event.sessionId}]` : '';
     this.stdout.write(`Permission required for ${event.ticketLabel}: ${event.message}${session}\n`);
     this.hasRendered = false;
   }
@@ -117,7 +121,7 @@ class LogUpdateProgressLine implements ProgressLine {
     this.stopSpinner();
     if (this.hasRendered) this.logUpdate.done();
     const session =
-      event.sessionId && !event.message.includes(event.sessionId) ? ` [opencode: ${event.sessionId}]` : '';
+      event.sessionId && !event.message.includes(event.sessionId) ? ` [${this.providerName}: ${event.sessionId}]` : '';
     this.stdout.write(`Provider failure for ${event.ticketLabel}: ${event.message}${session}\n`);
     this.hasRendered = false;
   }

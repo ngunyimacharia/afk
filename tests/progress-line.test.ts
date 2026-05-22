@@ -151,6 +151,19 @@ test('progress line prints durable provider failures', () => {
   assert.match(output, /\[opencode: session-1\]/);
 });
 
+test('progress line uses providerName for kimi harness', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout, { providerName: 'kimi' });
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'kimi session completed', sessionId: 'abc' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /\[kimi: abc\]/);
+  assert.doesNotMatch(output, /\[opencode:/);
+});
+
 function fakeStdout(isTTY: boolean, writes: string[]): NodeJS.WriteStream {
   return {
     isTTY,
