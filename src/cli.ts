@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
+import { KimiAgentExecutionProvider, OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
+import { discoverKimiModels, KimiSessionExecutor } from './kimi.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
@@ -116,16 +117,51 @@ export async function runAfk(
   let reviewerPrompt: { id: string; label: string; path: string } | undefined;
   let selectedTickets: TicketRecord[] = [];
   let concurrency = 3;
+  let harness: 'OpenCode' | 'Kimi' = 'OpenCode';
+
+  const harnessModelCache: Record<string, LaunchModel[]> = {};
+  const availableHarnesses: string[] = [];
   try {
-    const models = await discoverOpenCodeModels();
-    if (!models.length) {
-      return {
-        code: 0,
-        message: 'No OpenCode models available. Configure models in OpenCode and run `afk` again.',
-      };
+    const opencodeModels = await discoverOpenCodeModels();
+    if (opencodeModels.length > 0) {
+      availableHarnesses.push('OpenCode');
+      harnessModelCache.OpenCode = opencodeModels;
     }
-    const wizard = await runInteractiveLaunchWizard({ io, repoRoot, models, tickets, preferences: launchPreferences });
+  } catch {
+    // OpenCode not available
+  }
+  try {
+    const kimiModels = await discoverKimiModels();
+    if (kimiModels.length > 0) {
+      availableHarnesses.push('Kimi');
+      harnessModelCache.Kimi = kimiModels;
+    }
+  } catch {
+    // Kimi not available
+  }
+
+  if (availableHarnesses.length === 0) {
+    return {
+      code: 0,
+      message: 'No harnesses available. Install and configure OpenCode or Kimi.',
+    };
+  }
+
+  try {
+    const wizard = await runInteractiveLaunchWizard({
+      io,
+      repoRoot,
+      availableHarnesses,
+      discoverModels: async (selectedHarness) => {
+        if (harnessModelCache[selectedHarness]) return harnessModelCache[selectedHarness];
+        if (selectedHarness === 'Kimi') return discoverKimiModels();
+        return discoverOpenCodeModels();
+      },
+      tickets,
+      preferences: launchPreferences,
+    });
     if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
+    harness = wizard.harness ?? 'OpenCode';
     model = wizard.model;
     reviewerModel = wizard.reviewerModel;
     reviewerPrompt = wizard.reviewerPrompt;
@@ -138,17 +174,17 @@ export async function runAfk(
       concurrency,
     });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown OpenCode discovery error';
+    const reason = error instanceof Error ? error.message : 'Unknown model discovery error';
     return {
       code: 0,
-      message: `OpenCode model discovery failed. Configure OpenCode and retry.\nReason: ${reason}`,
+      message: `Model discovery failed. Configure the selected provider and retry.\nReason: ${reason}`,
     };
   }
   if (!model) return { code: 0, message: 'Launch cancelled' };
   if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
   if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
-  const sessionExecutor = new SDKOpenCodeSessionExecutor();
-  const preflight = await preflightSelectedModels(sessionExecutor, model, reviewerModel);
+  const sessionExecutor = harness === 'Kimi' ? new KimiSessionExecutor() : new SDKOpenCodeSessionExecutor();
+  const preflight = await preflightSelectedModels(sessionExecutor, model, reviewerModel, harness);
   if (preflight) return { code: 1, message: preflight };
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
   selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
@@ -205,7 +241,9 @@ export async function runAfk(
   const permissionCoordinator = new PermissionCoordinator({ ticketLabel: selectedTickets[0]?.label });
   const runner = new SingleTicketRunner(
     runtimeStore,
-    new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator),
+    harness === 'Kimi'
+      ? new KimiAgentExecutionProvider(sessionExecutor, permissionCoordinator)
+      : new OpenCodeAgentExecutionProvider(sessionExecutor, permissionCoordinator),
     undefined,
     launchPreferences.budgets,
   );
@@ -340,30 +378,32 @@ async function preflightSelectedModels(
   executor: OpenCodeSessionExecutor,
   model: LaunchModel,
   reviewerModel: LaunchModel,
+  harness: 'OpenCode' | 'Kimi',
 ): Promise<string | null> {
-  const implementationFailure = await preflightModel(executor, model, 'implementation');
+  const implementationFailure = await preflightModel(executor, model, 'implementation', harness);
   if (implementationFailure) return implementationFailure;
   if (reviewerModel.id === model.id) return null;
-  return preflightModel(executor, reviewerModel, 'reviewer');
+  return preflightModel(executor, reviewerModel, 'reviewer', harness);
 }
 
 async function preflightModel(
   executor: OpenCodeSessionExecutor,
   model: LaunchModel,
   role: 'implementation' | 'reviewer',
+  harness: 'OpenCode' | 'Kimi',
 ): Promise<string | null> {
   try {
     const result = await executor.run({
       model,
       title: `afk preflight: ${model.id}`,
-      agent: role === 'reviewer' ? 'review' : 'build',
+      agent: role === 'reviewer' ? (harness === 'OpenCode' ? 'review' : undefined) : 'build',
       prompt: 'AFK model availability preflight. Reply OK.',
     });
     const reason = detectPreflightFailureReason(result.output);
-    return reason ? formatPreflightFailure(model.id, role, reason) : null;
+    return reason ? formatPreflightFailure(model.id, role, reason, harness) : null;
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'OpenCode model preflight failed';
-    return formatPreflightFailure(model.id, role, reason);
+    const reason = error instanceof Error ? error.message : `${harness} model preflight failed`;
+    return formatPreflightFailure(model.id, role, reason, harness);
   }
 }
 
@@ -375,12 +415,17 @@ export function detectPreflightFailureReason(output: string[]): string | null {
   return reason ?? null;
 }
 
-export function formatPreflightFailure(modelId: string, role: 'implementation' | 'reviewer', reason: string): string {
+export function formatPreflightFailure(
+  modelId: string,
+  role: 'implementation' | 'reviewer',
+  reason: string,
+  harness: 'OpenCode' | 'Kimi' = 'OpenCode',
+): string {
   const classification = classifyProviderFailure(reason);
   const roleLabel = role === 'implementation' ? 'Implementation model' : 'Reviewer model';
   const title =
     classification?.kind === 'model-unavailable' ? `${roleLabel} unavailable` : `${roleLabel} preflight failed`;
-  const provider = modelId.includes('/') ? modelId.slice(0, modelId.indexOf('/')) : 'unknown';
+  const provider = modelId.includes('/') ? modelId.slice(0, modelId.indexOf('/')) : harness;
   const lines = [
     title,
     '',
@@ -398,7 +443,7 @@ export function formatPreflightFailure(modelId: string, role: 'implementation' |
   const nextStep =
     classification?.kind === 'model-unavailable'
       ? 'No tickets were started. Re-run `afk` and select an available model.'
-      : 'No tickets were started. Fix the OpenCode provider issue and re-run `afk`.';
+      : `No tickets were started. Fix the ${harness} provider issue and re-run \`afk\`.`;
   lines.push('', nextStep);
   return lines.join('\n');
 }
