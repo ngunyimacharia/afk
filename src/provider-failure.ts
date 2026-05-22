@@ -6,6 +6,7 @@ export type ProviderFailureKind =
   | 'patch-context-mismatch'
   | 'dependency-missing'
   | 'opencode-session-stale'
+  | 'kimi-session-stale'
   | 'tool-failed'
   | 'unknown';
 
@@ -34,6 +35,8 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
     return { kind: 'context-overflow', reason: normalizedReason, availableModels: [] };
   if (lower.includes('opencode session stale'))
     return { kind: 'opencode-session-stale', reason: normalizedReason, availableModels: [] };
+  if (lower.includes('kimi session stale'))
+    return { kind: 'kimi-session-stale', reason: normalizedReason, availableModels: [] };
   if (isDependencyMissing(lower)) return { kind: 'dependency-missing', reason: normalizedReason, availableModels: [] };
   if (isPatchContextMismatch(lower))
     return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
@@ -81,6 +84,21 @@ function isPatchContextMismatch(reason: string): boolean {
     reason.includes('context mismatch') ||
     reason.includes('apply_patch verification failed')
   );
+}
+
+export function detectKimiFailure(output: string[]): string | null {
+  const failure = output.find((line) => {
+    const normalized = line.toLowerCase();
+    return (
+      normalized.includes('kimi error:') ||
+      normalized.includes('cli not found') ||
+      normalized.includes('llm not set') ||
+      normalized.includes('chat provider error') ||
+      normalized.includes('context overflow') ||
+      normalized.includes('max steps reached')
+    );
+  });
+  return failure ?? null;
 }
 
 function isDependencyMissing(reason: string): boolean {
