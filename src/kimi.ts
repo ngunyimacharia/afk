@@ -1,4 +1,7 @@
-import { createSession, parseConfig, type StreamEvent, type Turn } from '@moonshot-ai/kimi-agent-sdk';
+import { chmod, copyFile, cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createSession, KimiPaths, parseConfig, type StreamEvent, type Turn } from '@moonshot-ai/kimi-agent-sdk';
 import { collectText, extractTextFromContentParts } from '@moonshot-ai/kimi-agent-sdk/utils';
 import type {
   OpenCodePermissionDecision,
@@ -12,6 +15,7 @@ import type { LaunchModel } from './types.js';
 const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 120_000;
 const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_MAX_STALE_RECOVERIES = 3;
+const EMPTY_KIMI_CONFIG = '{}';
 
 interface KimiActiveToolState {
   message: string;
@@ -60,11 +64,8 @@ export class KimiSessionExecutor implements OpenCodeSessionExecutor {
     finalMessageText?: string | null;
   }> {
     const workDir = input.workDir ?? process.cwd();
-    const session = this.factory({
-      workDir,
-      model: input.model.id,
-      sessionId: input.sessionId ?? undefined,
-    });
+    const bareRuntime = await createBareKimiRuntime();
+    let session: ReturnType<typeof createSession> | null = null;
 
     const abortController = new AbortController();
     let eventTask: Promise<void> | undefined;
@@ -85,6 +86,16 @@ export class KimiSessionExecutor implements OpenCodeSessionExecutor {
     };
 
     try {
+      session = this.factory({
+        workDir,
+        model: input.model.id,
+        sessionId: input.sessionId ?? undefined,
+      yoloMode: true,
+      executable: bareRuntime.executable,
+      env: bareRuntime.env,
+      shareDir: bareRuntime.shareDir,
+      skillsDir: bareRuntime.skillsDir,
+    });
       const sessionId = session.sessionId;
       onProgress({
         message: input.sessionId ? `resuming kimi session ${sessionId}` : `created kimi session ${sessionId}`,
@@ -163,9 +174,53 @@ export class KimiSessionExecutor implements OpenCodeSessionExecutor {
       };
     } finally {
       abortController.abort();
-      await session.close().catch(() => undefined);
+      await session?.close().catch(() => undefined);
+      await bareRuntime.cleanup();
     }
   }
+}
+
+async function createBareKimiRuntime(): Promise<{
+  executable: string;
+  env: Record<string, string>;
+  shareDir: string;
+  skillsDir: string;
+  cleanup: () => Promise<void>;
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'afk-kimi-bare-'));
+  const wrapper = path.join(root, 'kimi-bare');
+  const skillsDir = path.join(root, 'skills');
+  const shareDir = path.join(root, 'share');
+  const credentialsSource = path.join(KimiPaths.home, 'credentials');
+  const credentialsDest = path.join(shareDir, 'credentials');
+
+  await mkdir(skillsDir, { recursive: true });
+  await mkdir(shareDir, { recursive: true });
+  await cp(credentialsSource, credentialsDest, { recursive: true, force: true }).catch(() => undefined);
+  await copyFile(path.join(KimiPaths.home, 'device_id'), path.join(shareDir, 'device_id')).catch(() => undefined);
+  await writeFile(
+    wrapper,
+    [
+      '#!/bin/sh',
+      'exec kimi --config-file "$AFK_KIMI_CONFIG_FILE" --mcp-config "$AFK_KIMI_EMPTY_MCP_CONFIG" --skills-dir "$AFK_KIMI_EMPTY_SKILLS_DIR" "$@"',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await chmod(wrapper, 0o755);
+
+  return {
+    executable: wrapper,
+    env: {
+      AFK_KIMI_CONFIG_FILE: KimiPaths.config,
+      AFK_KIMI_EMPTY_MCP_CONFIG: EMPTY_KIMI_CONFIG,
+      AFK_KIMI_EMPTY_SKILLS_DIR: skillsDir,
+      KIMI_SHARE_DIR: shareDir,
+    },
+    shareDir,
+    skillsDir,
+    cleanup: () => rm(root, { recursive: true, force: true }),
+  };
 }
 
 async function consumeKimiTurnEvents(

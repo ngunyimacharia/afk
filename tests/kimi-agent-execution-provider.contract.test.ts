@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { KimiAgentExecutionProvider } from '../src/agent-execution-provider.js';
+import { KimiSessionExecutor } from '../src/kimi.js';
 
 test('kimi provider maps successful execution to completed result', async () => {
   let capturedAgent = '';
@@ -172,4 +173,56 @@ test('kimi provider forwards permission progress events', async () => {
     'permission:feat/01:kimi permission required: bash for /tmp/*; requested ask',
     'message:feat/01:kimi session completed',
   ]);
+});
+
+test('kimi provider enables yoloMode on session creation', async () => {
+  let capturedYoloMode: boolean | undefined;
+  let capturedExecutable: string | undefined;
+  let capturedEnv: Record<string, string> | undefined;
+  let capturedShareDir: string | undefined;
+  let capturedSkillsDir: string | undefined;
+
+  const mockFactory = (options: {
+    yoloMode?: boolean;
+    executable?: string;
+    env?: Record<string, string>;
+    shareDir?: string;
+    skillsDir?: string;
+  }) => {
+    capturedYoloMode = options.yoloMode;
+    capturedExecutable = options.executable;
+    capturedEnv = options.env;
+    capturedShareDir = options.shareDir;
+    capturedSkillsDir = options.skillsDir;
+    return {
+      sessionId: 'session-yolo',
+      prompt: () => {
+        const turn = {
+          result: Promise.resolve({ status: 'finished' as const }),
+          async *[Symbol.asyncIterator]() {},
+          interrupt: () => Promise.resolve(),
+          approve: () => Promise.resolve(),
+        };
+        return turn;
+      },
+      close: () => Promise.resolve(),
+    } as never;
+  };
+
+  const customExecutor = new KimiSessionExecutor(mockFactory);
+  const provider = new KimiAgentExecutionProvider(customExecutor);
+
+  await provider.execute({
+    plan: { model: { id: 'kimi-latest' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(capturedYoloMode, true);
+  assert.match(capturedExecutable ?? '', /kimi-bare$/);
+  assert.ok(capturedEnv?.AFK_KIMI_CONFIG_FILE);
+  assert.equal(capturedEnv?.AFK_KIMI_EMPTY_MCP_CONFIG, '{}');
+  assert.equal(capturedEnv?.KIMI_SHARE_DIR, capturedShareDir);
+  assert.match(capturedShareDir ?? '', /share$/);
+  assert.match(capturedSkillsDir ?? '', /skills$/);
 });
