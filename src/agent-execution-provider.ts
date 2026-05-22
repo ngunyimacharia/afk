@@ -1,6 +1,6 @@
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
-import { detectKimiFailure, formatProviderFailureMessage } from './provider-failure.js';
+import { detectClaudeCodeFailure, detectKimiFailure, formatProviderFailureMessage } from './provider-failure.js';
 
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 
@@ -255,6 +255,46 @@ export class KimiAgentExecutionProvider implements AgentExecutionProvider {
   }
 }
 
+export class ClaudeAnthropicAgentExecutionProvider implements AgentExecutionProvider {
+  private readonly base: BaseSDKAgentExecutionProvider;
+
+  constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
+    this.base = new BaseSDKAgentExecutionProvider(
+      executor,
+      {
+        providerName: 'claude-anthropic',
+        failureDetector: detectClaudeCodeFailure,
+        sessionIdUnavailableReason: 'session id unavailable from claude',
+      },
+      permissionCoordinator,
+    );
+  }
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    return this.base.execute(request);
+  }
+}
+
+export class ClaudeKimiAgentExecutionProvider implements AgentExecutionProvider {
+  private readonly base: BaseSDKAgentExecutionProvider;
+
+  constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
+    this.base = new BaseSDKAgentExecutionProvider(
+      executor,
+      {
+        providerName: 'claude-kimi',
+        failureDetector: detectClaudeCodeFailure,
+        sessionIdUnavailableReason: 'session id unavailable from claude',
+      },
+      permissionCoordinator,
+    );
+  }
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    return this.base.execute(request);
+  }
+}
+
 export class CompositeAgentExecutionProvider implements AgentExecutionProvider {
   constructor(
     private readonly executionProvider: AgentExecutionProvider,
@@ -324,5 +364,3 @@ function extractAfkFailureReason(lines: string[]): string | undefined {
     .trim();
   return reason || undefined;
 }
-
-

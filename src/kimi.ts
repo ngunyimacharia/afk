@@ -90,12 +90,12 @@ export class KimiSessionExecutor implements OpenCodeSessionExecutor {
         workDir,
         model: input.model.id,
         sessionId: input.sessionId ?? undefined,
-      yoloMode: true,
-      executable: bareRuntime.executable,
-      env: bareRuntime.env,
-      shareDir: bareRuntime.shareDir,
-      skillsDir: bareRuntime.skillsDir,
-    });
+        yoloMode: true,
+        executable: bareRuntime.executable,
+        env: bareRuntime.env,
+        shareDir: bareRuntime.shareDir,
+        skillsDir: bareRuntime.skillsDir,
+      });
       const sessionId = session.sessionId;
       onProgress({
         message: input.sessionId ? `resuming kimi session ${sessionId}` : `created kimi session ${sessionId}`,
@@ -144,7 +144,10 @@ export class KimiSessionExecutor implements OpenCodeSessionExecutor {
           message: promptResult.message,
           sessionId,
         });
-        await turn.interrupt().catch(() => undefined);
+        await Promise.race([
+          turn.interrupt(),
+          new Promise<void>((_, reject) => setTimeout(() => reject(new Error('turn interrupt timeout')), 10_000)),
+        ]).catch(() => undefined);
 
         if (staleRecoveries > maxStaleRecoveries) {
           const sessionOutput = extractKimiSessionOutput(allTurnEvents);
@@ -370,13 +373,20 @@ async function waitForTurnOrStale(input: {
   getLastMeaningfulProgressAt: () => number;
   getActiveTool: () => KimiActiveToolState | null;
 }): Promise<'completed' | { status: 'stale'; message: string }> {
-  const turnResult = input.turn.result.then((result) => {
-    if (result.status === 'finished') return 'completed' as const;
-    if (result.status === 'cancelled') return { status: 'stale' as const, message: 'kimi turn cancelled' };
-    if (result.status === 'max_steps_reached') return { status: 'stale' as const, message: 'kimi max steps reached' };
-    return 'completed' as const;
-  });
-  turnResult.catch(() => undefined);
+  const turnResult = input.turn.result
+    .then((result) => {
+      if (!result || typeof result !== 'object') return 'completed' as const;
+      if (result.status === 'finished') return 'completed' as const;
+      if (result.status === 'cancelled') return { status: 'stale' as const, message: 'kimi turn cancelled' };
+      if (result.status === 'max_steps_reached') return { status: 'stale' as const, message: 'kimi max steps reached' };
+      return 'completed' as const;
+    })
+    .catch((err) => {
+      return {
+        status: 'stale' as const,
+        message: `kimi turn failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+      };
+    });
 
   while (true) {
     const activeTool = input.getActiveTool();
@@ -457,7 +467,8 @@ function extractKimiSessionOutput(allTurnEvents: StreamEvent[][]): {
 function isMeaningfulProgress(event: OpenCodeSessionProgressEvent): boolean {
   if (event.kind === 'permission') return true;
   if (event.message === 'kimi session busy' || event.message === 'kimi session idle') return false;
-  return Boolean(event.message.trim());
+  if (event.message?.startsWith('kimi step ') && event.message?.endsWith(' started')) return false;
+  return Boolean(event.message?.trim());
 }
 
 function updateActiveToolState(

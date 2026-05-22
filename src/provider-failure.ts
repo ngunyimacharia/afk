@@ -7,6 +7,7 @@ export type ProviderFailureKind =
   | 'dependency-missing'
   | 'opencode-session-stale'
   | 'kimi-session-stale'
+  | 'claude-session-stale'
   | 'tool-failed'
   | 'unknown';
 
@@ -37,6 +38,8 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
     return { kind: 'opencode-session-stale', reason: normalizedReason, availableModels: [] };
   if (lower.includes('kimi session stale'))
     return { kind: 'kimi-session-stale', reason: normalizedReason, availableModels: [] };
+  if (lower.includes('claude session stale'))
+    return { kind: 'claude-session-stale', reason: normalizedReason, availableModels: [] };
   if (isDependencyMissing(lower)) return { kind: 'dependency-missing', reason: normalizedReason, availableModels: [] };
   if (isPatchContextMismatch(lower))
     return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
@@ -96,6 +99,21 @@ export function detectKimiFailure(output: string[]): string | null {
       normalized.includes('chat provider error') ||
       normalized.includes('context overflow') ||
       normalized.includes('max steps reached')
+    );
+  });
+  return failure ?? null;
+}
+
+export function detectClaudeCodeFailure(output: string[]): string | null {
+  const failure = output.find((line) => {
+    const normalized = line.toLowerCase();
+    return (
+      normalized.includes('claude error:') ||
+      normalized.includes('claude agent error:') ||
+      normalized.includes('session stale') ||
+      normalized.includes('overloaded_error') ||
+      normalized.includes('rate_limit_error') ||
+      normalized.includes('context overflow')
     );
   });
   return failure ?? null;

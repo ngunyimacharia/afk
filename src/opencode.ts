@@ -256,8 +256,7 @@ async function waitForPromptOrStale(input: {
   getLastMeaningfulProgressAt: () => number;
   getActiveTool: () => OpenCodeActiveToolState | null;
 }): Promise<'completed' | { status: 'stale'; message: string }> {
-  const prompt = input.prompt.then(() => 'completed' as const);
-  prompt.catch(() => undefined);
+  const prompt = input.prompt.then(() => 'completed' as const).catch(() => 'completed' as const);
   while (true) {
     const activeTool = input.getActiveTool();
     const timeoutMs = activeTool ? input.activeToolStaleTimeoutMs : input.staleProgressTimeoutMs;
@@ -651,7 +650,7 @@ function lastNonEmptyLine(value: string): string {
   );
 }
 
-function parseModelId(value: string): [string, string] {
+export function parseModelId(value: string): [string, string] {
   const trimmed = value.trim();
   const slash = trimmed.indexOf('/');
   if (slash <= 0 || slash === trimmed.length - 1) return ['', ''];

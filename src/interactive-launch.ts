@@ -9,9 +9,9 @@ export interface PromptIO {
 
 export interface LaunchWizardResult {
   cancelled: boolean;
-  harness?: 'OpenCode' | 'Kimi';
+  harness?: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi';
   model?: LaunchModel;
-  reviewerHarness?: 'OpenCode' | 'Kimi';
+  reviewerHarness?: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi';
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
@@ -59,7 +59,9 @@ export async function runInteractiveLaunchWizard(input: {
   const model = models.find((item) => item.id === selectedModelId);
   if (!model) return { cancelled: true };
 
-  const reviewerHarnessChoices = harnessChoices.map((choice) => (choice === harness ? `${choice} (same as implementation)` : choice));
+  const reviewerHarnessChoices = harnessChoices.map((choice) =>
+    choice === harness ? `${choice} (same as implementation)` : choice,
+  );
   const reviewerHarnessInitial = input.preferences?.reviewerHarness
     ? harnessChoices.indexOf(input.preferences.reviewerHarness)
     : harnessChoices.indexOf(harness);
@@ -70,11 +72,17 @@ export async function runInteractiveLaunchWizard(input: {
     reviewerHarnessInitial >= 0 ? reviewerHarnessInitial : undefined,
   );
   if (!selectedReviewerHarnessDisplay) return { cancelled: true };
-  const reviewerHarness = selectedReviewerHarnessDisplay.replace(/ \(same as implementation\)$/, '') as 'OpenCode' | 'Kimi';
+  const reviewerHarness = selectedReviewerHarnessDisplay.replace(/ \(same as implementation\)$/, '') as
+    | 'OpenCode'
+    | 'Kimi'
+    | 'Claude-Anthropic'
+    | 'Claude-Kimi';
 
   const reviewerModels = reviewerHarness === harness ? models : await input.discoverModels(reviewerHarness);
   if (!reviewerModels.length) {
-    input.io.stdout.write(`No models available for ${reviewerHarness}. Configure the provider and run \`afk\` again.\n`);
+    input.io.stdout.write(
+      `No models available for ${reviewerHarness}. Configure the provider and run \`afk\` again.\n`,
+    );
     return { cancelled: true };
   }
 

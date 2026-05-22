@@ -163,7 +163,11 @@ export function buildLaunchPlan(
   model: LaunchModel,
   tickets: TicketRecord[],
   checkout: PreparedCheckoutContext,
-  reviewer?: { harness?: 'OpenCode' | 'Kimi'; model?: LaunchModel; prompt?: ReviewerPromptTemplate },
+  reviewer?: {
+    harness?: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi';
+    model?: LaunchModel;
+    prompt?: ReviewerPromptTemplate;
+  },
   checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
 ): LaunchPlan {
   const snapshots = Object.fromEntries(

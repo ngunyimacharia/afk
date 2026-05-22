@@ -56,7 +56,7 @@ class LogUpdateProgressLine implements ProgressLine {
       this.stopSpinner();
       return;
     }
-    if (this.activePermissionKey && event.message === 'opencode session busy') return;
+    if (this.activePermissionKey && event.message.endsWith('session busy')) return;
     this.activePermissionKey = undefined;
     this.latestByTicket.set(event.ticketLabel, event.message);
     this.latestEvent = event;

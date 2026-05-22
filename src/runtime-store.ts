@@ -64,10 +64,17 @@ export class RuntimeStore {
     try {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+      const validHarnesses = new Set<string>(['OpenCode', 'Kimi', 'Claude-Anthropic', 'Claude-Kimi']);
+      const harnessValue = typeof value.harness === 'string' ? value.harness : undefined;
+      const reviewerHarnessValue = typeof value.reviewerHarness === 'string' ? value.reviewerHarness : undefined;
       const preferences: LaunchPreferences = {
-        harness: value.harness === 'OpenCode' || value.harness === 'Kimi' ? value.harness : undefined,
+        harness:
+          harnessValue && validHarnesses.has(harnessValue) ? (harnessValue as LaunchPreferences['harness']) : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
-        reviewerHarness: value.reviewerHarness === 'OpenCode' || value.reviewerHarness === 'Kimi' ? value.reviewerHarness : undefined,
+        reviewerHarness:
+          reviewerHarnessValue && validHarnesses.has(reviewerHarnessValue)
+            ? (reviewerHarnessValue as LaunchPreferences['reviewerHarness'])
+            : undefined,
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)

@@ -1,3 +1,4 @@
+import { ClaudeCodeSyncAdapter } from './adapters/claude-code.js';
 import { KimiSyncAdapter } from './adapters/kimi.js';
 import { OpenCodeSyncAdapter } from './adapters/opencode.js';
 import { AssetSyncEngine, formatSyncReport } from './engine.js';
@@ -10,6 +11,9 @@ export async function runSync(): Promise<{ code: number; message: string }> {
   const kimiEngine = new AssetSyncEngine(KimiSyncAdapter);
   const kimiReport = await kimiEngine.execute();
 
+  const claudeEngine = new AssetSyncEngine(ClaudeCodeSyncAdapter);
+  const claudeReport = await claudeEngine.execute();
+
   const gitIgnore = await ensureAfkGlobalGitIgnore();
   return {
     code: 0,
@@ -18,9 +22,12 @@ export async function runSync(): Promise<{ code: number; message: string }> {
       '',
       formatSyncReport(kimiReport),
       '',
+      formatSyncReport(claudeReport),
+      '',
       `Git global excludes: ${gitIgnore.excludesFile}`,
       'Restart OpenCode for these asset changes to take effect.',
       'Restart Kimi for these asset changes to take effect.',
+      'Restart Claude Code for these asset changes to take effect.',
     ].join('\n'),
   };
 }

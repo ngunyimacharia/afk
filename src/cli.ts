@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { CompositeAgentExecutionProvider, KimiAgentExecutionProvider, OpenCodeAgentExecutionProvider } from './agent-execution-provider.js';
+import {
+  type AgentExecutionProvider,
+  ClaudeAnthropicAgentExecutionProvider,
+  ClaudeKimiAgentExecutionProvider,
+  CompositeAgentExecutionProvider,
+  KimiAgentExecutionProvider,
+  OpenCodeAgentExecutionProvider,
+} from './agent-execution-provider.js';
+import { ClaudeCodeSessionExecutor, discoverClaudeAnthropicModels, discoverClaudeKimiModels } from './claude-code.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
@@ -117,8 +125,8 @@ export async function runAfk(
   let reviewerPrompt: { id: string; label: string; path: string } | undefined;
   let selectedTickets: TicketRecord[] = [];
   let concurrency = 3;
-  let harness: 'OpenCode' | 'Kimi' = 'OpenCode';
-  let reviewerHarness: 'OpenCode' | 'Kimi' = 'OpenCode';
+  let harness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi' = 'OpenCode';
+  let reviewerHarness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi' = 'OpenCode';
 
   const harnessModelCache: Record<string, LaunchModel[]> = {};
   const availableHarnesses: string[] = [];
@@ -140,6 +148,24 @@ export async function runAfk(
   } catch {
     // Kimi not available
   }
+  try {
+    const claudeAnthropicModels = await discoverClaudeAnthropicModels();
+    if (claudeAnthropicModels.length > 0) {
+      availableHarnesses.push('Claude-Anthropic');
+      harnessModelCache['Claude-Anthropic'] = claudeAnthropicModels;
+    }
+  } catch {
+    // Claude Anthropic not available
+  }
+  try {
+    const claudeKimiModels = await discoverClaudeKimiModels();
+    if (claudeKimiModels.length > 0) {
+      availableHarnesses.push('Claude-Kimi');
+      harnessModelCache['Claude-Kimi'] = claudeKimiModels;
+    }
+  } catch {
+    // Claude Kimi not available
+  }
 
   if (availableHarnesses.length === 0) {
     return {
@@ -156,6 +182,8 @@ export async function runAfk(
       discoverModels: async (selectedHarness) => {
         if (harnessModelCache[selectedHarness]) return harnessModelCache[selectedHarness];
         if (selectedHarness === 'Kimi') return discoverKimiModels();
+        if (selectedHarness === 'Claude-Anthropic') return discoverClaudeAnthropicModels();
+        if (selectedHarness === 'Claude-Kimi') return discoverClaudeKimiModels();
         return discoverOpenCodeModels();
       },
       tickets,
@@ -186,9 +214,16 @@ export async function runAfk(
   if (!model) return { code: 0, message: 'Launch cancelled' };
   if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
   if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
-  const implementationExecutor = harness === 'Kimi' ? new KimiSessionExecutor() : new SDKOpenCodeSessionExecutor();
-  const reviewerExecutor = reviewerHarness === 'Kimi' ? new KimiSessionExecutor() : new SDKOpenCodeSessionExecutor();
-  const preflight = await preflightSelectedModels(implementationExecutor, model, reviewerExecutor, reviewerModel, harness, reviewerHarness);
+  const implementationExecutor = createExecutor(harness);
+  const reviewerExecutor = createExecutor(reviewerHarness);
+  const preflight = await preflightSelectedModels(
+    implementationExecutor,
+    model,
+    reviewerExecutor,
+    reviewerModel,
+    harness,
+    reviewerHarness,
+  );
   if (preflight) return { code: 1, message: preflight };
   const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
   selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
@@ -246,14 +281,8 @@ export async function runAfk(
     ticketLabel: selectedTickets[0]?.label,
     autoApprove: true,
   });
-  const executionProvider =
-    harness === 'Kimi'
-      ? new KimiAgentExecutionProvider(implementationExecutor, permissionCoordinator)
-      : new OpenCodeAgentExecutionProvider(implementationExecutor, permissionCoordinator);
-  const reviewerProvider =
-    reviewerHarness === 'Kimi'
-      ? new KimiAgentExecutionProvider(reviewerExecutor, permissionCoordinator)
-      : new OpenCodeAgentExecutionProvider(reviewerExecutor, permissionCoordinator);
+  const executionProvider = createAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
+  const reviewerProvider = createAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
   const runner = new SingleTicketRunner(
     runtimeStore,
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
@@ -263,7 +292,7 @@ export async function runAfk(
   const scheduler = new Scheduler(runner, concurrency);
   const progressLine = createProgressLine(io.stdout, {
     isPromptActive: () => permissionCoordinator.promptActive,
-    providerName: harness === 'Kimi' ? 'kimi' : 'opencode',
+    providerName: providerNameFromHarness(harness),
   });
   const runId = randomUUID();
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
@@ -397,8 +426,8 @@ async function preflightSelectedModels(
   model: LaunchModel,
   reviewerExecutor: OpenCodeSessionExecutor,
   reviewerModel: LaunchModel,
-  harness: 'OpenCode' | 'Kimi',
-  reviewerHarness: 'OpenCode' | 'Kimi',
+  harness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi',
+  reviewerHarness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi',
 ): Promise<string | null> {
   const implementationFailure = await preflightModel(implementationExecutor, model, 'implementation', harness);
   if (implementationFailure) return implementationFailure;
@@ -410,7 +439,7 @@ async function preflightModel(
   executor: OpenCodeSessionExecutor,
   model: LaunchModel,
   role: 'implementation' | 'reviewer',
-  harness: 'OpenCode' | 'Kimi',
+  harness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi',
 ): Promise<string | null> {
   try {
     const result = await executor.run({
@@ -439,7 +468,7 @@ export function formatPreflightFailure(
   modelId: string,
   role: 'implementation' | 'reviewer',
   reason: string,
-  harness: 'OpenCode' | 'Kimi' = 'OpenCode',
+  harness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi' = 'OpenCode',
 ): string {
   const classification = classifyProviderFailure(reason);
   const roleLabel = role === 'implementation' ? 'Implementation model' : 'Reviewer model';
@@ -577,4 +606,29 @@ function readFrontmatter(content: string): string | null {
   if (!content.startsWith('---\n')) return null;
   const end = content.indexOf('\n---\n', 4);
   return end === -1 ? null : content.slice(4, end);
+}
+
+function createExecutor(harness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi'): OpenCodeSessionExecutor {
+  if (harness === 'Kimi') return new KimiSessionExecutor();
+  if (harness === 'Claude-Anthropic') return new ClaudeCodeSessionExecutor('anthropic');
+  if (harness === 'Claude-Kimi') return new ClaudeCodeSessionExecutor('kimi');
+  return new SDKOpenCodeSessionExecutor();
+}
+
+function createAgentExecutionProvider(
+  harness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi',
+  executor: OpenCodeSessionExecutor,
+  permissionCoordinator?: PermissionCoordinator,
+): AgentExecutionProvider {
+  if (harness === 'Kimi') return new KimiAgentExecutionProvider(executor, permissionCoordinator);
+  if (harness === 'Claude-Anthropic') return new ClaudeAnthropicAgentExecutionProvider(executor, permissionCoordinator);
+  if (harness === 'Claude-Kimi') return new ClaudeKimiAgentExecutionProvider(executor, permissionCoordinator);
+  return new OpenCodeAgentExecutionProvider(executor, permissionCoordinator);
+}
+
+function providerNameFromHarness(harness: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi'): string {
+  if (harness === 'Kimi') return 'kimi';
+  if (harness === 'Claude-Anthropic') return 'claude-anthropic';
+  if (harness === 'Claude-Kimi') return 'claude-kimi';
+  return 'opencode';
 }

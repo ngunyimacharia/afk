@@ -256,6 +256,10 @@ export class SingleTicketRunner {
             `provider failure ${providerFailureCount}/${budgets.providerFailureRetries}: ${message}`,
           );
           if (providerFailureCount <= budgets.providerFailureRetries) {
+            this.runtimeStore.updateMetadata(record.metadataPath, {
+              STATUS: 'interrupted',
+              UNSAFE_REASON: message,
+            });
             options.onProgress?.({
               ticketLabel: ticket.label,
               message: `provider failure retry ${providerFailureCount}/${budgets.providerFailureRetries}`,
@@ -775,6 +779,7 @@ export class SingleTicketRunner {
       if (event.kind === 'permission') this.runtimeStore.appendLog(logPath, `permission required: ${event.message}`);
       else if (event.kind === 'failure') this.runtimeStore.appendLog(logPath, event.message);
       else if (event.permissionId) this.runtimeStore.appendLog(logPath, `permission event: ${event.message}`);
+      else if (event.message) this.runtimeStore.appendLog(logPath, event.message);
       onProgress?.(event);
     };
   }

@@ -1,3 +1,4 @@
 .scratch
 .worktree/
 .test-tmp/
+.claude/
