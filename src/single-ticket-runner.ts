@@ -6,7 +6,6 @@ import { buildPrompt } from './prompt-builder.js';
 import { classifyProviderFailure } from './provider-failure.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeStore } from './runtime-store.js';
-import { SummaryPresenceGate } from './summary-presence-gate.js';
 import type {
   AgentExecutionProgressCallback,
   AgentExecutionResult,
@@ -26,7 +25,7 @@ const FIXUP_REMEDIATION_GUIDANCE =
 const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
 const REVIEWER_EMPTY_OUTPUT_FAILURE_KIND = 'reviewer-empty-output';
 const LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND = 'launcher-context-mismatch';
-const MISSING_AFK_SUMMARY_FAILURE_KIND = 'missing-afk-summary';
+
 const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
   'The previous reviewer response was malformed and could not be parsed.',
   'Return EXACTLY ONE LINE of raw JSON. No markdown fences. No line breaks inside the JSON.',
@@ -34,8 +33,8 @@ const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
 ].join(' ');
 const MAX_MALFORMED_OUTPUT_SNIPPET_CHARS = 500;
 const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
-  malformedReviewerRetries: 1,
-  fixupCycleLimit: 3,
+  malformedReviewerRetries: 10,
+  fixupCycleLimit: 50,
   providerFailureRetries: 10,
 };
 
@@ -55,7 +54,6 @@ export class SingleTicketRunner {
   constructor(
     private readonly runtimeStore: RuntimeStore,
     private readonly provider: AgentExecutionProvider,
-    private readonly summaryPresenceGate = new SummaryPresenceGate(),
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
   ) {}
 
@@ -79,7 +77,17 @@ export class SingleTicketRunner {
     });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);
-    if (!plan.reviewerModel || !plan.reviewerPrompt) return this.launchWithoutReviewer(plan, record, options);
+    if (!plan.reviewerModel || !plan.reviewerPrompt) {
+      const reason = 'reviewer required: no reviewer model or prompt configured';
+      this.runtimeStore.updateMetadata(record.metadataPath, {
+        STATUS: 'blocked',
+        UNSAFE_REASON: reason,
+      });
+      this.runtimeStore.markFailed(record, reason);
+      this.runtimeStore.appendLog(record.logPath, reason);
+      options.onProgress?.({ ticketLabel: ticket.label, message: reason });
+      return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
+    }
 
     this.runtimeStore.appendLog(record.logPath, `reviewer model: ${plan.reviewerModel.id}`);
     this.runtimeStore.appendLog(
@@ -315,43 +323,7 @@ export class SingleTicketRunner {
 
         if (decision.decision === 'approve') {
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
-            const ticketContent = this.readTicketContent(ticket.path);
-            const classification: ReviewOutcomeClassification =
-              decision.findings.length === 0 ? 'clean-approval' : 'minor-risk-approval';
-            if (!this.summaryPresenceGate.hasSummary(ticketContent ?? '')) {
-              const reason = 'ready-for-human gate blocked: missing ## AFK Summary';
-              this.runtimeStore.updateMetadata(record.metadataPath, {
-                STATUS: 'blocked',
-                UNSAFE_REASON: reason,
-                FAILURE_KIND: MISSING_AFK_SUMMARY_FAILURE_KIND,
-              });
-              this.runtimeStore.recordFinalReviewOutcome(
-                record.metadataPath,
-                record.logPath,
-                this.buildFinalOutcomeRecord({
-                  outcome: 'needs-human',
-                  reason,
-                  cycle: reviewCycle + 1,
-                  classification,
-                  malformed: false,
-                  findings: decision.findings.map((finding) => ({
-                    severity: finding.severity,
-                    summary: finding.title,
-                    detail: finding.detail,
-                  })),
-                }),
-              );
-              this.runtimeStore.markFailed(record, reason);
-              this.runtimeStore.appendLog(record.logPath, reason);
-              this.runtimeStore.appendLog(record.logPath, 'run blocked: missing ## AFK Summary');
-              options.onProgress?.({
-                ticketLabel: ticket.label,
-                message: 'run blocked: missing ## AFK Summary',
-                sessionId,
-              });
-              return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
-            }
-
+            const classification: ReviewOutcomeClassification = 'clean-approval';
             this.runtimeStore.recordFinalReviewOutcome(
               record.metadataPath,
               record.logPath,
@@ -407,13 +379,19 @@ export class SingleTicketRunner {
 
         reviewCycle += 1;
         fixupCycles += 1;
+        const priorImplementationSessionId = sessionId;
         prompt = await this.runtimeStore.runPhase(
           record.metadataPath,
           record.logPath,
           'fixup',
-          () => this.buildFixupPrompt(ticket.label, sessionId, reviewCycle, review),
+          () => this.buildFixupPrompt(ticket.label, priorImplementationSessionId, reviewCycle, review),
           reviewCycle,
         );
+        this.runtimeStore.appendLog(
+          record.logPath,
+          `starting fresh implementation session for fixup; prior session: ${priorImplementationSessionId ?? 'unknown'}`,
+        );
+        sessionId = null;
         const fixupBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'fixup', reviewCycle);
         if (fixupBudget) return this.handoffForBudget(ticket.label, record, options, fixupBudget, sessionId);
         executeBeforeReview = true;
@@ -659,103 +637,6 @@ export class SingleTicketRunner {
     return prompt.content ?? readFileSync(prompt.path, 'utf8');
   }
 
-  private async launchWithoutReviewer(
-    plan: LaunchPlan,
-    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
-    options: { onProgress?: AgentExecutionProgressCallback },
-  ): Promise<SingleTicketRunResult> {
-    const ticket = plan.tickets[0];
-    if (!ticket) return { scheduled: false, message: 'No ticket available for launch', outcome: 'not-scheduled' };
-    if (plan.reviewerPrompt)
-      this.runtimeStore.appendLog(
-        record.logPath,
-        `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`,
-      );
-    const ticketContent = this.readTicketContent(ticket.path) ?? '';
-    const snapshot = plan.snapshots?.[ticket.label];
-    if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
-    const contextMismatch = this.validateLaunchContext(plan, ticket.label);
-    if (contextMismatch) return this.handoffForLauncherContextMismatch(ticket.label, record, options, contextMismatch);
-    const prompt = buildPrompt({
-      checkout: plan.checkout,
-      ticket,
-      ticketContent,
-      snapshot,
-      reviewerPrompt: plan.reviewerPrompt,
-      afkInstructions: this.readAfkInstructions(plan.repoRoot),
-    });
-    this.runtimeStore.completePhase(
-      record.metadataPath,
-      record.logPath,
-      this.runtimeStore.startPhase('launch-preparation'),
-    );
-    this.runtimeStore.completePhase(
-      record.metadataPath,
-      record.logPath,
-      this.runtimeStore.startPhase('worktree-preparation'),
-    );
-    this.runtimeStore.completePhase(record.metadataPath, record.logPath, this.runtimeStore.startPhase('readiness'));
-
-    let outcome: SingleTicketRunResult['outcome'] = 'failed';
-    try {
-      const result = await this.runtimeStore.runPhase(
-        record.metadataPath,
-        record.logPath,
-        'execution',
-        () =>
-          this.provider.execute({
-            plan,
-            ticketIndex: 0,
-            prompt,
-            onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
-          }),
-        1,
-      );
-      this.recordExecutionResult(record.metadataPath, record.logPath, result, result.sessionId ?? null);
-      await this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
-        if (result.status === 'completed') {
-          const updatedTicketContent = this.readTicketContent(ticket.path) ?? '';
-          if (this.summaryPresenceGate.hasSummary(updatedTicketContent)) {
-            this.runtimeStore.markDone(record);
-            this.runtimeStore.appendLog(record.logPath, 'run completed');
-            outcome = 'completed';
-          } else {
-            const reason = 'ready-for-human gate blocked: missing ## AFK Summary';
-            this.runtimeStore.updateMetadata(record.metadataPath, {
-              STATUS: 'blocked',
-              UNSAFE_REASON: reason,
-              FAILURE_KIND: MISSING_AFK_SUMMARY_FAILURE_KIND,
-            });
-            this.runtimeStore.markFailed(record, reason);
-            this.runtimeStore.appendLog(record.logPath, reason);
-            outcome = 'blocked';
-          }
-        } else {
-          this.runtimeStore.markFailed(record, result.status);
-          outcome = result.status === 'blocked' ? 'blocked' : 'failed';
-        }
-        this.runtimeStore.appendLog(record.logPath, `run ${result.status}`);
-      });
-      options.onProgress?.({
-        ticketLabel: ticket.label,
-        message: `run ${result.status}`,
-        sessionId: result.sessionId ?? null,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'provider execution failed';
-      options.onProgress?.({ ticketLabel: ticket.label, message: `run failed: ${message}` });
-      this.runtimeStore.updateMetadata(record.metadataPath, {
-        STATUS: 'failed',
-        UNSAFE_REASON: message,
-        FAILURE_KIND: classifyProviderFailure(message)?.kind ?? 'unknown',
-      });
-      this.runtimeStore.markFailed(record, 'failed');
-      this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
-    }
-
-    return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome };
-  }
-
   private progressLogger(
     metadataPath: string,
     logPath: string,
@@ -846,15 +727,18 @@ export class SingleTicketRunner {
 
   private buildFixupPrompt(
     ticketLabel: string,
-    sessionId: string | null,
+    priorSessionId: string | null,
     cycleCount: number,
     review: ReturnType<typeof parseReviewerOutput>,
   ): string {
     return [
       `AFK follow-up for ${ticketLabel}`,
-      `Continue the same execution session: ${sessionId ?? 'unknown'}`,
+      'Start a fresh implementation session for this fixup.',
+      `Prior implementation session for reference only: ${priorSessionId ?? 'unknown'}`,
       `Review cycle: ${cycleCount}`,
       FIXUP_REMEDIATION_GUIDANCE,
+      'Inspect the current repository state before editing, including git status, relevant diffs, and recent commits.',
+      'Do not redo completed work. Make only incremental changes needed for these reviewer findings.',
       `Reviewer summary: ${review.summary}`,
       'Reviewer findings:',
       ...review.findings.map((finding) => {

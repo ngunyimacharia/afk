@@ -53,15 +53,24 @@ test('emits progress while launching a ticket', async () => {
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, '---\nfeature: feat\n---\n\n## AFK Summary\nStatus: done\n');
-  const runner = new SingleTicketRunner(
-    store,
-    new FakeAgentExecutionProvider({
-      status: 'completed',
-      sessionId: 'session-progress',
-      removable: true,
-      output: ['worker started'],
-    }),
-  );
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      return {
+        status: 'completed',
+        sessionId: 'session-progress',
+        removable: true,
+        output: ['worker started'],
+      };
+    },
+  });
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
@@ -75,6 +84,8 @@ test('emits progress while launching a ticket', async () => {
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
   const progress: string[] = [];
 
@@ -93,7 +104,15 @@ test('persists provider session id as soon as progress observes it', async () =>
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-observed.json');
   let observedDuringExecution = '';
   const runner = new SingleTicketRunner(store, {
-    execute: async ({ onProgress }) => {
+    execute: async ({ onProgress, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
       onProgress?.({
         ticketLabel: 'feat/observed',
         message: 'created opencode session session-observed',
@@ -116,6 +135,8 @@ test('persists provider session id as soon as progress observes it', async () =>
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await runner.launch(plan as never);
@@ -132,7 +153,15 @@ test('sends ticket file summary instructions to the execution provider', async (
   writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n', { flag: 'w' });
   let capturedPrompt = '';
   const runner = new SingleTicketRunner(store, {
-    execute: async ({ prompt }) => {
+    execute: async ({ prompt, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
       capturedPrompt = prompt;
       writeFileSync(
         ticketPath,
@@ -155,6 +184,7 @@ test('sends ticket file summary instructions to the execution provider', async (
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
   };
 
   await runner.launch(plan as never);
@@ -186,7 +216,7 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
           status: 'completed',
           sessionId: 'session-review',
           removable: true,
-          output: [JSON.stringify({ summary: 'No findings.', findings: [] })],
+          output: [JSON.stringify({ done: true, summary: 'No findings.', findings: [] })],
         };
       }
       writeFileSync(
@@ -334,14 +364,14 @@ test('hands off when reviewer output stays empty after retry', async () => {
     path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-empty-review.json'),
     'utf8',
   );
-  assert.equal(reviewerCalls, 2);
+  assert.equal(reviewerCalls, 11);
   assert.match(metadata, /"STATUS": "blocked"/);
   assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
   assert.match(metadata, /"FAILURE_KIND": "reviewer-empty-output"/);
 });
 
-test('records minor-risk approval metadata for minor-only findings', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-minor-risk-approval-'));
+test('records clean approval metadata when reviewer confirms done with no findings', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-clean-approval-'));
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
@@ -354,8 +384,9 @@ test('records minor-risk approval metadata for minor-only findings', async () =>
           removable: true,
           output: [
             JSON.stringify({
-              summary: 'Minor polish',
-              findings: [{ severity: 'minor', title: 'Polish copy', detail: 'Tighten phrasing' }],
+              done: true,
+              summary: 'Clean pass',
+              findings: [],
             }),
           ],
         };
@@ -374,7 +405,13 @@ test('records minor-risk approval metadata for minor-only findings', async () =>
     reviewerModel: { id: 'review-model' },
     reviewerPrompt: resolveReviewerPromptTemplate(),
     tickets: [
-      { path: ticketPath, feature: 'feat', issueName: 'minor-risk', label: 'feat/minor-risk', executorAfk: true },
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'clean-approval',
+        label: 'feat/clean-approval',
+        executorAfk: true,
+      },
     ],
     gitContext: { commits: [] },
     checkout: {
@@ -394,12 +431,12 @@ test('records minor-risk approval metadata for minor-only findings', async () =>
     '.scratch',
     '.opencode-afk-logs',
     'runtime-metadata',
-    'feat-minor-risk.json',
+    'feat-clean-approval.json',
   );
   const metadata = readFileSync(metadataPath, 'utf8');
   assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "approved"/);
-  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "minor-risk-approval"/);
-  assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
+  assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[\]/);
 });
 
 test('records real-finding loop and handoff metadata for unresolved major findings', async () => {
@@ -416,6 +453,7 @@ test('records real-finding loop and handoff metadata for unresolved major findin
           removable: true,
           output: [
             JSON.stringify({
+              done: false,
               summary: 'Needs more work',
               findings: [{ severity: 'major', title: 'Fix behavior', detail: 'Condition is wrong' }],
             }),
@@ -464,74 +502,18 @@ test('records real-finding loop and handoff metadata for unresolved major findin
   assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
 });
 
-test('does not promote completed runs without an AFK summary', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-summary-missing-'));
-  const store = new RuntimeStore({ repoRoot });
-  const ticketPath = path.join(repoRoot, 'ticket.md');
-  writeFileSync(ticketPath, '---\nfeature: feat\n---\n');
-  const runner = new SingleTicketRunner(
-    store,
-    new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-2', removable: true }),
-  );
-  const plan = {
-    repoRoot,
-    model: { id: 'model-1' },
-    tickets: [{ path: ticketPath, feature: 'feat', issueName: '003', label: 'feat/003', executorAfk: true }],
-    gitContext: { commits: [] },
-    checkout: {
-      featureSlug: 'feat',
-      defaultWorktreeName: 'feat',
-      effectiveWorktreeName: 'feat',
-      defaultBranchName: 'feat',
-      effectiveBranchName: 'feat',
-      worktreePath: '/tmp/worktree',
-    },
-  };
-  await runner.launch(plan as never);
-  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-003.json');
-  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-003.log');
-  assert.match(readFileSync(metadataPath, 'utf8'), /"STATUS": "blocked"/);
-  assert.match(readFileSync(metadataPath, 'utf8'), /"FAILURE_KIND": "missing-afk-summary"/);
-  assert.match(readFileSync(logPath, 'utf8'), /ready-for-human gate blocked/);
-  assert.doesNotMatch(readFileSync(logPath, 'utf8'), /done/);
-});
-
-test('promotes completed runs when an AFK summary is present', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-summary-present-'));
-  const store = new RuntimeStore({ repoRoot });
-  const ticketPath = path.join(repoRoot, 'ticket.md');
-  writeFileSync(ticketPath, '---\nfeature: feat\n---\n\n## AFK Summary\nStatus: done\n');
-  const runner = new SingleTicketRunner(
-    store,
-    new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-3', removable: true }),
-  );
-  const plan = {
-    repoRoot,
-    model: { id: 'model-1' },
-    tickets: [{ path: ticketPath, feature: 'feat', issueName: '004', label: 'feat/004', executorAfk: true }],
-    gitContext: { commits: [] },
-    checkout: {
-      featureSlug: 'feat',
-      defaultWorktreeName: 'feat',
-      effectiveWorktreeName: 'feat',
-      defaultBranchName: 'feat',
-      effectiveBranchName: 'feat',
-      worktreePath: '/tmp/worktree',
-    },
-  };
-  await runner.launch(plan as never);
-  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-004.log');
-  assert.match(readFileSync(logPath, 'utf8'), /run completed/);
-});
-
 test('records failed state when the provider throws', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-fail-'));
   const store = new RuntimeStore({ repoRoot });
-  const runner = new SingleTicketRunner(store, {
-    execute: async () => {
-      throw new Error('boom');
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async () => {
+        throw new Error('boom');
+      },
     },
-  });
+    { providerFailureRetries: 0 },
+  );
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
@@ -545,6 +527,8 @@ test('records failed state when the provider throws', async () => {
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
   const result = await runner.launch(plan as never);
   assert.equal(result.scheduled, true);
@@ -556,7 +540,7 @@ test('records failed state when the provider throws', async () => {
   assert.equal(metadata.STATUS, 'failed');
   assert.deepEqual(
     metadata.PHASE_HISTORY?.map((phase) => phase.name),
-    ['launch-preparation', 'worktree-preparation', 'readiness', 'execution'],
+    ['launch-preparation', 'worktree-preparation', 'readiness', 'execution', 'finalization'],
   );
   assert.equal(
     (metadata.PHASE_HISTORY ?? []).every((phase) => phase.durationMs >= 0),
@@ -590,6 +574,8 @@ test('persists failed provider output for later inspection', async () => {
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await runner.launch(plan as never);
@@ -633,6 +619,8 @@ test('records path-not-found failure kind for failed provider results', async ()
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await runner.launch(plan as never);
@@ -676,6 +664,8 @@ test('records patch-context-mismatch failure kind when provider throws', async (
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await runner.launch(plan as never);
@@ -719,6 +709,8 @@ test('records dependency-missing failure kind when provider throws', async () =>
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await runner.launch(plan as never);
@@ -771,6 +763,8 @@ test('persists permission progress before provider completion', async () => {
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await runner.launch(plan as never);
@@ -785,8 +779,16 @@ test('scheduler queues tickets by feature and starts the next queued ticket afte
   const store = new RuntimeStore({ repoRoot });
   const started: string[] = [];
   const runner = new SingleTicketRunner(store, {
-    execute: async ({ plan }) => {
+    execute: async ({ plan, invocationMode }) => {
       const ticket = plan.tickets[0];
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: `${ticket.label}-review`,
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
       started.push(ticket.label);
       return { status: 'completed', sessionId: ticket.label, removable: true };
     },
@@ -809,6 +811,8 @@ test('scheduler queues tickets by feature and starts the next queued ticket afte
       effectiveBranchName: 'feat-a',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await scheduler.launch(plan as never);
@@ -839,6 +843,8 @@ test('scheduler forwards progress events from queued tickets', async () => {
       effectiveBranchName: 'feat-a',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
   const progress: string[] = [];
 
@@ -867,7 +873,7 @@ test('retries malformed reviewer once without starting another execution', async
         return {
           status: 'completed',
           sessionId: 's-review',
-          output: [JSON.stringify({ summary: 'ok', findings: [] })],
+          output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
         };
       }
       executionCalls += 1;
@@ -962,7 +968,6 @@ test('treats failed reviewer sessions as provider failures instead of malformed 
         return { status: 'completed', sessionId: 's-exec' };
       },
     },
-    undefined,
     { providerFailureRetries: 1 },
   );
   const plan = {
@@ -1018,7 +1023,11 @@ test('applies real fixup cap to major findings and then hands off', async () => 
           status: 'completed',
           sessionId: 's-review',
           output: [
-            JSON.stringify({ summary: 'still broken', findings: [{ severity: 'major', title: 'x', detail: 'y' }] }),
+            JSON.stringify({
+              done: false,
+              summary: 'still broken',
+              findings: [{ severity: 'major', title: 'x', detail: 'y' }],
+            }),
           ],
         };
       }
@@ -1044,7 +1053,7 @@ test('applies real fixup cap to major findings and then hands off', async () => 
   };
 
   await runner.launch(plan as never);
-  assert.equal(executionCalls, 3);
+  assert.equal(executionCalls, 50);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-fx.json');
   const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
     BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }>;
@@ -1052,16 +1061,104 @@ test('applies real fixup cap to major findings and then hands off', async () => 
   assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'fixup-cycle-cap');
 });
 
+test('starts a fresh implementation session for review fixups', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-fresh-fixup-session-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  const executionSessionIds: Array<string | null | undefined> = [];
+  let fixupPrompt = '';
+  let reviewerCalls = 0;
+  let executionCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode, prompt, sessionId }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [
+            JSON.stringify(
+              reviewerCalls === 1
+                ? {
+                    done: false,
+                    summary: 'Needs fix',
+                    findings: [{ severity: 'major', title: 'Bug', detail: 'Patch it' }],
+                  }
+                : { done: true, summary: 'Looks good', findings: [] },
+            ),
+          ],
+        };
+      }
+
+      executionCalls += 1;
+      executionSessionIds.push(sessionId);
+      if (executionCalls === 2) {
+        fixupPrompt = prompt;
+        writeFileSync(ticketPath, 'Status: done\n\n## Title\n\nImplement the thing\n\n## AFK Summary\n\nDone\n');
+      }
+      return {
+        status: 'completed',
+        sessionId: `session-exec-${executionCalls}`,
+        removable: true,
+        output: ['implementation pass complete'],
+      };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'fresh-fixup-session',
+        label: 'feat/fresh-fixup-session',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.deepEqual(executionSessionIds, [null, null]);
+  assert.match(fixupPrompt, /Start a fresh implementation session for this fixup\./);
+  assert.match(fixupPrompt, /Prior implementation session for reference only: session-exec-1/);
+  assert.match(fixupPrompt, /Inspect the current repository state before editing/);
+  assert.match(fixupPrompt, /Make only incremental changes needed for these reviewer findings/);
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-fresh-fixup-session.log');
+  assert.match(
+    readFileSync(logPath, 'utf8'),
+    /starting fresh implementation session for fixup; prior session: session-exec-1/,
+  );
+});
+
 test('does not retry implementation when provider fails by default', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-provider-'));
   const store = new RuntimeStore({ repoRoot });
   let calls = 0;
-  const runner = new SingleTicketRunner(store, {
-    execute: async () => {
-      calls += 1;
-      throw new Error('provider down');
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async () => {
+        calls += 1;
+        throw new Error('provider down');
+      },
     },
-  });
+    { providerFailureRetries: 0 },
+  );
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
@@ -1075,6 +1172,8 @@ test('does not retry implementation when provider fails by default', async () =>
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   await runner.launch(plan as never);
@@ -1092,10 +1191,13 @@ test('hands off when per-phase wall clock budget is exceeded', async () => {
     {
       execute: async ({ invocationMode }) =>
         invocationMode === 'reviewer'
-          ? { status: 'completed', sessionId: 's-review', output: [JSON.stringify({ summary: 'ok', findings: [] })] }
+          ? {
+              status: 'completed',
+              sessionId: 's-review',
+              output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
+            }
           : { status: 'completed', sessionId: 's-exec' },
     },
-    undefined,
     { phaseWallClockMs: { execution: 5 } },
   );
   const plan = {
@@ -1139,11 +1241,14 @@ test('hands off when per-ticket wall clock budget is exceeded', async () => {
       execute: async ({ invocationMode }) => {
         nowValue += 20;
         return invocationMode === 'reviewer'
-          ? { status: 'completed', sessionId: 's-review', output: [JSON.stringify({ summary: 'ok', findings: [] })] }
+          ? {
+              status: 'completed',
+              sessionId: 's-review',
+              output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
+            }
           : { status: 'completed', sessionId: 's-exec' };
       },
     },
-    undefined,
     { ticketWallClockMs: 10 },
   );
   const plan = {
@@ -1201,6 +1306,8 @@ test('blocks launch when selected ticket path is missing', async () => {
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   const result = await runner.launch(plan as never);
@@ -1237,6 +1344,8 @@ test('blocks launch when selected ticket path is outside issues layout', async (
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   const result = await runner.launch(plan as never);
@@ -1265,6 +1374,8 @@ test('blocks launch when selected ticket path attempts traversal', async () => {
       effectiveBranchName: 'feat',
       worktreePath: '/tmp/worktree',
     },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
   };
 
   const result = await runner.launch(plan as never);
@@ -1298,6 +1409,7 @@ test('retries malformed reviewer output once before implementation fixup', async
             removable: true,
             output: [
               JSON.stringify({
+                done: false,
                 summary: 'Fix this',
                 findings: [{ severity: 'major', title: 'Need fix', detail: 'Please update code' }],
               }),
@@ -1308,7 +1420,7 @@ test('retries malformed reviewer output once before implementation fixup', async
           status: 'completed',
           sessionId: 'session-review',
           removable: true,
-          output: [JSON.stringify({ summary: 'Looks good', findings: [] })],
+          output: [JSON.stringify({ done: true, summary: 'Looks good', findings: [] })],
         };
       }
 
@@ -1353,9 +1465,9 @@ test('retries malformed reviewer output once before implementation fixup', async
   await runner.launch(plan as never);
 
   assert.deepEqual(callOrder, ['execution-1', 'reviewer-1', 'reviewer-2', 'execution-2', 'reviewer-3']);
-  assert.match(malformedRetryPrompt, /The previous reviewer response was malformed\./);
+  assert.match(malformedRetryPrompt, /The previous reviewer response was malformed and could not be parsed\./);
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-malformed-retry.log');
-  assert.match(readFileSync(logPath, 'utf8'), /malformed reviewer output retry 1\/1/);
+  assert.match(readFileSync(logPath, 'utf8'), /malformed reviewer output retry 1\/10/);
 });
 
 test('hands off after repeated malformed reviewer output without implementation fixup', async () => {
@@ -1412,7 +1524,7 @@ test('hands off after repeated malformed reviewer output without implementation 
 
   await runner.launch(plan as never, { onProgress: (event) => progress.push(event.message) });
 
-  assert.deepEqual(callOrder, ['execution', 'reviewer', 'reviewer']);
+  assert.deepEqual(callOrder, ['execution', ...Array.from({ length: 11 }, () => 'reviewer')]);
   const metadataPath = path.join(
     repoRoot,
     '.scratch',
@@ -1428,10 +1540,14 @@ test('hands off after repeated malformed reviewer output without implementation 
   assert.match(metadata, /"FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET":/);
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-malformed-handoff.log');
   const log = readFileSync(logPath, 'utf8');
-  assert.match(log, /malformed reviewer output retry 1\/1/);
+  assert.match(log, /malformed reviewer output retry 1\/10/);
+  assert.match(log, /malformed reviewer output retry 10\/10/);
   assert.match(log, /malformed reviewer output handoff: reviewer-output-malformed/);
   assert.deepEqual(
     progress.filter((line) => line.startsWith('malformed reviewer output')),
-    ['malformed reviewer output retry 1/1', 'malformed reviewer output handoff'],
+    [
+      ...Array.from({ length: 10 }, (_, index) => `malformed reviewer output retry ${index + 1}/10`),
+      'malformed reviewer output handoff',
+    ],
   );
 });

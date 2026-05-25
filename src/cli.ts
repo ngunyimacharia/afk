@@ -286,7 +286,6 @@ export async function runAfk(
   const runner = new SingleTicketRunner(
     runtimeStore,
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
-    undefined,
     launchPreferences.budgets,
   );
   const scheduler = new Scheduler(runner, concurrency);
