@@ -87,7 +87,7 @@ class LogUpdateProgressLine implements ProgressLine {
 
   updateNotificationState(state: DashboardNotificationState): void {
     this.notificationState = state;
-    if (this.hasRendered && this.latestEvent && !this.isPromptActive()) {
+    if (this.latestEvent && !this.isPromptActive()) {
       this.render();
     }
   }

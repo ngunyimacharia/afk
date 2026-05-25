@@ -267,6 +267,67 @@ test('progress line re-renders when notification state changes after initial ren
   assert.ok(writesAfter > writesBefore);
 });
 
+test('progress line re-renders notification state after permission event', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.update({
+    ticketLabel: 'feat/001',
+    kind: 'permission',
+    message: 'opencode permission required: bash; requested allow',
+    permissionId: 'per_1',
+  });
+  const writesBeforeNotification = writes.length;
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Permission required: feat/001',
+        message: 'bash tool requested',
+        category: 'permission-required',
+      },
+    },
+  });
+  const writesAfterNotification = writes.length;
+
+  assert.ok(writesAfterNotification > writesBeforeNotification);
+  const lastWrite = writes[writes.length - 1];
+  assert.match(lastWrite, /\[notified: Permission required: feat\/001\]/);
+});
+
+test('progress line re-renders notification state after failure event', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.update({
+    ticketLabel: 'feat/001',
+    kind: 'failure',
+    message: 'provider failure: model unavailable',
+  });
+  const writesBeforeNotification = writes.length;
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Failed: feat/001',
+        message: 'The ticket failed during execution.',
+        category: 'ticket-failed',
+      },
+    },
+  });
+  const writesAfterNotification = writes.length;
+
+  assert.ok(writesAfterNotification > writesBeforeNotification);
+  const lastWrite = writes[writes.length - 1];
+  assert.match(lastWrite, /\[notified: Failed: feat\/001\]/);
+});
+
 function fakeStdout(isTTY: boolean, writes: string[]): NodeJS.WriteStream {
   return {
     isTTY,
