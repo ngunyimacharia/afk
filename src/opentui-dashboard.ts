@@ -53,6 +53,14 @@ function formatElapsed(ms: number): string {
   return `${seconds}s`;
 }
 
+function formatTime(timestamp: number): string {
+  const d = new Date(timestamp);
+  const hours = d.getHours().toString().padStart(2, '0');
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  const seconds = d.getSeconds().toString().padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸'];
 
 const TICKET_STATE_ICONS: Record<DashboardTicketRuntimeState, string> = {
@@ -122,7 +130,10 @@ function formatEvents(snap: DashboardSnapshot): string {
   if (snap.recentEvents.length === 0) return 'No events yet';
   return snap.recentEvents
     .slice(-10)
-    .map((e) => `${e.ticketLabel}: ${e.message.slice(0, 80)}`)
+    .map((e) => {
+      const time = e.timestamp ? formatTime(e.timestamp) : '--:--:--';
+      return `${time} ${e.ticketLabel}: ${e.message.slice(0, 80)}`;
+    })
     .join('\n');
 }
 
@@ -138,6 +149,8 @@ function formatDetails(snap: DashboardSnapshot): string {
   lines.push(`Path: ${details.path}`);
   if (details.status) lines.push(`Status: ${details.status}`);
   if (details.sessionId) lines.push(`Session: ${details.sessionId}`);
+  if (snap.modelId) lines.push(`Model: ${snap.modelId}`);
+  if (snap.harness) lines.push(`Harness: ${snap.harness}`);
   if (details.dependencies.length > 0) lines.push(`Deps: ${details.dependencies.join(', ')}`);
   if (details.failureKind) lines.push(`Failure: ${details.failureKind}`);
   if (details.reviewOutcome) {
@@ -150,13 +163,6 @@ function formatDetails(snap: DashboardSnapshot): string {
     lines.push('Phases:');
     for (const phase of details.phaseHistory.slice(-5)) {
       lines.push(`  ${phase.name} ${phase.durationMs}ms`);
-    }
-  }
-
-  if (details.recentEvents.length > 0) {
-    lines.push('Recent events:');
-    for (const event of details.recentEvents.slice(-5)) {
-      lines.push(`  ${event.message.slice(0, 60)}`);
     }
   }
 
@@ -246,7 +252,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const featuresBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
-      title: 'Features',
+      title: 'Features [j/k]',
       width: '15%',
       flexDirection: 'column',
     });
@@ -256,7 +262,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const ticketsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
-      title: 'Tickets',
+      title: 'Tickets [j/k]',
       width: '35%',
       flexDirection: 'column',
     });
@@ -266,7 +272,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const actionBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
-      title: 'Action Needed',
+      title: 'Action Needed [a]',
       width: '25%',
       flexDirection: 'column',
     });

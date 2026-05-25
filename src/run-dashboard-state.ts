@@ -163,9 +163,13 @@ export class RunDashboardState {
   }
 
   ingest(event: AgentExecutionProgressEvent): void {
+    const eventWithTimestamp: AgentExecutionProgressEvent = {
+      ...event,
+      timestamp: event.timestamp ?? this.now(),
+    };
     const ticket = this.tickets.get(event.ticketLabel);
     if (ticket) {
-      this.recentEvents.push(event);
+      this.recentEvents.push(eventWithTimestamp);
       if (this.recentEvents.length > MAX_RECENT_EVENTS) {
         this.recentEvents.shift();
       }
