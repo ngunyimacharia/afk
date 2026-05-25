@@ -184,6 +184,80 @@ test('DashboardProxy cleanup is safe to call multiple times', async () => {
   assert.doesNotThrow(() => proxy.done());
 });
 
+test('createOpenTuiDashboard renders feature region with aggregate states', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    { path: '/tmp/feat-a-002.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+    { path: '/tmp/feat-b-001.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  assert.ok(view);
+
+  view?.update({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
+  view?.update({ ticketLabel: 'feat-b/001', message: 'run completed' });
+
+  const featuresBox = boxes.find((b) => b.title === 'Features');
+  assert.ok(featuresBox, 'Features box should exist');
+  const featuresContent = featuresBox.children.map((c) => c.content).join('\n');
+  assert.match(featuresContent, /feat-a/);
+  assert.match(featuresContent, /feat-b/);
+  assert.match(featuresContent, /COMPLETE/);
+
+  view?.done();
+});
+
 test('DashboardProxy done prevents late dashboard from taking over', async () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);

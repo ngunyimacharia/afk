@@ -63,6 +63,17 @@ function formatAggregate(snap: DashboardSnapshot): string {
   return `Ready: ${snap.aggregate.ready} | Running: ${snap.aggregate.running} | Blocked: ${snap.aggregate.blocked} | Failed: ${snap.aggregate.failed} | Complete: ${snap.aggregate.complete}`;
 }
 
+function formatFeatures(snap: DashboardSnapshot): string {
+  if (snap.features.length === 0) return 'No features';
+  return snap.features
+    .map((f) => {
+      const state = f.aggregateState.toUpperCase();
+      const count = f.tickets.length;
+      return `${f.feature} [${state}] (${count} ticket${count === 1 ? '' : 's'})`;
+    })
+    .join('\n');
+}
+
 function formatTickets(snap: DashboardSnapshot): string {
   if (snap.tickets.length === 0) return 'No tickets';
   return snap.tickets
@@ -91,6 +102,7 @@ class OpenTuiDashboard implements LiveRunView {
   private destroyed = false;
   private readonly state: RunDashboardState;
   private headerText!: TextRenderable;
+  private featuresText!: TextRenderable;
   private ticketsText!: TextRenderable;
   private actionText!: TextRenderable;
   private eventsText!: TextRenderable;
@@ -128,6 +140,16 @@ class OpenTuiDashboard implements LiveRunView {
       flexGrow: 1,
       gap: 1,
     });
+
+    const featuresBox = new this.opentui.BoxRenderable(this.renderer, {
+      border: true,
+      title: 'Features',
+      width: '20%',
+      flexDirection: 'column',
+    });
+    this.featuresText = new this.opentui.TextRenderable(this.renderer, { content: '' });
+    featuresBox.add(this.featuresText);
+    contentBox.add(featuresBox);
 
     const ticketsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
@@ -173,6 +195,7 @@ class OpenTuiDashboard implements LiveRunView {
   private refresh(): void {
     const snap = this.state.snapshot();
     this.headerText.content = [formatHeader(snap), formatAggregate(snap)].join('\n');
+    this.featuresText.content = formatFeatures(snap);
     this.ticketsText.content = formatTickets(snap);
     this.actionText.content = formatActionNeeded(snap);
     this.eventsText.content = formatEvents(snap);
