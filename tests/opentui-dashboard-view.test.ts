@@ -1320,3 +1320,79 @@ test('createOpenTuiDashboard cycles braille spinner for running tickets on timer
     global.clearInterval = origClearInterval;
   }
 });
+
+test('createOpenTuiDashboard uses equal 25% column widths and proportional flexGrow', async () => {
+  const stdout = fakeStdout(true);
+
+  const boxes: Array<{ title: string; width?: number | string; flexGrow?: number; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      width: number | string | undefined;
+      flexGrow: number | undefined;
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string; width?: number | string; flexGrow?: number }) {
+        this.title = options.title ?? '';
+        this.width = options.width;
+        this.flexGrow = options.flexGrow;
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  assert.ok(view);
+
+  assert.equal(boxes.find((b) => b.title === 'Features [j/k]')?.width, '25%');
+  assert.equal(boxes.find((b) => b.title === 'Tickets [j/k]')?.width, '25%');
+  assert.equal(boxes.find((b) => b.title === 'Action Needed [a]')?.width, '25%');
+  assert.equal(boxes.find((b) => b.title === 'Details')?.width, '25%');
+  assert.equal(boxes.find((b) => b.title === 'Recent Events')?.flexGrow, 1);
+
+  const contentBox = boxes.find((b) => b.title === '' && b.flexGrow === 2);
+  assert.ok(contentBox, 'content row should have flexGrow 2');
+
+  view?.done();
+});

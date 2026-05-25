@@ -246,14 +246,14 @@ class OpenTuiDashboard implements LiveRunView {
 
     const contentBox = new this.opentui.BoxRenderable(this.renderer, {
       flexDirection: 'row',
-      flexGrow: 1,
+      flexGrow: 2,
       gap: 1,
     });
 
     const featuresBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
       title: 'Features [j/k]',
-      width: '15%',
+      width: '25%',
       flexDirection: 'column',
     });
     this.featuresText = new this.opentui.TextRenderable(this.renderer, { content: '' });
@@ -263,7 +263,7 @@ class OpenTuiDashboard implements LiveRunView {
     const ticketsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
       title: 'Tickets [j/k]',
-      width: '35%',
+      width: '25%',
       flexDirection: 'column',
     });
     this.ticketsText = new this.opentui.TextRenderable(this.renderer, { content: '' });
@@ -295,7 +295,7 @@ class OpenTuiDashboard implements LiveRunView {
     const eventsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
       title: 'Recent Events',
-      height: 8,
+      flexGrow: 1,
       flexDirection: 'column',
     });
     this.eventsText = new this.opentui.TextRenderable(this.renderer, { content: '' });
