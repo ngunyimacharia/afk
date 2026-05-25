@@ -321,6 +321,14 @@ export class RunDashboardState {
     }
   }
 
+  healthCheck(activeSessionIds: Set<string>): void {
+    for (const ticket of this.tickets.values()) {
+      if (ticket.runtimeState === 'running' && ticket.sessionId !== null && !activeSessionIds.has(ticket.sessionId)) {
+        ticket.runtimeState = 'complete';
+      }
+    }
+  }
+
   setTicketOutcome(label: string, outcome: 'completed' | 'blocked' | 'failed' | 'not-scheduled'): void {
     const ticket = this.tickets.get(label);
     if (!ticket) return;

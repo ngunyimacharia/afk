@@ -523,6 +523,36 @@ test('selected ticket details include recent events for that ticket', () => {
   assert.equal(details.recentEvents[1]?.message, 'event 3');
 });
 
+test('healthCheck transitions running ticket with inactive session to complete', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.ingest({ ticketLabel: 'feat-a/001', message: 'starting ticket run', sessionId: 'sess-1' });
+  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'running');
+
+  state.healthCheck(new Set(['other-sess']));
+  const snap = state.snapshot();
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'complete');
+  assert.equal(snap.aggregate.running, 0);
+  assert.equal(snap.aggregate.complete, 1);
+});
+
+test('healthCheck preserves running ticket with active session', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.ingest({ ticketLabel: 'feat-a/001', message: 'starting ticket run', sessionId: 'sess-1' });
+
+  state.healthCheck(new Set(['sess-1']));
+  const snap = state.snapshot();
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'running');
+  assert.equal(snap.aggregate.running, 1);
+});
+
+test('healthCheck does not transition running ticket without sessionId', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.ingest({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
+
+  state.healthCheck(new Set());
+  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'running');
+});
+
 test('completed run state renders without crashes', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.setTicketOutcome('feat-a/001', 'completed');

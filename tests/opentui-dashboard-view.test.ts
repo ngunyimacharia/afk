@@ -337,6 +337,81 @@ test('DashboardProxy falls back to text progress when dashboard creation fails',
   assert.match(output, /running/);
 });
 
+test('DashboardProxy done flushes buffered events to dashboard before calling done', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const { module } = makeFakeTextModule();
+
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, (opts) =>
+    createOpenTuiDashboard(opts, module),
+  );
+
+  await proxy.start();
+
+  // Manually inject a buffered event after start (simulating a race)
+  const bufferedEvent: AgentExecutionProgressEvent = { ticketLabel: 'feat-a/001', message: 'buffered terminal event' };
+  (proxy as unknown as { buffer: AgentExecutionProgressEvent[] }).buffer.push(bufferedEvent);
+
+  const dashboard = (proxy as unknown as { dashboard: LiveRunView | null }).dashboard;
+  assert.ok(dashboard);
+
+  const updatedEvents: AgentExecutionProgressEvent[] = [];
+  const originalUpdate = dashboard.update.bind(dashboard);
+  dashboard.update = (e: AgentExecutionProgressEvent) => {
+    updatedEvents.push(e);
+    originalUpdate(e);
+  };
+  let doneCalled = false;
+  const originalDone = dashboard.done.bind(dashboard);
+  dashboard.done = () => {
+    doneCalled = true;
+    originalDone();
+  };
+
+  proxy.done();
+
+  assert.equal(updatedEvents.length, 1);
+  assert.equal(updatedEvents[0]?.message, 'buffered terminal event');
+  assert.equal(doneCalled, true);
+});
+
+test('DashboardProxy cleanup flushes buffered events to dashboard before calling cleanup', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const { module } = makeFakeTextModule();
+
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, (opts) =>
+    createOpenTuiDashboard(opts, module),
+  );
+
+  await proxy.start();
+
+  const bufferedEvent: AgentExecutionProgressEvent = { ticketLabel: 'feat-a/001', message: 'buffered terminal event' };
+  (proxy as unknown as { buffer: AgentExecutionProgressEvent[] }).buffer.push(bufferedEvent);
+
+  const dashboard = (proxy as unknown as { dashboard: LiveRunView | null }).dashboard;
+  assert.ok(dashboard);
+
+  const updatedEvents: AgentExecutionProgressEvent[] = [];
+  const originalUpdate = dashboard.update.bind(dashboard);
+  dashboard.update = (e: AgentExecutionProgressEvent) => {
+    updatedEvents.push(e);
+    originalUpdate(e);
+  };
+  let cleanupCalled = false;
+  const originalCleanup = dashboard.cleanup.bind(dashboard);
+  dashboard.cleanup = () => {
+    cleanupCalled = true;
+    originalCleanup();
+  };
+
+  proxy.cleanup();
+
+  assert.equal(updatedEvents.length, 1);
+  assert.equal(updatedEvents[0]?.message, 'buffered terminal event');
+  assert.equal(cleanupCalled, true);
+});
+
 test('DashboardProxy cleanup is safe to call multiple times', async () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);

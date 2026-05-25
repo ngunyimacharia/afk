@@ -280,6 +280,11 @@ class OpenTuiDashboard implements LiveRunView {
     this.eventsText.content = formatEvents(snap);
   }
 
+  healthCheck(activeSessionIds: Set<string>): void {
+    this.state.healthCheck(activeSessionIds);
+    this.refresh();
+  }
+
   done(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -373,28 +378,32 @@ export class DashboardProxy implements LiveRunView {
     }
   }
 
+  healthCheck(activeSessionIds: Set<string>): void {
+    if (this.dashboard && 'healthCheck' in this.dashboard) {
+      (this.dashboard as unknown as { healthCheck(ids: Set<string>): void }).healthCheck(activeSessionIds);
+    }
+  }
+
   done(): void {
     this.finalized = true;
-    this.dashboard?.done();
-    if (!this.dashboard) {
-      for (const event of this.buffer) {
-        this.fallback.update(event);
-      }
-      this.buffer.length = 0;
+    const target = this.dashboard ?? this.fallback;
+    for (const event of this.buffer) {
+      target.update(event);
     }
+    this.buffer.length = 0;
+    this.dashboard?.done();
     this.fallback.done();
     this.buffer.length = 0;
   }
 
   cleanup(): void {
     this.finalized = true;
-    this.dashboard?.cleanup();
-    if (!this.dashboard) {
-      for (const event of this.buffer) {
-        this.fallback.update(event);
-      }
-      this.buffer.length = 0;
+    const target = this.dashboard ?? this.fallback;
+    for (const event of this.buffer) {
+      target.update(event);
     }
+    this.buffer.length = 0;
+    this.dashboard?.cleanup();
     this.fallback.cleanup();
     this.buffer.length = 0;
   }
