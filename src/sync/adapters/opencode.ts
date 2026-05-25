@@ -14,9 +14,13 @@ export const OpenCodeSyncAdapter: SyncAdapter = {
       {
         name: 'skills',
         sourceRoot: 'artifacts/skills',
-        destinationRoot: path.join(configRoot, 'agents'),
+        destinationRoot: path.join(configRoot, 'skills'),
         destinationBase: configRoot,
         extensions: ['.md'],
+        mapDestination: (fileName, destRoot) => {
+          const skillName = path.basename(fileName, path.extname(fileName));
+          return path.join(destRoot, skillName, 'SKILL.md');
+        },
       },
       {
         name: 'prompts',

@@ -53,7 +53,9 @@ export class AssetSyncEngine {
         }
         const sourcePath = path.join(sourceRoot, entry.name);
         if (category.validateSource) await category.validateSource(sourcePath);
-        const destinationPath = path.join(destinationRoot, entry.name);
+        const destinationPath = category.mapDestination
+          ? category.mapDestination(entry.name, destinationRoot)
+          : path.join(destinationRoot, entry.name);
         ensureWithinRoot(destinationRoot, destinationPath);
         const sourceContent = await fs.readFile(sourcePath, 'utf8');
         const existing = await readIfFile(destinationPath);

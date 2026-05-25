@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
 import { KimiSyncAdapter } from '../src/sync/adapters/kimi.js';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 import { AssetSyncEngine, formatSyncReport } from '../src/sync/engine.js';
@@ -47,7 +48,7 @@ test('syncs initial opencode asset categories into the destination tree', async 
 
   const first = await engine.execute();
   assert.equal(first.counts.created, 2);
-  assert.equal(await readFile(path.join(opencode, 'agents', 'alpha.md'), 'utf8'), '# alpha');
+  assert.equal(await readFile(path.join(opencode, 'skills', 'alpha', 'SKILL.md'), 'utf8'), '# alpha');
   assert.equal(await readFile(path.join(opencode, 'prompts', 'beta.md'), 'utf8'), '# beta');
 
   const second = await engine.execute();
@@ -78,6 +79,44 @@ test('syncs initial kimi asset categories into the destination tree', async () =
   assert.equal(first.counts.created, 2);
   assert.equal(await readFile(path.join(kimi, 'skills', 'alpha.md'), 'utf8'), '# alpha');
   assert.equal(await readFile(path.join(kimi, 'prompts', 'beta.md'), 'utf8'), '# beta');
+
+  const second = await engine.execute();
+  assert.equal(second.counts.unchanged, 2);
+});
+
+async function makeClaudeCodeFixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'afk-claude-code-sync-'));
+  const artifacts = path.join(root, 'artifacts');
+  const claudeCode = path.join(root, '.claude');
+  await mkdir(path.join(artifacts, 'skills'), { recursive: true });
+  await mkdir(path.join(artifacts, 'prompts'), { recursive: true });
+  return { root, artifacts, claudeCode };
+}
+
+test('syncs initial claude-code asset categories into the destination tree', async () => {
+  const { artifacts, claudeCode } = await makeClaudeCodeFixture();
+  await writeFile(path.join(artifacts, 'skills', 'alpha.md'), '# alpha');
+  await writeFile(path.join(artifacts, 'prompts', 'beta.md'), '# beta');
+
+  const engine = new AssetSyncEngine({
+    id: 'claude-code',
+    assetCategories: () =>
+      ClaudeCodeSyncAdapter.assetCategories().map((category) => {
+        const relativeSource = path.basename(category.sourceRoot);
+        const relativeDestination = path.basename(category.destinationRoot);
+        return {
+          ...category,
+          sourceRoot: path.join(artifacts, relativeSource),
+          destinationRoot: path.join(claudeCode, relativeDestination),
+          destinationBase: claudeCode,
+        };
+      }),
+  });
+
+  const first = await engine.execute();
+  assert.equal(first.counts.created, 2);
+  assert.equal(await readFile(path.join(claudeCode, 'skills', 'alpha', 'SKILL.md'), 'utf8'), '# alpha');
+  assert.equal(await readFile(path.join(claudeCode, 'prompts', 'beta.md'), 'utf8'), '# beta');
 
   const second = await engine.execute();
   assert.equal(second.counts.unchanged, 2);

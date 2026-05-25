@@ -1,16 +1,6 @@
 ---
+name: interview-me
 description: Refines half-baked ideas into clear product or technical understanding through iterative interviews grounded in the current repo.
-mode: subagent
-permission:
-  read: allow
-  glob: allow
-  grep: allow
-  webfetch: allow
-  question: allow
-  edit: allow
-  bash: deny
-  task: deny
-  skill: deny
 ---
 
 # Interview Me

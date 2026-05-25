@@ -5,6 +5,7 @@ export type AssetCategory = {
   destinationBase?: string;
   extensions?: string[];
   validateSource?: (path: string) => Promise<void> | void;
+  mapDestination?: (sourceFileName: string, destinationRoot: string) => string;
 };
 
 export type SyncAdapter = {

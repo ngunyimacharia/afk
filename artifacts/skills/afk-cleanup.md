@@ -1,4 +1,5 @@
 ---
+name: afk-cleanup
 description: Run `afk cleanup` — clean completed AFK scratch tickets and related logs immediately
 ---
 

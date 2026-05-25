@@ -1,4 +1,5 @@
 ---
+name: afk-summary
 description: Run `afk summary` — read-only summary of AFK work from tickets and logs
 ---
 

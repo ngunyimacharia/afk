@@ -115,3 +115,25 @@ test('does not rewrite unchanged destination files', async () => {
   assert.equal(report.counts.unchanged, 1);
   assert.equal(await readFile(path.join(dst, 'a.md'), 'utf8'), before);
 });
+
+test('applies mapDestination when provided', async () => {
+  const { src, dst } = await fixture();
+  await writeFile(path.join(src, 'a.md'), '# A');
+
+  const engine = new AssetSyncEngine({
+    id: 'test',
+    assetCategories: () => [
+      {
+        name: 'docs',
+        sourceRoot: src,
+        destinationRoot: dst,
+        extensions: ['.md'],
+        mapDestination: (fileName, destRoot) => path.join(destRoot, path.basename(fileName, '.md'), 'SKILL.md'),
+      },
+    ],
+  });
+
+  const report = await engine.execute();
+  assert.equal(report.counts.created, 1);
+  assert.equal(await readFile(path.join(dst, 'a', 'SKILL.md'), 'utf8'), '# A');
+});

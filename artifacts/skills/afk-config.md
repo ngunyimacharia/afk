@@ -1,4 +1,5 @@
 ---
+name: afk-config
 description: Create or update repo-local AFK config (`afk.json`) from project context
 ---
 

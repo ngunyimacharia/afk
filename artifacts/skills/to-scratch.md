@@ -1,4 +1,5 @@
 ---
+name: to-scratch
 description: Turn conversation context, a PRD, spec, or plan into a canonical Local Markdown scratch package with a PRD and AFK-ready implementation issues
 ---
 
