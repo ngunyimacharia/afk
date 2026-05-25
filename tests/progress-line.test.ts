@@ -448,6 +448,29 @@ test('progress line re-renders notification state after failure event', () => {
   assert.match(lastWrite, /\[notified: Failed: feat\/001\]/);
 });
 
+test('progress line ignores notification state update after done', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.done();
+  const writesAfterDone = writes.length;
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Run completed',
+        message: 'All tickets done',
+        category: 'run-completed-success',
+      },
+    },
+  });
+
+  assert.equal(writes.length, writesAfterDone);
+});
+
 function fakeStdout(isTTY: boolean, writes: string[]): NodeJS.WriteStream {
   return {
     isTTY,

@@ -41,6 +41,7 @@ class LogUpdateProgressLine implements ProgressLine {
   private spinnerFrame = 0;
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private hasRendered = false;
+  private doneCalled = false;
   private activePermissionKey: string | undefined;
   private readonly providerName: string;
   private notificationState: DashboardNotificationState | undefined;
@@ -83,6 +84,7 @@ class LogUpdateProgressLine implements ProgressLine {
 
   done(): void {
     this.stopSpinner();
+    this.doneCalled = true;
     if (!this.hasRendered) return;
     this.logUpdate.done();
     this.stdout.write('\n');
@@ -90,7 +92,7 @@ class LogUpdateProgressLine implements ProgressLine {
 
   updateNotificationState(state: DashboardNotificationState): void {
     this.notificationState = state;
-    if (this.latestEvent && !this.isPromptActive()) {
+    if (this.latestEvent && !this.isPromptActive() && !this.doneCalled) {
       this.render();
     }
   }
@@ -115,7 +117,7 @@ class LogUpdateProgressLine implements ProgressLine {
   }
 
   private render(): void {
-    if (!this.latestEvent) return;
+    if (!this.latestEvent || this.doneCalled) return;
     this.logUpdate(this.format(this.latestEvent));
     this.hasRendered = true;
   }
