@@ -199,6 +199,64 @@ test('sends ticket file summary instructions to the execution provider', async (
   );
   assert.match(capturedPrompt, /Status: ready-for-agent/);
   assert.match(capturedPrompt, /Reviewer prompt: reviewer-default/);
+  assert.match(capturedPrompt, /### Reviewer Notes/);
+  assert.match(capturedPrompt, /changes made/);
+  assert.match(capturedPrompt, /tests run/);
+  assert.match(capturedPrompt, /caveats or risks/);
+});
+
+test('injects reviewer-notes requirement even when custom AFK instructions are loaded', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-custom-afk-'));
+  const afkPromptPath = path.join(repoRoot, 'src', 'prompts', 'afk-prompt.md');
+  mkdirSync(path.dirname(afkPromptPath), { recursive: true });
+  writeFileSync(afkPromptPath, '# Custom AFK Instructions\n\nCustom rules here.\n');
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '008.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  let capturedPrompt = '';
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ prompt, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      capturedPrompt = prompt;
+      writeFileSync(
+        ticketPath,
+        'Status: done\n\n## Title\n\nImplement the thing\n\n## AFK Summary\n\nStatus: completed\n',
+      );
+      return { status: 'completed', sessionId: 'session-prompt', removable: true };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: '008', label: 'feat/008', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+    reviewerModel: { id: 'review-model' },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.match(capturedPrompt, /Custom rules here/);
+  assert.match(capturedPrompt, /### Reviewer Notes/);
+  assert.match(capturedPrompt, /changes made/);
+  assert.match(capturedPrompt, /tests run/);
+  assert.match(capturedPrompt, /caveats or risks/);
 });
 
 test('uses bundled reviewer prompt when launched from a repo without AFK prompt files', async () => {

@@ -14,7 +14,7 @@ const DEFAULT_AFK_INSTRUCTIONS = [
   '',
   'You are running in fully autonomous AFK mode. Implement the provided ticket without human intervention.',
   '',
-  'Before exiting, update the provided ticket file with the final tracker status and append a structured `## AFK Summary` block.',
+  'Before exiting, update the provided ticket file with the final tracker status and append a structured `## AFK Summary` block that includes a `### Reviewer Notes` subsection.',
 ].join('\n');
 
 export function buildPrompt(input: PromptInput): string {
@@ -44,6 +44,7 @@ export function buildPrompt(input: PromptInput): string {
     '',
     'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
     'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
+    'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
     '',
     ...(input.reviewerPrompt
       ? ['## Reviewer Context', '', `Reviewer prompt: ${input.reviewerPrompt.id} (${input.reviewerPrompt.path})`, '']

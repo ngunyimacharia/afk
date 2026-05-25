@@ -38,3 +38,10 @@ test('reviewer prompt enforces strict json and schema examples', () => {
   assert.match(source, /Clean pass example:/);
   assert.match(source, /Finding example:/);
 });
+
+test('reviewer completion criteria require status done and AFK Summary but not reviewer notes', () => {
+  const source = readFileSync(new URL('../src/prompts/reviewer-default.md', import.meta.url), 'utf8');
+  assert.match(source, /status: done/);
+  assert.match(source, /## AFK Summary/);
+  assert.doesNotMatch(source, /Reviewer Notes/);
+});

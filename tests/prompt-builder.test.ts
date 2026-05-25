@@ -47,6 +47,60 @@ test('afk prompt includes budget and handoff guardrails', () => {
   assert.match(source, /Append or update `## AFK Summary`/);
 });
 
+test('default execution prompt requires reviewer notes subsection', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
+  });
+  assert.match(prompt, /### Reviewer Notes/);
+  assert.match(prompt, /changes made/);
+  assert.match(prompt, /tests run/);
+  assert.match(prompt, /caveats or risks/);
+  assert.match(prompt, /follow-ups useful to the reviewer/);
+});
+
+test('custom afk instructions do not suppress reviewer-notes requirement', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
+    afkInstructions: '# Custom AFK Instructions\n\nCustom rules here.\n',
+  });
+  assert.match(prompt, /Custom rules here/);
+  assert.match(prompt, /### Reviewer Notes/);
+  assert.match(prompt, /changes made/);
+  assert.match(prompt, /tests run/);
+  assert.match(prompt, /caveats or risks/);
+  assert.match(prompt, /follow-ups useful to the reviewer/);
+});
+
 test('snapshot includes dependency/runtime/readiness facts and excludes unrelated scratch content', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-prompt-snapshot-'));
   const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '03.md');
