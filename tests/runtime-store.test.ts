@@ -47,14 +47,14 @@ test('round-trips launch preferences', () => {
   store.writeLaunchPreferences({
     harness: 'OpenCode',
     modelId: 'provider/exec',
-    reviewerHarness: 'Kimi',
+    reviewerHarness: 'Claude-Kimi',
     reviewerModelId: 'provider/review',
   });
 
   assert.deepEqual(store.readLaunchPreferences(), {
     harness: 'OpenCode',
     modelId: 'provider/exec',
-    reviewerHarness: 'Kimi',
+    reviewerHarness: 'Claude-Kimi',
     reviewerModelId: 'provider/review',
   });
 });

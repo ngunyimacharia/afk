@@ -1,6 +1,6 @@
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
-import { detectClaudeCodeFailure, detectKimiFailure, formatProviderFailureMessage } from './provider-failure.js';
+import { detectClaudeCodeFailure, formatProviderFailureMessage } from './provider-failure.js';
 
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 
@@ -222,26 +222,6 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
         agentName: 'build',
         failureDetector: detectOpenCodeFailure,
         sessionIdUnavailableReason: 'session id unavailable from opencode',
-      },
-      permissionCoordinator,
-    );
-  }
-
-  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
-    return this.base.execute(request);
-  }
-}
-
-export class KimiAgentExecutionProvider implements AgentExecutionProvider {
-  private readonly base: BaseSDKAgentExecutionProvider;
-
-  constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
-    this.base = new BaseSDKAgentExecutionProvider(
-      executor,
-      {
-        providerName: 'kimi',
-        failureDetector: detectKimiFailure,
-        sessionIdUnavailableReason: 'session id unavailable from kimi',
       },
       permissionCoordinator,
     );

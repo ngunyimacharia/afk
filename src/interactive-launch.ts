@@ -9,9 +9,9 @@ export interface PromptIO {
 
 export interface LaunchWizardResult {
   cancelled: boolean;
-  harness?: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi';
+  harness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
   model?: LaunchModel;
-  reviewerHarness?: 'OpenCode' | 'Kimi' | 'Claude-Anthropic' | 'Claude-Kimi';
+  reviewerHarness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
@@ -39,7 +39,7 @@ export async function runInteractiveLaunchWizard(input: {
 }): Promise<LaunchWizardResult> {
   const harnessChoices = input.availableHarnesses;
   if (harnessChoices.length === 0) {
-    input.io.stdout.write('No harnesses available. Install and configure OpenCode or Kimi.\n');
+    input.io.stdout.write('No harnesses available. Install and configure OpenCode or Claude.\n');
     return { cancelled: true };
   }
 
@@ -74,7 +74,6 @@ export async function runInteractiveLaunchWizard(input: {
   if (!selectedReviewerHarnessDisplay) return { cancelled: true };
   const reviewerHarness = selectedReviewerHarnessDisplay.replace(/ \(same as implementation\)$/, '') as
     | 'OpenCode'
-    | 'Kimi'
     | 'Claude-Anthropic'
     | 'Claude-Kimi';
 
@@ -101,9 +100,9 @@ export async function runInteractiveLaunchWizard(input: {
 
   return {
     cancelled: false,
-    harness: harness as 'OpenCode' | 'Kimi',
+    harness: harness as 'OpenCode',
     model,
-    reviewerHarness: reviewerHarness as 'OpenCode' | 'Kimi',
+    reviewerHarness: reviewerHarness as 'OpenCode',
     reviewerModel,
     reviewerPrompt,
     tickets: selectedTickets,

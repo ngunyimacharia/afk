@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
-import { KimiSyncAdapter } from '../src/sync/adapters/kimi.js';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 import { AssetSyncEngine, formatSyncReport } from '../src/sync/engine.js';
 
@@ -15,15 +14,6 @@ async function makeFixture() {
   await mkdir(path.join(artifacts, 'skills'), { recursive: true });
   await mkdir(path.join(artifacts, 'prompts'), { recursive: true });
   return { root, artifacts, opencode };
-}
-
-async function makeKimiFixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'afk-kimi-sync-'));
-  const artifacts = path.join(root, 'artifacts');
-  const kimi = path.join(root, '.kimi');
-  await mkdir(path.join(artifacts, 'skills'), { recursive: true });
-  await mkdir(path.join(artifacts, 'prompts'), { recursive: true });
-  return { root, artifacts, kimi };
 }
 
 test('syncs initial opencode asset categories into the destination tree', async () => {
@@ -50,35 +40,6 @@ test('syncs initial opencode asset categories into the destination tree', async 
   assert.equal(first.counts.created, 2);
   assert.equal(await readFile(path.join(opencode, 'skills', 'alpha', 'SKILL.md'), 'utf8'), '# alpha');
   assert.equal(await readFile(path.join(opencode, 'prompts', 'beta.md'), 'utf8'), '# beta');
-
-  const second = await engine.execute();
-  assert.equal(second.counts.unchanged, 2);
-});
-
-test('syncs initial kimi asset categories into the destination tree', async () => {
-  const { artifacts, kimi } = await makeKimiFixture();
-  await writeFile(path.join(artifacts, 'skills', 'alpha.md'), '# alpha');
-  await writeFile(path.join(artifacts, 'prompts', 'beta.md'), '# beta');
-
-  const engine = new AssetSyncEngine({
-    id: 'kimi',
-    assetCategories: () =>
-      KimiSyncAdapter.assetCategories().map((category) => {
-        const relativeSource = path.basename(category.sourceRoot);
-        const relativeDestination = path.basename(category.destinationRoot);
-        return {
-          ...category,
-          sourceRoot: path.join(artifacts, relativeSource),
-          destinationRoot: path.join(kimi, relativeDestination),
-          destinationBase: kimi,
-        };
-      }),
-  });
-
-  const first = await engine.execute();
-  assert.equal(first.counts.created, 2);
-  assert.equal(await readFile(path.join(kimi, 'skills', 'alpha.md'), 'utf8'), '# alpha');
-  assert.equal(await readFile(path.join(kimi, 'prompts', 'beta.md'), 'utf8'), '# beta');
 
   const second = await engine.execute();
   assert.equal(second.counts.unchanged, 2);
