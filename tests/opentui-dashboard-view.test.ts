@@ -25,6 +25,8 @@ function makeFakeTextModule(): { texts: Map<string, string>; module: OpenTuiDash
       ({
         root: { add: () => {} },
         destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
       }) as unknown as CliRenderer,
     BoxRenderable: class FakeBox {
       add() {}
@@ -195,6 +197,8 @@ test('createOpenTuiDashboard renders feature region with aggregate states', asyn
       ({
         root: { add: () => {} },
         destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
       }) as unknown as CliRenderer,
     BoxRenderable: class FakeBox {
       title = '';
@@ -291,4 +295,266 @@ test('DashboardProxy done prevents late dashboard from taking over', async () =>
   // The fallback should have received the event, not the dashboard
   const output = writes.join('');
   assert.match(output, /event before done/);
+});
+
+test('createOpenTuiDashboard registers keyboard input handler on renderer', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  let handlerRegistered = false;
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {
+          handlerRegistered = true;
+        },
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+  assert.equal(handlerRegistered, true);
+  view?.done();
+});
+
+test('createOpenTuiDashboard renders selected ticket details panel', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  assert.ok(view);
+
+  view?.update({ ticketLabel: 'feat-a/001', message: 'starting ticket run', sessionId: 'sess-1' });
+
+  const detailsBox = boxes.find((b) => b.title === 'Details');
+  assert.ok(detailsBox, 'Details box should exist');
+  const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
+  assert.match(detailsContent, /feat-a\/001/);
+  assert.match(detailsContent, /RUNNING/);
+  assert.match(detailsContent, /sess-1/);
+
+  view?.done();
+});
+
+test('createOpenTuiDashboard renders empty state when no tickets', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: [] }, module);
+  assert.ok(view);
+
+  const detailsBox = boxes.find((b) => b.title === 'Details');
+  assert.ok(detailsBox, 'Details box should exist');
+  const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
+  assert.match(detailsContent, /No tickets in run/);
+
+  view?.done();
+});
+
+test('createOpenTuiDashboard ticket list shows selection indicator', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    { path: '/tmp/feat-a-002.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  assert.ok(view);
+
+  const ticketsBox = boxes.find((b) => b.title === 'Tickets');
+  assert.ok(ticketsBox, 'Tickets box should exist');
+  const ticketsContent = ticketsBox.children.map((c) => c.content).join('\n');
+  assert.match(ticketsContent, /> feat-a\/001/);
+  assert.match(ticketsContent, / {2}feat-a\/002/);
+
+  view?.done();
 });

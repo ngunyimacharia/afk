@@ -1,4 +1,4 @@
-import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
+import type { AgentExecutionProgressEvent, PhaseHistoryEntry, RuntimeMetadataRecord, TicketRecord } from './types.js';
 
 export type DashboardTicketRuntimeState = 'ready' | 'running' | 'blocked' | 'failed' | 'complete';
 
@@ -29,6 +29,27 @@ export interface ActionNeededSnapshot {
   timestamp: number;
 }
 
+export interface SelectedTicketDetails {
+  label: string;
+  feature: string;
+  issueName: string;
+  path: string;
+  status?: string;
+  dependencies: string[];
+  latestMessage: string;
+  runtimeState: DashboardTicketRuntimeState;
+  sessionId: string | null;
+  hasPermission: boolean;
+  hasFailure: boolean;
+  actionNeededCount: number;
+  failureKind?: string | null;
+  reviewOutcome?: string | null;
+  reviewReason?: string | null;
+  reviewClassification?: string | null;
+  phaseHistory: PhaseHistoryEntry[];
+  recentEvents: AgentExecutionProgressEvent[];
+}
+
 export interface DashboardSnapshot {
   runId?: string;
   modelId?: string;
@@ -50,6 +71,8 @@ export interface DashboardSnapshot {
     total: number;
   };
   recentEvents: AgentExecutionProgressEvent[];
+  selectedTicket: DashboardTicketSnapshot | null;
+  selectedTicketDetails: SelectedTicketDetails | null;
 }
 
 export interface RunDashboardStateOptions {
@@ -71,6 +94,7 @@ interface InternalTicketState {
   hasFailure: boolean;
   runtimeState: DashboardTicketRuntimeState;
   actionNeededKeys: Set<string>;
+  metadata: Partial<RuntimeMetadataRecord>;
 }
 
 const MAX_RECENT_EVENTS = 50;
@@ -113,6 +137,7 @@ export class RunDashboardState {
   private readonly options: RunDashboardStateOptions;
   private readonly startTime: number;
   private readonly now: () => number;
+  private selectedTicketLabel: string | null = null;
 
   constructor(options: RunDashboardStateOptions = {}, selectedTickets: TicketRecord[] = []) {
     this.options = options;
@@ -127,7 +152,11 @@ export class RunDashboardState {
         hasFailure: false,
         runtimeState: initialRuntimeState(ticket),
         actionNeededKeys: new Set(),
+        metadata: {},
       });
+    }
+    if (selectedTickets.length > 0) {
+      this.selectedTicketLabel = selectedTickets[0].label;
     }
   }
 
@@ -209,6 +238,82 @@ export class RunDashboardState {
     }
   }
 
+  ingestMetadata(label: string, metadata: Partial<RuntimeMetadataRecord>): void {
+    const ticket = this.tickets.get(label);
+    if (!ticket) return;
+    ticket.metadata = { ...ticket.metadata, ...metadata };
+  }
+
+  selectTicket(label: string | null): void {
+    if (label === null) {
+      this.selectedTicketLabel = null;
+      return;
+    }
+    if (this.tickets.has(label)) {
+      this.selectedTicketLabel = label;
+    }
+  }
+
+  selectNextTicket(): void {
+    const labels = Array.from(this.tickets.keys());
+    if (labels.length === 0) {
+      this.selectedTicketLabel = null;
+      return;
+    }
+    if (this.selectedTicketLabel === null) {
+      this.selectedTicketLabel = labels[0];
+      return;
+    }
+    const idx = labels.indexOf(this.selectedTicketLabel);
+    const nextIdx = idx >= 0 && idx < labels.length - 1 ? idx + 1 : 0;
+    this.selectedTicketLabel = labels[nextIdx];
+  }
+
+  selectPreviousTicket(): void {
+    const labels = Array.from(this.tickets.keys());
+    if (labels.length === 0) {
+      this.selectedTicketLabel = null;
+      return;
+    }
+    if (this.selectedTicketLabel === null) {
+      this.selectedTicketLabel = labels[labels.length - 1];
+      return;
+    }
+    const idx = labels.indexOf(this.selectedTicketLabel);
+    const prevIdx = idx > 0 ? idx - 1 : labels.length - 1;
+    this.selectedTicketLabel = labels[prevIdx];
+  }
+
+  selectNextActionNeeded(): void {
+    const labels = Array.from(this.tickets.keys());
+    if (labels.length === 0) {
+      this.selectedTicketLabel = null;
+      return;
+    }
+    const actionLabels = new Set(
+      labels.filter((l) => {
+        const t = this.tickets.get(l);
+        return t && t.actionNeededKeys.size > 0;
+      }),
+    );
+    if (actionLabels.size === 0) {
+      // No action-needed items; keep current selection
+      return;
+    }
+    if (this.selectedTicketLabel === null) {
+      this.selectedTicketLabel = labels.find((l) => actionLabels.has(l)) ?? null;
+      return;
+    }
+    const currentIdx = labels.indexOf(this.selectedTicketLabel);
+    for (let offset = 1; offset <= labels.length; offset++) {
+      const idx = (currentIdx + offset) % labels.length;
+      if (actionLabels.has(labels[idx])) {
+        this.selectedTicketLabel = labels[idx];
+        return;
+      }
+    }
+  }
+
   setTicketOutcome(label: string, outcome: 'completed' | 'blocked' | 'failed' | 'not-scheduled'): void {
     const ticket = this.tickets.get(label);
     if (!ticket) return;
@@ -263,6 +368,10 @@ export class RunDashboardState {
       aggregate[ts.runtimeState] += 1;
     }
 
+    const selectedTicket = this.selectedTicketLabel
+      ? (ticketSnapshots.find((t) => t.label === this.selectedTicketLabel) ?? null)
+      : null;
+
     return {
       runId: this.options.runId,
       modelId: this.options.modelId,
@@ -277,6 +386,8 @@ export class RunDashboardState {
       actionNeeded: Array.from(this.actionNeeded.values()).map((a) => structuredClone(a)),
       aggregate,
       recentEvents: this.recentEvents.map((e) => structuredClone(e)),
+      selectedTicket,
+      selectedTicketDetails: selectedTicket ? this.buildSelectedTicketDetails(selectedTicket) : null,
     };
   }
 
@@ -293,6 +404,32 @@ export class RunDashboardState {
       hasFailure: ticket.hasFailure,
       actionNeededCount: ticket.actionNeededKeys.size,
       runtimeState: ticket.runtimeState,
+    };
+  }
+
+  private buildSelectedTicketDetails(ticket: DashboardTicketSnapshot): SelectedTicketDetails {
+    const internal = this.tickets.get(ticket.label);
+    const metadata = internal?.metadata ?? {};
+    const ticketRecentEvents = this.recentEvents.filter((e) => e.ticketLabel === ticket.label).slice(-10);
+    return {
+      label: ticket.label,
+      feature: ticket.feature,
+      issueName: ticket.issueName,
+      path: ticket.path,
+      status: ticket.status,
+      dependencies: internal?.record.dependsOn ?? [],
+      latestMessage: ticket.latestMessage,
+      runtimeState: ticket.runtimeState,
+      sessionId: ticket.sessionId,
+      hasPermission: ticket.hasPermission,
+      hasFailure: ticket.hasFailure,
+      actionNeededCount: ticket.actionNeededCount,
+      failureKind: metadata.FAILURE_KIND,
+      reviewOutcome: metadata.FINAL_REVIEW_OUTCOME ?? undefined,
+      reviewReason: metadata.FINAL_REVIEW_REASON ?? undefined,
+      reviewClassification: metadata.FINAL_REVIEW_CLASSIFICATION ?? undefined,
+      phaseHistory: metadata.PHASE_HISTORY ?? [],
+      recentEvents: ticketRecentEvents.map((e) => structuredClone(e)),
     };
   }
 }

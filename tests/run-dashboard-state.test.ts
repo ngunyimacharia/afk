@@ -373,3 +373,118 @@ test('permission and failure action-needed items accumulate for the same ticket'
   assert.equal(snap.actionNeeded.length, 3);
   assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.actionNeededCount, 3);
 });
+
+test('selection defaults to first ticket', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  const snap = state.snapshot();
+  assert.equal(snap.selectedTicket?.label, 'feat-a/001');
+  assert.ok(snap.selectedTicketDetails);
+  assert.equal(snap.selectedTicketDetails?.label, 'feat-a/001');
+});
+
+test('selectNextTicket moves forward and wraps around', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.selectNextTicket();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-a/002');
+  state.selectNextTicket();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-b/001');
+  state.selectNextTicket();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-a/001');
+});
+
+test('selectPreviousTicket moves backward and wraps around', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.selectPreviousTicket();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-b/001');
+  state.selectPreviousTicket();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-a/002');
+  state.selectPreviousTicket();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-a/001');
+});
+
+test('selectNextActionNeeded jumps to tickets with action-needed items', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.ingest({ ticketLabel: 'feat-a/001', kind: 'permission', message: 'perm' });
+  state.ingest({ ticketLabel: 'feat-b/001', kind: 'failure', message: 'fail' });
+
+  state.selectTicket('feat-a/002');
+  state.selectNextActionNeeded();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-b/001');
+
+  state.selectNextActionNeeded();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-a/001');
+
+  state.selectNextActionNeeded();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-b/001');
+});
+
+test('selectNextActionNeeded keeps current selection when no action-needed items exist', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.selectTicket('feat-a/002');
+  state.selectNextActionNeeded();
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-a/002');
+});
+
+test('selectTicket ignores unknown labels', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.selectTicket('unknown/999');
+  assert.equal(state.snapshot().selectedTicket?.label, 'feat-a/001');
+});
+
+test('empty ticket list has null selected ticket', () => {
+  const state = new RunDashboardState({}, []);
+  const snap = state.snapshot();
+  assert.equal(snap.selectedTicket, null);
+  assert.equal(snap.selectedTicketDetails, null);
+  assert.equal(snap.aggregate.total, 0);
+});
+
+test('metadata ingestion enriches selected ticket details', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.ingestMetadata('feat-a/001', {
+    FAILURE_KIND: 'provider-error',
+    FINAL_REVIEW_OUTCOME: 'approved',
+    FINAL_REVIEW_REASON: 'clean',
+    FINAL_REVIEW_CLASSIFICATION: 'clean-approval',
+    PHASE_HISTORY: [
+      { name: 'execution', startTime: '2024-01-01T00:00:00Z', endTime: '2024-01-01T00:01:00Z', durationMs: 60000 },
+    ],
+  });
+
+  const snap = state.snapshot();
+  const details = snap.selectedTicketDetails;
+  assert.ok(details);
+  assert.equal(details.failureKind, 'provider-error');
+  assert.equal(details.reviewOutcome, 'approved');
+  assert.equal(details.reviewReason, 'clean');
+  assert.equal(details.reviewClassification, 'clean-approval');
+  assert.equal(details.phaseHistory.length, 1);
+  assert.equal(details.phaseHistory[0]?.name, 'execution');
+});
+
+test('selected ticket details include recent events for that ticket', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.ingest({ ticketLabel: 'feat-a/001', message: 'event 1' });
+  state.ingest({ ticketLabel: 'feat-a/002', message: 'event 2' });
+  state.ingest({ ticketLabel: 'feat-a/001', message: 'event 3' });
+
+  state.selectTicket('feat-a/001');
+  const details = state.snapshot().selectedTicketDetails;
+  assert.ok(details);
+  assert.equal(details.recentEvents.length, 2);
+  assert.equal(details.recentEvents[0]?.message, 'event 1');
+  assert.equal(details.recentEvents[1]?.message, 'event 3');
+});
+
+test('completed run state renders without crashes', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.setTicketOutcome('feat-a/001', 'completed');
+  state.setTicketOutcome('feat-a/002', 'completed');
+  state.setTicketOutcome('feat-b/001', 'completed');
+
+  const snap = state.snapshot();
+  assert.equal(snap.aggregate.complete, 3);
+  assert.equal(snap.aggregate.running, 0);
+  assert.equal(snap.selectedTicket?.label, 'feat-a/001');
+  assert.equal(snap.selectedTicketDetails?.runtimeState, 'complete');
+});

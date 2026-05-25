@@ -79,8 +79,9 @@ function formatTickets(snap: DashboardSnapshot): string {
   return snap.tickets
     .map((t) => {
       const state = t.runtimeState.toUpperCase();
-      const msg = t.latestMessage ? ` - ${t.latestMessage.slice(0, 60)}` : '';
-      return `${t.label} [${state}]${msg}`;
+      const msg = t.latestMessage ? ` - ${t.latestMessage.slice(0, 40)}` : '';
+      const selected = snap.selectedTicket?.label === t.label ? '>' : ' ';
+      return `${selected} ${t.label} [${state}]${msg}`;
     })
     .join('\n');
 }
@@ -98,6 +99,43 @@ function formatEvents(snap: DashboardSnapshot): string {
     .join('\n');
 }
 
+function formatDetails(snap: DashboardSnapshot): string {
+  const details = snap.selectedTicketDetails;
+  if (!details) {
+    if (snap.tickets.length === 0) return 'No tickets in run';
+    return 'Select a ticket to view details';
+  }
+
+  const lines: string[] = [];
+  lines.push(`${details.label} [${details.runtimeState.toUpperCase()}]`);
+  lines.push(`Path: ${details.path}`);
+  if (details.status) lines.push(`Status: ${details.status}`);
+  if (details.sessionId) lines.push(`Session: ${details.sessionId}`);
+  if (details.dependencies.length > 0) lines.push(`Deps: ${details.dependencies.join(', ')}`);
+  if (details.failureKind) lines.push(`Failure: ${details.failureKind}`);
+  if (details.reviewOutcome) {
+    const review = details.reviewReason ? `${details.reviewOutcome} (${details.reviewReason})` : details.reviewOutcome;
+    lines.push(`Review: ${review}`);
+  }
+  if (details.actionNeededCount > 0) lines.push(`Action needed: ${details.actionNeededCount}`);
+
+  if (details.phaseHistory.length > 0) {
+    lines.push('Phases:');
+    for (const phase of details.phaseHistory.slice(-5)) {
+      lines.push(`  ${phase.name} ${phase.durationMs}ms`);
+    }
+  }
+
+  if (details.recentEvents.length > 0) {
+    lines.push('Recent events:');
+    for (const event of details.recentEvents.slice(-5)) {
+      lines.push(`  ${event.message.slice(0, 60)}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 class OpenTuiDashboard implements LiveRunView {
   private destroyed = false;
   private readonly state: RunDashboardState;
@@ -106,6 +144,7 @@ class OpenTuiDashboard implements LiveRunView {
   private ticketsText!: TextRenderable;
   private actionText!: TextRenderable;
   private eventsText!: TextRenderable;
+  private detailsText!: TextRenderable;
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -115,6 +154,8 @@ class OpenTuiDashboard implements LiveRunView {
   ) {
     this.state = new RunDashboardState(runOptions, selectedTickets);
     this.buildLayout();
+    this.registerInputHandler();
+    this.refresh();
   }
 
   private buildLayout(): void {
@@ -144,7 +185,7 @@ class OpenTuiDashboard implements LiveRunView {
     const featuresBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
       title: 'Features',
-      width: '20%',
+      width: '15%',
       flexDirection: 'column',
     });
     this.featuresText = new this.opentui.TextRenderable(this.renderer, { content: '' });
@@ -154,7 +195,7 @@ class OpenTuiDashboard implements LiveRunView {
     const ticketsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
       title: 'Tickets',
-      flexGrow: 1,
+      width: '35%',
       flexDirection: 'column',
     });
     this.ticketsText = new this.opentui.TextRenderable(this.renderer, { content: '' });
@@ -164,12 +205,22 @@ class OpenTuiDashboard implements LiveRunView {
     const actionBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
       title: 'Action Needed',
-      width: '40%',
+      width: '25%',
       flexDirection: 'column',
     });
     this.actionText = new this.opentui.TextRenderable(this.renderer, { content: '' });
     actionBox.add(this.actionText);
     contentBox.add(actionBox);
+
+    const detailsBox = new this.opentui.BoxRenderable(this.renderer, {
+      border: true,
+      title: 'Details',
+      width: '25%',
+      flexDirection: 'column',
+    });
+    this.detailsText = new this.opentui.TextRenderable(this.renderer, { content: '' });
+    detailsBox.add(this.detailsText);
+    contentBox.add(detailsBox);
 
     root.add(contentBox);
 
@@ -186,6 +237,33 @@ class OpenTuiDashboard implements LiveRunView {
     this.renderer.root.add(root);
   }
 
+  private registerInputHandler(): void {
+    this.renderer.addInputHandler((sequence) => this.handleKey(sequence));
+  }
+
+  handleKey(sequence: string): boolean {
+    if (this.destroyed) return false;
+    switch (sequence) {
+      case '\x1b[B': // Down arrow
+      case 'j':
+        this.state.selectNextTicket();
+        this.refresh();
+        return true;
+      case '\x1b[A': // Up arrow
+      case 'k':
+        this.state.selectPreviousTicket();
+        this.refresh();
+        return true;
+      case 'a':
+      case '\t': // Tab
+        this.state.selectNextActionNeeded();
+        this.refresh();
+        return true;
+      default:
+        return false;
+    }
+  }
+
   update(event: AgentExecutionProgressEvent): void {
     if (this.destroyed) return;
     this.state.ingest(event);
@@ -198,6 +276,7 @@ class OpenTuiDashboard implements LiveRunView {
     this.featuresText.content = formatFeatures(snap);
     this.ticketsText.content = formatTickets(snap);
     this.actionText.content = formatActionNeeded(snap);
+    this.detailsText.content = formatDetails(snap);
     this.eventsText.content = formatEvents(snap);
   }
 
