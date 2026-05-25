@@ -20,6 +20,12 @@ const DEFAULT_AFK_INSTRUCTIONS = [
 export function buildPrompt(input: PromptInput): string {
   const snapshotLines = buildSnapshotLines(input.snapshot);
   return [
+    '## CRITICAL: Final Result Sentinel',
+    '',
+    'Your final assistant message MUST contain the exact line `AFK_TICKET_RESULT: success` when the ticket is complete.',
+    'If this line is missing, the run will be marked FAILED even if all work is correct.',
+    'Output this sentinel line FIRST in your final message, before any human-readable summary.',
+    '',
     input.afkInstructions?.trim() || DEFAULT_AFK_INSTRUCTIONS,
     '',
     '## Runtime Context',
@@ -47,10 +53,12 @@ export function buildPrompt(input: PromptInput): string {
     '',
     '## Final Result Contract',
     '',
-    'When and only when the ticket is complete, tests/verification have been run or documented, the ticket file has been updated, and all required commits are created, end your final assistant message with this exact line:',
+    'When and only when the ticket is complete, tests/verification have been run or documented, the ticket file has been updated, and all required commits are created, start your final assistant message with this exact line:',
     'AFK_TICKET_RESULT: success',
     '',
-    'If the ticket is incomplete, blocked, or failed, do not include the success line. End your final assistant message with these exact lines instead:',
+    'Place this line BEFORE any human-readable summary. Do not bury it at the end.',
+    '',
+    'If the ticket is incomplete, blocked, or failed, do not include the success line. Start your final assistant message with these exact lines instead:',
     'AFK_TICKET_RESULT: failed',
     'Reason: <short reason>',
     '',

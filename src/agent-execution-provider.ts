@@ -156,9 +156,21 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
           }),
       });
       const finalResult = invocationMode === 'execution' ? parseAfkTicketResult(result.finalMessageText) : null;
+      const outputFailure = result.terminalError ?? this.config.failureDetector(result.output ?? []);
+      const missingSentinel =
+        finalResult?.status === 'unknown' && finalResult.reason === 'final AFK result sentinel missing';
+      const inferredSuccess = missingSentinel && inferCompletionFromOutput(result.output ?? [], result.finalMessageText);
+      if (inferredSuccess) {
+        request.onProgress?.({
+          ticketLabel: ticket.label,
+          kind: 'failure',
+          message: `provider warning: final AFK result sentinel missing; inferring success from output`,
+          sessionId: result.sessionId ?? null,
+        });
+      }
       const failureReason = finalResult
-        ? formatAfkTicketFailure(finalResult)
-        : (result.terminalError ?? this.config.failureDetector(result.output ?? []));
+        ? (inferredSuccess ? null : formatAfkTicketFailure(finalResult))
+        : outputFailure;
       if (failureReason) {
         request.onProgress?.({
           ticketLabel: ticket.label,
@@ -349,6 +361,15 @@ export function parseAfkTicketResult(finalMessageText: string | null | undefined
   if (hasSuccess) return { status: 'success' };
   if (hasFailed) return { status: 'failed', reason: extractAfkFailureReason(lines) };
   return { status: 'unknown', reason: 'final AFK result sentinel missing' };
+}
+
+function inferCompletionFromOutput(output: string[], finalMessageText: string | null | undefined): boolean {
+  const allText = [...output, finalMessageText ?? ''].join('\n').toLowerCase();
+  const hasTicketDone = allText.includes('status: done') || allText.includes('status=done');
+  const hasCommit = /commit [`']?[a-f0-9]{7,}[`']?/i.test(allText) || allText.includes('committed');
+  const hasSummary = allText.includes('## afk summary');
+  const hasTestsPass = allText.includes('tests pass') || allText.includes('all tests passed');
+  return hasTicketDone && hasCommit && (hasSummary || hasTestsPass);
 }
 
 function formatAfkTicketFailure(result: AfkTicketResult): string | null {

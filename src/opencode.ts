@@ -309,7 +309,7 @@ export function buildStaleRecoveryPrompt(
     'Continue in this same session. Use the existing transcript, current worktree state, and any completed work already present.',
     'Do not restart discovery from scratch unless the current state requires it.',
     'Continue the original AFK ticket requirements. Before exiting, update the ticket file with the final status and append/update `## AFK Summary` if complete.',
-    'End your final assistant message with exactly one AFK result sentinel line: `AFK_TICKET_RESULT: success` when complete, or `AFK_TICKET_RESULT: failed` when incomplete or blocked.',
+    'Start your final assistant message with exactly one AFK result sentinel line: `AFK_TICKET_RESULT: success` when complete, or `AFK_TICKET_RESULT: failed` when incomplete or blocked. Place this line BEFORE any summary.',
     '',
     'Original AFK prompt for reference:',
     originalPrompt,
