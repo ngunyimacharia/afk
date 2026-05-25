@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -1550,4 +1550,226 @@ test('hands off after repeated malformed reviewer output without implementation 
       'malformed reviewer output handoff',
     ],
   );
+});
+
+test('reviewer prompt includes updated ticket content after execution edits', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-ticket-content-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nDo the thing\n');
+  let reviewerPrompt = '';
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ prompt, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerPrompt = prompt;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      writeFileSync(
+        ticketPath,
+        '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nCompleted.\n',
+      );
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'rt', label: 'feat/rt', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.match(reviewerPrompt, /Updated ticket content:/);
+  assert.match(reviewerPrompt, /status: done/);
+  assert.match(reviewerPrompt, /## AFK Summary/);
+  assert.match(reviewerPrompt, /Completed\./);
+});
+
+test('updated ticket content appears before execution output in reviewer prompt', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-ticket-order-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nDo the thing\n');
+  let reviewerPrompt = '';
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ prompt, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerPrompt = prompt;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      writeFileSync(
+        ticketPath,
+        '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nDone.\n',
+      );
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['execution line 1', 'execution line 2'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'ro', label: 'feat/ro', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  const updatedTicketIndex = reviewerPrompt.indexOf('Updated ticket content:');
+  const executionOutputIndex = reviewerPrompt.indexOf('Execution output:');
+  assert.notEqual(updatedTicketIndex, -1);
+  assert.notEqual(executionOutputIndex, -1);
+  assert.ok(updatedTicketIndex < executionOutputIndex, 'updated ticket content should appear before execution output');
+});
+
+test('second reviewer prompt after fixup includes latest ticket text from disk', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-fixup-ticket-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nDo the thing\n');
+  const reviewerPrompts: string[] = [];
+  let reviewerCalls = 0;
+  let executionCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ prompt, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        reviewerPrompts.push(prompt);
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [
+            JSON.stringify(
+              reviewerCalls === 1
+                ? {
+                    done: false,
+                    summary: 'Needs fix',
+                    findings: [{ severity: 'major', title: 'Bug', detail: 'Fix it' }],
+                  }
+                : { done: true, summary: 'Looks good', findings: [] },
+            ),
+          ],
+        };
+      }
+      executionCalls += 1;
+      if (executionCalls === 2) {
+        writeFileSync(
+          ticketPath,
+          '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nFixup complete.\n',
+        );
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'rf', label: 'feat/rf', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.equal(reviewerCalls, 2);
+  assert.equal(reviewerPrompts.length, 2);
+  assert.match(reviewerPrompts[0], /status: ready-for-agent/);
+  assert.doesNotMatch(reviewerPrompts[0], /Fixup complete\./);
+  assert.match(reviewerPrompts[1], /status: done/);
+  assert.match(reviewerPrompts[1], /Fixup complete\./);
+});
+
+test('blocks run without reviewer invocation when updated ticket cannot be read before review', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-ticket-read-fail-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nDo the thing\n');
+  let reviewerCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      // Delete the ticket file during execution so the pre-review read fails
+      try { unlinkSync(ticketPath); } catch {}
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'trf', label: 'feat/trf', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(reviewerCalls, 0);
+  assert.equal(result.outcome, 'blocked');
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-trf.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    STATUS: string;
+    FAILURE_KIND?: string;
+    UNSAFE_REASON?: string;
+  };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.FAILURE_KIND, 'ticket-read-failure');
+  assert.match(metadata.UNSAFE_REASON ?? '', /updated ticket context could not be read before review/);
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-trf.log');
+  assert.match(readFileSync(logPath, 'utf8'), /updated ticket context could not be read before review/);
 });

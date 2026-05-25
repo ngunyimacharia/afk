@@ -26,6 +26,7 @@ const FIXUP_REMEDIATION_GUIDANCE =
 const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
 const REVIEWER_EMPTY_OUTPUT_FAILURE_KIND = 'reviewer-empty-output';
 const LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND = 'launcher-context-mismatch';
+const TICKET_READ_FAILURE_KIND = 'ticket-read-failure';
 
 const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
   'The previous reviewer response was malformed and could not be parsed.',
@@ -230,6 +231,10 @@ export class SingleTicketRunner {
         if (!latestExecutionResult)
           return { scheduled: false, message: 'No execution result available for review', outcome: 'not-scheduled' };
         const executionForReview = latestExecutionResult;
+        const updatedTicketContent = this.readTicketContent(ticket.path);
+        if (updatedTicketContent === null) {
+          return this.handoffForTicketReadFailure(ticket.label, record, options, sessionId);
+        }
 
         const reviewResult = await this.runtimeStore.runPhase(
           record.metadataPath,
@@ -240,8 +245,8 @@ export class SingleTicketRunner {
               plan,
               ticketIndex: 0,
               prompt: useReviewerRepairPrompt
-                ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview)
-                : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview),
+                ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent)
+                : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent),
               invocationMode: 'reviewer',
               sessionId,
               onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
@@ -603,6 +608,26 @@ export class SingleTicketRunner {
     });
   }
 
+  private handoffForTicketReadFailure(
+    ticketLabel: string,
+    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
+    options: { onProgress?: AgentExecutionProgressCallback },
+    sessionId: string | null,
+  ): Promise<SingleTicketRunResult> {
+    const reason = 'updated ticket context could not be read before review';
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      STATUS: 'blocked',
+      UNSAFE_REASON: reason,
+      FAILURE_KIND: TICKET_READ_FAILURE_KIND,
+    });
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+      this.runtimeStore.markFailed(record, reason);
+      this.runtimeStore.appendLog(record.logPath, `ticket read failure: ${reason}`);
+      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: reason, sessionId });
+      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
+    });
+  }
+
   private validateLaunchContext(plan: LaunchPlan, ticketLabel: string): string | null {
     const ticket = plan.tickets[0];
     const snapshot = plan.snapshots?.[ticketLabel];
@@ -702,6 +727,7 @@ export class SingleTicketRunner {
     reviewerPromptText: string,
     sessionId: string | null,
     executionResult: { status: string; output?: string[] },
+    updatedTicketContent: string,
   ): string {
     return [
       reviewerPromptText.trim(),
@@ -709,6 +735,11 @@ export class SingleTicketRunner {
       `Ticket: ${ticketLabel}`,
       `Execution session: ${sessionId ?? 'unknown'}`,
       `Execution status: ${executionResult.status}`,
+      '',
+      'Updated ticket content:',
+      '```markdown',
+      updatedTicketContent.trimEnd(),
+      '```',
       ...(executionResult.output?.length ? ['', 'Execution output:', ...executionResult.output] : []),
     ].join('\n');
   }
@@ -718,9 +749,10 @@ export class SingleTicketRunner {
     reviewerPromptText: string,
     sessionId: string | null,
     executionResult: { status: string; output?: string[] },
+    updatedTicketContent: string,
   ): string {
     return [
-      this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult),
+      this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult, updatedTicketContent),
       '',
       REVIEWER_FORMAT_REPAIR_INSTRUCTIONS,
     ].join('\n');
