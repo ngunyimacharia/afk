@@ -164,6 +164,109 @@ test('progress line uses providerName for kimi harness', () => {
   assert.doesNotMatch(output, /\[opencode:/);
 });
 
+test('progress line renders unsupported notification capability', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.updateNotificationState({ capability: 'unsupported' });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /\[notifications unavailable\]/);
+});
+
+test('progress line renders sent notification state with payload', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Permission required: feat/001',
+        message: 'bash tool requested',
+        category: 'permission-required',
+      },
+    },
+  });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /\[notified: Permission required: feat\/001\]/);
+});
+
+test('progress line renders failed notification state with payload', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'failed',
+      payload: {
+        title: 'Run completed',
+        message: '2 ticket(s) completed successfully.',
+        category: 'run-completed-success',
+      },
+    },
+  });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /\[notification failed: Run completed\]/);
+});
+
+test('progress line hides skipped notification state', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'skipped',
+    },
+  });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.doesNotMatch(output, /notified/);
+  assert.doesNotMatch(output, /notification/);
+});
+
+test('progress line does not render notification state for non-tty output', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(false, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.updateNotificationState({ capability: 'unsupported' });
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.done();
+
+  assert.deepEqual(writes, []);
+});
+
+test('progress line re-renders when notification state changes after initial render', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  const writesBefore = writes.length;
+  progressLine.updateNotificationState({ capability: 'unsupported' });
+  const writesAfter = writes.length;
+
+  assert.ok(writesAfter > writesBefore);
+});
+
 function fakeStdout(isTTY: boolean, writes: string[]): NodeJS.WriteStream {
   return {
     isTTY,

@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  NotificationPolicy,
-  classifyProgressEvent,
-  classifyRunOutcome,
-} from '../src/notification-policy.js';
+import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from '../src/notification-policy.js';
 import type { AgentExecutionProgressEvent } from '../src/types.js';
 
 test('permission-required event produces a notification payload', () => {

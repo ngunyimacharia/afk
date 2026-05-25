@@ -16,8 +16,11 @@ import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { discoverKimiModels, KimiSessionExecutor } from './kimi.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
+import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
+import { OpenTUIDashboardView } from './opentui-dashboard-view.js';
+import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { createProgressLine } from './progress-line.js';
@@ -289,16 +292,55 @@ export async function runAfk(
     launchPreferences.budgets,
   );
   const scheduler = new Scheduler(runner, concurrency);
+  const renderer: OpenTUIRenderer = {
+    capabilities: { notifications: io.stdout.isTTY ?? false },
+    notify: io.stdout.isTTY
+      ? (title: string, message: string) => {
+          io.stdout.write(`\x1b]777;notify;${title};${message}\x07`);
+        }
+      : undefined,
+  };
+  const notificationPolicy = new NotificationPolicy();
+  const notificationAdapter = new OpenTUINotificationAdapter(renderer);
   const progressLine = createProgressLine(io.stdout, {
     isPromptActive: () => permissionCoordinator.promptActive,
     providerName: providerNameFromHarness(harness),
   });
+  const dashboardView = new OpenTUIDashboardView(progressLine, renderer);
   const runId = randomUUID();
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
-    schedulerResult = await scheduler.launch(plan, { onProgress: (event) => progressLine.update(event), runId });
+    schedulerResult = await scheduler.launch(plan, {
+      onProgress: (event) => {
+        dashboardView.updateProgress(event);
+        const policyEvent = classifyProgressEvent(event);
+        if (policyEvent) {
+          const payload = notificationPolicy.maybeNotify(policyEvent);
+          notificationAdapter.maybeNotify(payload).then((state) => {
+            if (payload) {
+              dashboardView.recordDelivery(state, payload);
+            }
+          });
+        }
+      },
+      runId,
+    });
+    const runOutcomeEvent = classifyRunOutcome({
+      runId,
+      ticketResults: schedulerResult.ticketResults.map((r) => ({
+        ticketLabel: r.ticket.label,
+        outcome: r.outcome,
+      })),
+    });
+    if (runOutcomeEvent) {
+      const payload = notificationPolicy.maybeNotify(runOutcomeEvent);
+      const state = await notificationAdapter.maybeNotify(payload);
+      if (payload) {
+        dashboardView.recordDelivery(state, payload);
+      }
+    }
   } finally {
-    progressLine.done();
+    dashboardView.done();
   }
   return {
     code: 0,

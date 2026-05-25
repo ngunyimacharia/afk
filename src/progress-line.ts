@@ -1,8 +1,19 @@
 import { createLogUpdate } from 'log-update';
+import type { NotificationPayload } from './notification-policy.js';
+import type { NotificationDeliveryState } from './opentui-notification-adapter.js';
 import type { AgentExecutionProgressEvent } from './types.js';
+
+export interface DashboardNotificationState {
+  capability: 'supported' | 'unsupported';
+  lastDelivery?: {
+    state: NotificationDeliveryState;
+    payload?: NotificationPayload;
+  };
+}
 
 export interface ProgressLine {
   update(event: AgentExecutionProgressEvent): void;
+  updateNotificationState(state: DashboardNotificationState): void;
   done(): void;
 }
 
@@ -18,6 +29,7 @@ export function createProgressLine(stdout: NodeJS.WriteStream, options: Progress
 
 class NoopProgressLine implements ProgressLine {
   update(_event: AgentExecutionProgressEvent): void {}
+  updateNotificationState(_state: DashboardNotificationState): void {}
   done(): void {}
 }
 
@@ -31,6 +43,7 @@ class LogUpdateProgressLine implements ProgressLine {
   private hasRendered = false;
   private activePermissionKey: string | undefined;
   private readonly providerName: string;
+  private notificationState: DashboardNotificationState | undefined;
 
   constructor(
     private readonly stdout: NodeJS.WriteStream,
@@ -72,6 +85,13 @@ class LogUpdateProgressLine implements ProgressLine {
     this.stdout.write('\n');
   }
 
+  updateNotificationState(state: DashboardNotificationState): void {
+    this.notificationState = state;
+    if (this.hasRendered && this.latestEvent && !this.isPromptActive()) {
+      this.render();
+    }
+  }
+
   private startSpinner(): void {
     if (this.spinnerTimer) return;
     this.spinnerTimer = setInterval(() => {
@@ -102,7 +122,31 @@ class LogUpdateProgressLine implements ProgressLine {
     const prefix = active > 1 ? `${spinner} ${active} active` : spinner;
     const session =
       event.sessionId && !event.message.includes(event.sessionId) ? ` [${this.providerName}: ${event.sessionId}]` : '';
-    return `${prefix}: ${event.message}${session}`;
+    const notification = this.formatNotificationState();
+    return notification
+      ? `${prefix}: ${event.message}${session}\n${notification}`
+      : `${prefix}: ${event.message}${session}`;
+  }
+
+  private formatNotificationState(): string | undefined {
+    if (!this.notificationState) return undefined;
+    const { capability, lastDelivery } = this.notificationState;
+    if (capability === 'unsupported') {
+      return '[notifications unavailable]';
+    }
+    if (!lastDelivery) return undefined;
+    switch (lastDelivery.state) {
+      case 'sent':
+        return lastDelivery.payload ? `[notified: ${lastDelivery.payload.title}]` : '[notified]';
+      case 'failed':
+        return lastDelivery.payload ? `[notification failed: ${lastDelivery.payload.title}]` : '[notification failed]';
+      case 'skipped':
+        return undefined;
+      case 'unsupported':
+        return '[notifications unavailable]';
+      default:
+        return undefined;
+    }
   }
 
   private renderPermission(event: AgentExecutionProgressEvent): void {

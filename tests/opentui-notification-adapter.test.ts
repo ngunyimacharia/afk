@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { OpenTUINotificationAdapter } from '../src/opentui-notification-adapter.js';
 import type { NotificationPayload } from '../src/notification-policy.js';
+import { OpenTUINotificationAdapter } from '../src/opentui-notification-adapter.js';
 
 function fakeRenderer(
   capabilities: { notifications?: boolean },
   notifyImpl?: (title: string, message: string) => void | Promise<void>,
-): { capabilities: { notifications?: boolean }; notify?: (title: string, message: string) => void | Promise<void>; calls: Array<{ title: string; message: string }> } {
+): {
+  capabilities: { notifications?: boolean };
+  notify?: (title: string, message: string) => void | Promise<void>;
+  calls: Array<{ title: string; message: string }>;
+} {
   const calls: Array<{ title: string; message: string }> = [];
   return {
     capabilities,
