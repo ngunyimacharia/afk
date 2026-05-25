@@ -164,7 +164,7 @@ export function buildLaunchPlan(
   tickets: TicketRecord[],
   checkout: PreparedCheckoutContext,
   reviewer?: {
-    harness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
+    harness?: 'OpenCode' | 'Claude-Kimi';
     model?: LaunchModel;
     prompt?: ReviewerPromptTemplate;
   },

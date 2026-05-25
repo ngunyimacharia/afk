@@ -1,35 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { discoverClaudeAnthropicModels, discoverClaudeKimiModels, parseClaudeCodeEvent } from '../src/claude-code.js';
+import { discoverClaudeKimiModels, parseClaudeCodeEvent } from '../src/claude-code.js';
 import { detectClaudeCodeFailure } from '../src/provider-failure.js';
-
-describe('discoverClaudeAnthropicModels', () => {
-  const originalKey = process.env.ANTHROPIC_API_KEY;
-
-  test('returns models when ANTHROPIC_API_KEY is set', async () => {
-    process.env.ANTHROPIC_API_KEY = 'test-key';
-    const models = await discoverClaudeAnthropicModels();
-    assert.equal(models.length, 3);
-    assert.ok(models.some((m) => m.id === 'anthropic/claude-opus-4-7'));
-    assert.ok(models.some((m) => m.id === 'anthropic/claude-sonnet-4-6'));
-    assert.ok(models.some((m) => m.id === 'anthropic/claude-haiku-4-5'));
-  });
-
-  test('returns empty array when ANTHROPIC_API_KEY is missing', async () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const models = await discoverClaudeAnthropicModels();
-    assert.equal(models.length, 0);
-  });
-
-  test('restore original env', () => {
-    if (originalKey === undefined) {
-      delete process.env.ANTHROPIC_API_KEY;
-    } else {
-      process.env.ANTHROPIC_API_KEY = originalKey;
-    }
-    assert.ok(true);
-  });
-});
 
 describe('discoverClaudeKimiModels', () => {
   const originalKey = process.env.ANTHROPIC_API_KEY;

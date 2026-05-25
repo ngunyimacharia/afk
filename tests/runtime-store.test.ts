@@ -211,3 +211,33 @@ test('keeps metadata readers compatible when new review fields are absent', () =
   assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, undefined);
   assert.equal(metadata.FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET, undefined);
 });
+
+test('rejects stale harness values Kimi and Claude-Anthropic from persisted preferences', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-stale-harness-'));
+  const store = new RuntimeStore({ repoRoot });
+  const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
+  mkdirSync(path.dirname(preferencesPath), { recursive: true });
+
+  writeFileSync(
+    preferencesPath,
+    JSON.stringify({ harness: 'Kimi', reviewerHarness: 'Claude-Anthropic' }),
+    'utf8',
+  );
+  const stale = store.readLaunchPreferences();
+  assert.equal(stale.harness, undefined);
+  assert.equal(stale.reviewerHarness, undefined);
+
+  writeFileSync(
+    preferencesPath,
+    JSON.stringify({ harness: 'Claude-Anthropic', reviewerHarness: 'OpenCode' }),
+    'utf8',
+  );
+  const partial = store.readLaunchPreferences();
+  assert.equal(partial.harness, undefined);
+  assert.equal(partial.reviewerHarness, 'OpenCode');
+
+  writeFileSync(preferencesPath, JSON.stringify({ harness: 'OpenCode', reviewerHarness: 'Claude-Kimi' }), 'utf8');
+  const valid = store.readLaunchPreferences();
+  assert.equal(valid.harness, 'OpenCode');
+  assert.equal(valid.reviewerHarness, 'Claude-Kimi');
+});

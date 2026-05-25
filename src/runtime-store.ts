@@ -64,7 +64,7 @@ export class RuntimeStore {
     try {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-      const validHarnesses = new Set<string>(['OpenCode', 'Kimi', 'Claude-Anthropic', 'Claude-Kimi']);
+      const validHarnesses = new Set<string>(['OpenCode', 'Claude-Kimi']);
       const harnessValue = typeof value.harness === 'string' ? value.harness : undefined;
       const reviewerHarnessValue = typeof value.reviewerHarness === 'string' ? value.reviewerHarness : undefined;
       const preferences: LaunchPreferences = {

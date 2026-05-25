@@ -232,26 +232,6 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
   }
 }
 
-export class ClaudeAnthropicAgentExecutionProvider implements AgentExecutionProvider {
-  private readonly base: BaseSDKAgentExecutionProvider;
-
-  constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
-    this.base = new BaseSDKAgentExecutionProvider(
-      executor,
-      {
-        providerName: 'claude-anthropic',
-        failureDetector: detectClaudeCodeFailure,
-        sessionIdUnavailableReason: 'session id unavailable from claude',
-      },
-      permissionCoordinator,
-    );
-  }
-
-  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
-    return this.base.execute(request);
-  }
-}
-
 export class ClaudeKimiAgentExecutionProvider implements AgentExecutionProvider {
   private readonly base: BaseSDKAgentExecutionProvider;
 

@@ -25,9 +25,9 @@ export interface LaunchModel {
 }
 
 export interface LaunchPreferences {
-  harness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
+  harness?: 'OpenCode' | 'Claude-Kimi';
   modelId?: string;
-  reviewerHarness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
+  reviewerHarness?: 'OpenCode' | 'Claude-Kimi';
   reviewerModelId?: string;
   concurrency?: number;
   budgets?: Partial<BudgetPolicy>;
@@ -130,7 +130,7 @@ export interface AfkStateSnapshot {
 
 export interface LaunchPlan {
   model: LaunchModel;
-  reviewerHarness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
+  reviewerHarness?: 'OpenCode' | 'Claude-Kimi';
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets: TicketRecord[];

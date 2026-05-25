@@ -9,9 +9,9 @@ export interface PromptIO {
 
 export interface LaunchWizardResult {
   cancelled: boolean;
-  harness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
+  harness?: 'OpenCode' | 'Claude-Kimi';
   model?: LaunchModel;
-  reviewerHarness?: 'OpenCode' | 'Claude-Anthropic' | 'Claude-Kimi';
+  reviewerHarness?: 'OpenCode' | 'Claude-Kimi';
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
@@ -74,7 +74,6 @@ export async function runInteractiveLaunchWizard(input: {
   if (!selectedReviewerHarnessDisplay) return { cancelled: true };
   const reviewerHarness = selectedReviewerHarnessDisplay.replace(/ \(same as implementation\)$/, '') as
     | 'OpenCode'
-    | 'Claude-Anthropic'
     | 'Claude-Kimi';
 
   const reviewerModels = reviewerHarness === harness ? models : await input.discoverModels(reviewerHarness);

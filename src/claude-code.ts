@@ -38,15 +38,6 @@ function resolveClaudeCodeExecutablePath(): string | undefined {
   }
 }
 
-export async function discoverClaudeAnthropicModels(): Promise<LaunchModel[]> {
-  if (!process.env.ANTHROPIC_API_KEY) return [];
-  return [
-    { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7' },
-    { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-    { id: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-  ];
-}
-
 export async function discoverClaudeKimiModels(): Promise<LaunchModel[]> {
   // Uses ANTHROPIC_API_KEY because the Claude-Kimi variant runs via the Anthropic SDK
   // routed to Kimi's endpoint (see KIMI_BASE_URL override in the executor).
@@ -55,7 +46,7 @@ export async function discoverClaudeKimiModels(): Promise<LaunchModel[]> {
 }
 
 export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
-  constructor(private readonly provider: 'anthropic' | 'kimi') {}
+  constructor(private readonly provider: 'kimi') {}
 
   async run(input: {
     model: LaunchModel;
