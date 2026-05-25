@@ -163,9 +163,13 @@ export class RunDashboardState {
   }
 
   ingest(event: AgentExecutionProgressEvent): void {
+    const eventWithTimestamp: AgentExecutionProgressEvent = {
+      ...event,
+      timestamp: event.timestamp ?? this.now(),
+    };
     const ticket = this.tickets.get(event.ticketLabel);
     if (ticket) {
-      this.recentEvents.push(event);
+      this.recentEvents.push(eventWithTimestamp);
       if (this.recentEvents.length > MAX_RECENT_EVENTS) {
         this.recentEvents.shift();
       }
@@ -329,7 +333,7 @@ export class RunDashboardState {
     }
   }
 
-  setTicketOutcome(label: string, outcome: 'completed' | 'blocked' | 'failed' | 'not-scheduled'): void {
+  setTicketOutcome(label: string, outcome: 'completed' | 'blocked' | 'failed' | 'not-scheduled' | 'skipped'): void {
     const ticket = this.tickets.get(label);
     if (!ticket) return;
 
@@ -338,6 +342,7 @@ export class RunDashboardState {
       blocked: 'blocked',
       failed: 'failed',
       'not-scheduled': 'skipped',
+      skipped: 'skipped',
     };
     ticket.runtimeState = mapping[outcome];
 
