@@ -132,12 +132,14 @@ export class RunDashboardState {
   }
 
   ingest(event: AgentExecutionProgressEvent): void {
-    this.recentEvents.push(event);
-    if (this.recentEvents.length > MAX_RECENT_EVENTS) {
-      this.recentEvents.shift();
+    const ticket = this.tickets.get(event.ticketLabel);
+    if (ticket) {
+      this.recentEvents.push(event);
+      if (this.recentEvents.length > MAX_RECENT_EVENTS) {
+        this.recentEvents.shift();
+      }
     }
 
-    const ticket = this.tickets.get(event.ticketLabel);
     if (!ticket) return;
 
     ticket.latestMessage = event.message;
@@ -226,7 +228,8 @@ export class RunDashboardState {
         const item: ActionNeededSnapshot = {
           kind: 'blocked',
           ticketLabel: label,
-          message: outcome === 'not-scheduled' ? 'Not scheduled because dependencies did not complete' : 'Ticket blocked',
+          message:
+            outcome === 'not-scheduled' ? 'Not scheduled because dependencies did not complete' : 'Ticket blocked',
           timestamp: this.now(),
         };
         this.actionNeeded.set(key, item);

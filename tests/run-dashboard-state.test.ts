@@ -5,16 +5,41 @@ import type { TicketRecord } from '../src/types.js';
 
 function makeTickets(): TicketRecord[] {
   return [
-    { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
-    { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
-    { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+    {
+      path: '/tmp/a-1.md',
+      feature: 'feat-a',
+      issueName: '001',
+      label: 'feat-a/001',
+      executorAfk: true,
+    },
+    {
+      path: '/tmp/a-2.md',
+      feature: 'feat-a',
+      issueName: '002',
+      label: 'feat-a/002',
+      executorAfk: true,
+    },
+    {
+      path: '/tmp/b-1.md',
+      feature: 'feat-b',
+      issueName: '001',
+      label: 'feat-b/001',
+      executorAfk: true,
+    },
   ];
 }
 
 test('tickets start in ready state and pre-completed tickets start as complete', () => {
   const tickets: TicketRecord[] = [
     ...makeTickets(),
-    { path: '/tmp/c-1.md', feature: 'feat-c', issueName: '001', label: 'feat-c/001', status: 'done', executorAfk: true },
+    {
+      path: '/tmp/c-1.md',
+      feature: 'feat-c',
+      issueName: '001',
+      label: 'feat-c/001',
+      status: 'done',
+      executorAfk: true,
+    },
   ];
   const state = new RunDashboardState({}, tickets);
   const snap = state.snapshot();
@@ -33,12 +58,20 @@ test('normal progress events move ticket to running then complete', () => {
   assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'running');
   assert.equal(snap.aggregate.running, 1);
 
-  state.ingest({ ticketLabel: 'feat-a/001', message: 'tool bash running: bun test', sessionId: 'session-1' });
+  state.ingest({
+    ticketLabel: 'feat-a/001',
+    message: 'tool bash running: bun test',
+    sessionId: 'session-1',
+  });
   snap = state.snapshot();
   assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.latestMessage, 'tool bash running: bun test');
   assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.sessionId, 'session-1');
 
-  state.ingest({ ticketLabel: 'feat-a/001', message: 'run completed', sessionId: 'session-1' });
+  state.ingest({
+    ticketLabel: 'feat-a/001',
+    message: 'run completed',
+    sessionId: 'session-1',
+  });
   snap = state.snapshot();
   assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'complete');
   assert.equal(snap.aggregate.complete, 1);
@@ -125,19 +158,31 @@ test('blocked outcome from message creates action-needed and sets blocked state'
 
 test('handoff messages infer blocked state', () => {
   const state = new RunDashboardState({}, makeTickets());
-  state.ingest({ ticketLabel: 'feat-a/001', message: 'malformed reviewer output handoff' });
+  state.ingest({
+    ticketLabel: 'feat-a/001',
+    message: 'malformed reviewer output handoff',
+  });
   assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'blocked');
 
-  state.ingest({ ticketLabel: 'feat-a/002', message: 'budget handoff: ticket-wall-clock-ms exceeded' });
+  state.ingest({
+    ticketLabel: 'feat-a/002',
+    message: 'budget handoff: ticket-wall-clock-ms exceeded',
+  });
   assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/002')?.runtimeState, 'blocked');
 
-  state.ingest({ ticketLabel: 'feat-b/001', message: 'launcher context mismatch' });
+  state.ingest({
+    ticketLabel: 'feat-b/001',
+    message: 'launcher context mismatch',
+  });
   assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-b/001')?.runtimeState, 'blocked');
 });
 
 test('failed messages infer failed state', () => {
   const state = new RunDashboardState({}, makeTickets());
-  state.ingest({ ticketLabel: 'feat-a/001', message: 'run failed: provider error' });
+  state.ingest({
+    ticketLabel: 'feat-a/001',
+    message: 'run failed: provider error',
+  });
   assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'failed');
 
   state.ingest({ ticketLabel: 'feat-a/002', message: 'run interrupted' });
@@ -196,8 +241,20 @@ test('feature aggregate prefers running over blocked over failed over complete',
   state2.setTicketOutcome('feat-b/001', 'completed'); // only one ticket in feat-b here
   // reset to fresh state with two tickets in feat-b
   const tickets: TicketRecord[] = [
-    { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
-    { path: '/tmp/b-2.md', feature: 'feat-b', issueName: '002', label: 'feat-b/002', executorAfk: true },
+    {
+      path: '/tmp/b-1.md',
+      feature: 'feat-b',
+      issueName: '001',
+      label: 'feat-b/001',
+      executorAfk: true,
+    },
+    {
+      path: '/tmp/b-2.md',
+      feature: 'feat-b',
+      issueName: '002',
+      label: 'feat-b/002',
+      executorAfk: true,
+    },
   ];
   const state3 = new RunDashboardState({}, tickets);
   state3.setTicketOutcome('feat-b/001', 'failed');
@@ -211,6 +268,7 @@ test('events for unknown tickets are ignored', () => {
   const snap = state.snapshot();
   assert.equal(snap.tickets.length, 3);
   assert.equal(snap.aggregate.ready, 3);
+  assert.equal(snap.recentEvents.length, 0);
 });
 
 test('snapshot is deterministic and read-only', () => {
@@ -223,7 +281,12 @@ test('snapshot is deterministic and read-only', () => {
 
   // Mutating returned arrays should not affect internal state
   snap1.recentEvents.push({ ticketLabel: 'feat-a/001', message: 'extra' });
-  snap1.actionNeeded.push({ kind: 'permission', ticketLabel: 'x', message: 'x', timestamp: 0 });
+  snap1.actionNeeded.push({
+    kind: 'permission',
+    ticketLabel: 'x',
+    message: 'x',
+    timestamp: 0,
+  });
   const snap3 = state.snapshot();
   assert.equal(snap3.recentEvents.length, 1);
   assert.equal(snap3.actionNeeded.length, 0);
@@ -242,7 +305,12 @@ test('recent events are capped', () => {
 
 test('run metadata is reflected in snapshot', () => {
   const state = new RunDashboardState(
-    { runId: 'run-123', modelId: 'model-x', harness: 'opencode', concurrency: 3 },
+    {
+      runId: 'run-123',
+      modelId: 'model-x',
+      harness: 'opencode',
+      concurrency: 3,
+    },
     makeTickets(),
   );
   const snap = state.snapshot();
