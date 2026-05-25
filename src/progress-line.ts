@@ -56,10 +56,14 @@ class LogUpdateProgressLine implements ProgressLine {
 
   update(event: AgentExecutionProgressEvent): void {
     if (event.kind === 'permission') {
+      this.latestByTicket.set(event.ticketLabel, event.message);
+      this.latestEvent = event;
       this.renderPermission(event);
       return;
     }
     if (event.kind === 'failure') {
+      this.latestByTicket.set(event.ticketLabel, event.message);
+      this.latestEvent = event;
       this.renderFailure(event);
       return;
     }
@@ -75,7 +79,6 @@ class LogUpdateProgressLine implements ProgressLine {
     this.latestEvent = event;
     this.startSpinner();
     this.render();
-    this.hasRendered = true;
   }
 
   done(): void {
@@ -114,6 +117,7 @@ class LogUpdateProgressLine implements ProgressLine {
   private render(): void {
     if (!this.latestEvent) return;
     this.logUpdate(this.format(this.latestEvent));
+    this.hasRendered = true;
   }
 
   private format(event: AgentExecutionProgressEvent): string {

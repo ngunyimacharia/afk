@@ -151,6 +151,126 @@ test('progress line prints durable provider failures', () => {
   assert.match(output, /\[opencode: session-1\]/);
 });
 
+test('progress line renders notification state when permission is the first event', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({
+    ticketLabel: 'feat/001',
+    kind: 'permission',
+    message: 'opencode permission required: bash; requested allow',
+    permissionId: 'per_1',
+  });
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Permission required: feat/001',
+        message: 'bash tool requested',
+        category: 'permission-required',
+      },
+    },
+  });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /Permission required for feat\/001/);
+  assert.match(output, /\[notified: Permission required: feat\/001\]/);
+  assert.equal(output.endsWith('\n'), true);
+});
+
+test('progress line renders notification state when failure is the first event', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({
+    ticketLabel: 'feat/001',
+    kind: 'failure',
+    message: 'provider failure: model unavailable',
+  });
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Failed: feat/001',
+        message: 'The ticket failed during execution.',
+        category: 'ticket-failed',
+      },
+    },
+  });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /Provider failure for feat\/001/);
+  assert.match(output, /\[notified: Failed: feat\/001\]/);
+  assert.equal(output.endsWith('\n'), true);
+});
+
+test('progress line finalizes after notification re-render following permission event', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.update({
+    ticketLabel: 'feat/001',
+    kind: 'permission',
+    message: 'opencode permission required: bash; requested allow',
+    permissionId: 'per_1',
+  });
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Permission required: feat/001',
+        message: 'bash tool requested',
+        category: 'permission-required',
+      },
+    },
+  });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /Permission required for feat\/001/);
+  assert.match(output, /\[notified: Permission required: feat\/001\]/);
+  assert.equal(output.endsWith('\n'), true);
+});
+
+test('progress line finalizes after notification re-render following failure event', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.update({
+    ticketLabel: 'feat/001',
+    kind: 'failure',
+    message: 'provider failure: model unavailable',
+  });
+  progressLine.updateNotificationState({
+    capability: 'supported',
+    lastDelivery: {
+      state: 'sent',
+      payload: {
+        title: 'Failed: feat/001',
+        message: 'The ticket failed during execution.',
+        category: 'ticket-failed',
+      },
+    },
+  });
+  progressLine.done();
+
+  const output = writes.join('');
+  assert.match(output, /Provider failure for feat\/001/);
+  assert.match(output, /\[notified: Failed: feat\/001\]/);
+  assert.equal(output.endsWith('\n'), true);
+});
+
 test('progress line uses providerName for kimi harness', () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);
