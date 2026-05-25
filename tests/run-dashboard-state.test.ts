@@ -462,6 +462,33 @@ test('metadata ingestion enriches selected ticket details', () => {
   assert.equal(details.phaseHistory[0]?.name, 'execution');
 });
 
+test('ingest with metadata enriches selected ticket details', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.ingest({
+    ticketLabel: 'feat-a/001',
+    message: 'run completed',
+    metadata: {
+      FAILURE_KIND: 'provider-error',
+      FINAL_REVIEW_OUTCOME: 'approved',
+      FINAL_REVIEW_REASON: 'clean',
+      FINAL_REVIEW_CLASSIFICATION: 'clean-approval',
+      PHASE_HISTORY: [
+        { name: 'execution', startTime: '2024-01-01T00:00:00Z', endTime: '2024-01-01T00:01:00Z', durationMs: 60000 },
+      ],
+    },
+  });
+
+  const snap = state.snapshot();
+  const details = snap.selectedTicketDetails;
+  assert.ok(details);
+  assert.equal(details.failureKind, 'provider-error');
+  assert.equal(details.reviewOutcome, 'approved');
+  assert.equal(details.reviewReason, 'clean');
+  assert.equal(details.reviewClassification, 'clean-approval');
+  assert.equal(details.phaseHistory.length, 1);
+  assert.equal(details.phaseHistory[0]?.name, 'execution');
+});
+
 test('selected ticket details include recent events for that ticket', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.ingest({ ticketLabel: 'feat-a/001', message: 'event 1' });

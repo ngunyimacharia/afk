@@ -258,6 +258,7 @@ export interface AgentExecutionProgressEvent {
   permissionPatterns?: string[];
   permissionType?: string | null;
   permissionTitle?: string | null;
+  metadata?: Partial<RuntimeMetadataRecord>;
 }
 
 export type AgentExecutionProgressCallback = (event: AgentExecutionProgressEvent) => void;

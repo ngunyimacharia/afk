@@ -171,6 +171,10 @@ export class RunDashboardState {
 
     if (!ticket) return;
 
+    if (event.metadata) {
+      this.ingestMetadata(event.ticketLabel, event.metadata);
+    }
+
     ticket.latestMessage = event.message;
     if (event.sessionId !== undefined && event.sessionId !== null) {
       ticket.sessionId = event.sessionId;
