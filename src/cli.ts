@@ -19,11 +19,10 @@ import { buildLaunchPlan } from './launch-context-builder.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
-import { OpenTUIDashboardView } from './opentui-dashboard-view.js';
+import { createLiveRunView } from './live-run-view.js';
 import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
-import { createProgressLine } from './progress-line.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
@@ -292,6 +291,7 @@ export async function runAfk(
     launchPreferences.budgets,
   );
   const scheduler = new Scheduler(runner, concurrency);
+  const runId = randomUUID();
   const renderer: OpenTUIRenderer = {
     capabilities: { notifications: io.stdout.isTTY ?? false },
     notify: io.stdout.isTTY
@@ -302,23 +302,43 @@ export async function runAfk(
   };
   const notificationPolicy = new NotificationPolicy();
   const notificationAdapter = new OpenTUINotificationAdapter(renderer);
-  const progressLine = createProgressLine(io.stdout, {
+  const view = createLiveRunView({
+    kind: io.stdout.isTTY ? 'dashboard' : 'text',
+    stdout: io.stdout,
     isPromptActive: () => permissionCoordinator.promptActive,
     providerName: providerNameFromHarness(harness),
+    selectedTickets: plan.tickets,
+    runOptions: {
+      runId,
+      modelId: plan.model.id,
+      harness,
+      reviewerModelId: plan.reviewerModel?.id,
+      reviewerHarness,
+      concurrency,
+    },
   });
-  const dashboardView = new OpenTUIDashboardView(progressLine, renderer);
-  const runId = randomUUID();
+  const progressLine = 'updateNotificationState' in view
+    ? (view as unknown as { updateNotificationState(state: unknown): void })
+    : null;
+  if (progressLine) {
+    progressLine.updateNotificationState({
+      capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
+    });
+  }
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
     schedulerResult = await scheduler.launch(plan, {
       onProgress: (event) => {
-        dashboardView.updateProgress(event);
+        view.update(event);
         const policyEvent = classifyProgressEvent(event);
         if (policyEvent) {
           const payload = notificationPolicy.maybeNotify(policyEvent);
           notificationAdapter.maybeNotify(payload).then((state) => {
-            if (payload) {
-              dashboardView.recordDelivery(state, payload);
+            if (payload && progressLine) {
+              progressLine.updateNotificationState({
+                capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
+                lastDelivery: { state, payload },
+              });
             }
           });
         }
@@ -335,12 +355,15 @@ export async function runAfk(
     if (runOutcomeEvent) {
       const payload = notificationPolicy.maybeNotify(runOutcomeEvent);
       const state = await notificationAdapter.maybeNotify(payload);
-      if (payload) {
-        dashboardView.recordDelivery(state, payload);
+      if (payload && progressLine) {
+        progressLine.updateNotificationState({
+          capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
+          lastDelivery: { state, payload },
+        });
       }
     }
   } finally {
-    dashboardView.done();
+    view.done();
   }
   return {
     code: 0,
