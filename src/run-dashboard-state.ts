@@ -221,12 +221,13 @@ export class RunDashboardState {
     const inferred = inferRuntimeStateFromMessage(event.message);
     if (inferred !== null) {
       ticket.runtimeState = inferred;
-      if (inferred === 'blocked') {
-        const key = `${event.ticketLabel}:blocked:${event.message}`;
+      if (inferred === 'blocked' || inferred === 'failed') {
+        const kind: 'blocked' | 'failure' = inferred === 'blocked' ? 'blocked' : 'failure';
+        const key = `${event.ticketLabel}:${kind}:${event.message}`;
         if (!ticket.actionNeededKeys.has(key)) {
           ticket.actionNeededKeys.add(key);
           const item: ActionNeededSnapshot = {
-            kind: 'blocked',
+            kind,
             ticketLabel: event.ticketLabel,
             message: event.message,
             timestamp: this.now(),

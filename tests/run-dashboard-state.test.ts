@@ -177,16 +177,24 @@ test('handoff messages infer blocked state', () => {
   assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-b/001')?.runtimeState, 'blocked');
 });
 
-test('failed messages infer failed state', () => {
+test('failed messages infer failed state and create action-needed', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.ingest({
     ticketLabel: 'feat-a/001',
     message: 'run failed: provider error',
   });
-  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'failed');
+  let snap = state.snapshot();
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'failed');
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.actionNeededCount, 1);
+  assert.equal(snap.actionNeeded.length, 1);
+  assert.equal(snap.actionNeeded[0]?.kind, 'failure');
+  assert.equal(snap.actionNeeded[0]?.ticketLabel, 'feat-a/001');
 
   state.ingest({ ticketLabel: 'feat-a/002', message: 'run interrupted' });
-  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/002')?.runtimeState, 'failed');
+  snap = state.snapshot();
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/002')?.runtimeState, 'failed');
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/002')?.actionNeededCount, 1);
+  assert.equal(snap.actionNeeded.length, 2);
 });
 
 test('setTicketOutcome updates runtime state and creates blocked action for blocked outcomes', () => {
