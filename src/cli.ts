@@ -289,13 +289,22 @@ export async function runAfk(
     launchPreferences.budgets,
   );
   const scheduler = new Scheduler(runner, concurrency);
+  const runId = randomUUID();
   const progressLine = createLiveRunView({
-    kind: 'text',
+    kind: io.stdout.isTTY ? 'dashboard' : 'text',
     stdout: io.stdout,
     isPromptActive: () => permissionCoordinator.promptActive,
     providerName: providerNameFromHarness(harness),
+    selectedTickets: plan.tickets,
+    runOptions: {
+      runId,
+      modelId: plan.model.id,
+      harness,
+      reviewerModelId: plan.reviewerModel?.id,
+      reviewerHarness,
+      concurrency,
+    },
   });
-  const runId = randomUUID();
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
     schedulerResult = await scheduler.launch(plan, { onProgress: (event) => progressLine.update(event), runId });

@@ -1,5 +1,8 @@
 import type { AgentExecutionProgressEvent } from './types.js';
 import { createProgressLine } from './progress-line.js';
+import type { TicketRecord } from './types.js';
+import type { RunDashboardStateOptions } from './run-dashboard-state.js';
+import { createOpenTuiDashboard, DashboardProxy } from './opentui-dashboard.js';
 
 export interface LiveRunView {
   update(event: AgentExecutionProgressEvent): void;
@@ -14,14 +17,21 @@ export interface LiveRunViewOptions {
   stdout: NodeJS.WriteStream;
   isPromptActive?: () => boolean;
   providerName?: string;
+  selectedTickets?: TicketRecord[];
+  runOptions?: RunDashboardStateOptions;
 }
 
 export function createLiveRunView(options: LiveRunViewOptions): LiveRunView {
-  const { kind = 'text', stdout, isPromptActive, providerName } = options;
-  if (kind === 'dashboard') {
-    // Dashboard view is not yet implemented; fall back to text progress line.
-    // This keeps the seam stable while the OpenTUI integration is built separately.
-    return createProgressLine(stdout, { isPromptActive, providerName });
+  const { kind = 'text', stdout, isPromptActive, providerName, selectedTickets, runOptions } = options;
+  if (kind === 'dashboard' && stdout.isTTY) {
+    const proxy = new DashboardProxy(
+      stdout,
+      { isPromptActive, providerName },
+      { stdout, selectedTickets, runOptions },
+      (opts) => createOpenTuiDashboard(opts),
+    );
+    proxy.start().catch(() => {});
+    return proxy;
   }
   return createProgressLine(stdout, { isPromptActive, providerName });
 }

@@ -67,16 +67,15 @@ test('live run view factory falls back to no-op for non-tty', () => {
   assert.deepEqual(writes, []);
 });
 
-test('live run view factory falls back to text for unimplemented dashboard kind', () => {
+test('live run view factory falls back to no-op for non-tty dashboard kind', () => {
   const writes: string[] = [];
-  const stdout = fakeStdout(true, writes);
+  const stdout = fakeStdout(false, writes);
   const view = createLiveRunView({ kind: 'dashboard', stdout });
 
   view.update({ ticketLabel: 'feat/001', message: 'starting' });
   view.done();
 
-  const output = writes.join('');
-  assert.match(output, /[|/\\-]: starting/);
+  assert.deepEqual(writes, []);
 });
 
 test('progress line updates in place and finalizes once', () => {
