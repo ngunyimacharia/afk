@@ -156,25 +156,25 @@ test('blocked outcome from message creates action-needed and sets blocked state'
   assert.equal(snap.aggregate.blocked, 1);
 });
 
-test('handoff messages infer blocked state', () => {
+test('handoff and launcher context mismatch messages do not infer blocked', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.ingest({
     ticketLabel: 'feat-a/001',
     message: 'malformed reviewer output handoff',
   });
-  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'blocked');
+  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'running');
 
   state.ingest({
     ticketLabel: 'feat-a/002',
     message: 'budget handoff: ticket-wall-clock-ms exceeded',
   });
-  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/002')?.runtimeState, 'blocked');
+  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/002')?.runtimeState, 'running');
 
   state.ingest({
     ticketLabel: 'feat-b/001',
     message: 'launcher context mismatch',
   });
-  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-b/001')?.runtimeState, 'blocked');
+  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-b/001')?.runtimeState, 'running');
 });
 
 test('failed messages infer failed state and create action-needed', () => {
@@ -216,10 +216,22 @@ test('setTicketOutcome updates runtime state and creates blocked action for bloc
   assert.equal(blockedAction.kind, 'blocked');
 });
 
-test('not-scheduled outcome maps to blocked state', () => {
+test('not-scheduled outcome maps to skipped state', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.setTicketOutcome('feat-a/001', 'not-scheduled');
-  assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'blocked');
+  const snap = state.snapshot();
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'skipped');
+  assert.equal(snap.aggregate.skipped, 1);
+});
+
+test('skipped state is terminal and does not flip back to running', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.setTicketOutcome('feat-a/001', 'not-scheduled');
+  state.ingest({ ticketLabel: 'feat-a/001', message: 'some stray update' });
+
+  const snap = state.snapshot();
+  assert.equal(snap.tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'skipped');
+  assert.equal(snap.aggregate.skipped, 1);
 });
 
 test('multiple features have correct aggregate states', () => {

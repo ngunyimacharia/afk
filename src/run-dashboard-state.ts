@@ -1,6 +1,6 @@
 import type { AgentExecutionProgressEvent, PhaseHistoryEntry, RuntimeMetadataRecord, TicketRecord } from './types.js';
 
-export type DashboardTicketRuntimeState = 'ready' | 'running' | 'blocked' | 'failed' | 'complete';
+export type DashboardTicketRuntimeState = 'ready' | 'running' | 'blocked' | 'failed' | 'complete' | 'skipped';
 
 export interface DashboardTicketSnapshot {
   label: string;
@@ -68,6 +68,7 @@ export interface DashboardSnapshot {
     failed: number;
     complete: number;
     ready: number;
+    skipped: number;
     total: number;
   };
   recentEvents: AgentExecutionProgressEvent[];
@@ -100,7 +101,7 @@ interface InternalTicketState {
 const MAX_RECENT_EVENTS = 50;
 
 function isTerminalState(state: DashboardTicketRuntimeState): boolean {
-  return state === 'complete' || state === 'failed' || state === 'blocked';
+  return state === 'complete' || state === 'failed' || state === 'blocked' || state === 'skipped';
 }
 
 function inferRuntimeStateFromMessage(message: string): DashboardTicketRuntimeState | null {
@@ -108,8 +109,6 @@ function inferRuntimeStateFromMessage(message: string): DashboardTicketRuntimeSt
   if (lower.includes('run completed')) return 'complete';
   if (lower.includes('run blocked')) return 'blocked';
   if (lower.startsWith('run failed')) return 'failed';
-  if (lower.includes('handoff')) return 'blocked';
-  if (lower.includes('launcher context mismatch')) return 'blocked';
   if (lower.includes('run interrupted')) return 'failed';
   return null;
 }
@@ -118,7 +117,10 @@ function computeFeatureAggregateState(tickets: DashboardTicketSnapshot[]): Dashb
   if (tickets.some((t) => t.runtimeState === 'running')) return 'running';
   if (tickets.some((t) => t.runtimeState === 'blocked')) return 'blocked';
   if (tickets.some((t) => t.runtimeState === 'failed')) return 'failed';
-  if (tickets.every((t) => t.runtimeState === 'complete')) return 'complete';
+  if (tickets.every((t) => isTerminalState(t.runtimeState))) {
+    if (tickets.some((t) => t.runtimeState === 'skipped')) return 'skipped';
+    if (tickets.every((t) => t.runtimeState === 'complete')) return 'complete';
+  }
   return 'ready';
 }
 
@@ -327,19 +329,18 @@ export class RunDashboardState {
       completed: 'complete',
       blocked: 'blocked',
       failed: 'failed',
-      'not-scheduled': 'blocked',
+      'not-scheduled': 'skipped',
     };
     ticket.runtimeState = mapping[outcome];
 
-    if (outcome === 'blocked' || outcome === 'not-scheduled') {
+    if (outcome === 'blocked') {
       const key = `${label}:blocked:outcome:${outcome}`;
       if (!ticket.actionNeededKeys.has(key)) {
         ticket.actionNeededKeys.add(key);
         const item: ActionNeededSnapshot = {
           kind: 'blocked',
           ticketLabel: label,
-          message:
-            outcome === 'not-scheduled' ? 'Not scheduled because dependencies did not complete' : 'Ticket blocked',
+          message: 'Ticket blocked',
           timestamp: this.now(),
         };
         this.actionNeeded.set(key, item);
@@ -367,6 +368,7 @@ export class RunDashboardState {
       failed: 0,
       complete: 0,
       ready: 0,
+      skipped: 0,
       total: ticketSnapshots.length,
     };
     for (const ts of ticketSnapshots) {
