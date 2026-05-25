@@ -8,12 +8,12 @@ test('loads the deterministic reviewer prompt', () => {
   assert.equal(template.id, 'reviewer-default');
   assert.equal(template.path, 'builtin:reviewer-default');
   assert.match(template.content ?? '', /# Reviewer Prompt/);
-  assert.match(template.content ?? '', /Return strict JSON only\./);
+  assert.match(template.content ?? '', /You must return \*\*exactly one JSON object\*\*/);
+  assert.match(template.content ?? '', /"done":boolean/);
   assert.match(template.content ?? '', /"summary"\s*:\s*"string"/);
   assert.match(template.content ?? '', /"findings"\s*:\s*\[/);
   assert.match(template.content ?? '', /"findings":\[\]/);
   assert.match(template.content ?? '', /minor\|major\|blocker/);
-  assert.match(template.content ?? '', /"severity":"major"/);
   assert.match(template.content ?? '', /`blocker`/);
 });
 
@@ -32,7 +32,8 @@ test('embedded reviewer prompt matches the markdown prompt source', () => {
 
 test('reviewer prompt enforces strict json and schema examples', () => {
   const source = readFileSync(new URL('../src/prompts/reviewer-default.md', import.meta.url), 'utf8');
-  assert.match(source, /Return strict JSON only\. Do not include markdown fences/);
+  assert.match(source, /You must return \*\*exactly one JSON object\*\*/);
+  assert.match(source, /"done":boolean/);
   assert.match(source, /"severity":"minor\|major\|blocker"/);
   assert.match(source, /Clean pass example:/);
   assert.match(source, /Finding example:/);

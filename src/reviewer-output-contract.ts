@@ -16,6 +16,7 @@ export interface ParsedReviewerOutput {
   highestSeverity: ReviewerSeverity;
   fallback: boolean;
   failureKind?: 'malformed-output';
+  done: boolean;
   raw: string;
 }
 
@@ -67,8 +68,29 @@ function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string):
           ? parsed.comments
           : null;
   const summary = normalizeText(parsed.summary) || (findingsPayload ? 'Reviewer findings parsed.' : '');
-  if (!findingsPayload) {
+
+  // done must be a boolean
+  if (typeof parsed.done !== 'boolean') {
     return null;
+  }
+
+  const done = parsed.done;
+
+  // If done is true but there are findings, this is inconsistent - treat as malformed
+  if (done && findingsPayload && findingsPayload.length > 0) {
+    return null;
+  }
+
+  // If there are no findings payload at all, treat as empty findings array
+  if (!findingsPayload) {
+    return {
+      summary,
+      findings: [],
+      highestSeverity: 'minor',
+      fallback: false,
+      done,
+      raw,
+    };
   }
 
   const findings = findingsPayload.map(normalizeFinding);
@@ -82,6 +104,7 @@ function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string):
     findings: normalizedFindings,
     highestSeverity: highestSeverityFromFindings(normalizedFindings),
     fallback: false,
+    done,
     raw,
   };
 }
@@ -93,16 +116,19 @@ export function decideReviewOutcome(
   const cycle = normalizePositiveInteger(options.cycle, 1);
   const maxCycles = normalizePositiveInteger(options.maxCycles ?? 3, 3);
   const highestSeverity = review.highestSeverity;
+
+  // Approval only when reviewer explicitly says done:true AND there are no findings
   const decision: ReviewDecision =
-    highestSeverity === 'minor' ? 'approve' : cycle >= maxCycles ? 'needs-human' : 'loop';
+    review.done && review.findings.length === 0 ? 'approve' : cycle >= maxCycles ? 'needs-human' : 'loop';
+
   const reason =
     decision === 'approve'
-      ? 'Reviewer findings are minor only'
+      ? 'Reviewer confirmed ticket is complete'
       : decision === 'needs-human'
-        ? 'Reviewer cycle cap reached with unresolved major findings'
+        ? 'Reviewer cycle cap reached with unresolved findings'
         : review.fallback
           ? 'Reviewer output was malformed and requires a retry'
-          : 'Reviewer findings include major or blocker severity';
+          : 'Reviewer findings require fixup';
 
   return {
     decision,
@@ -262,6 +288,7 @@ function fallbackParsedOutput(raw: string): ParsedReviewerOutput {
     highestSeverity: 'major',
     fallback: true,
     failureKind: 'malformed-output',
+    done: false,
     raw,
   };
 }
