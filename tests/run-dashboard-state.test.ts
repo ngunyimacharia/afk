@@ -274,6 +274,12 @@ test('events for unknown tickets are ignored', () => {
 test('snapshot is deterministic and read-only', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.ingest({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
+  state.ingest({
+    ticketLabel: 'feat-a/001',
+    kind: 'permission',
+    message: 'permission message',
+    permissionId: 'per_1',
+  });
 
   const snap1 = state.snapshot();
   const snap2 = state.snapshot();
@@ -287,9 +293,16 @@ test('snapshot is deterministic and read-only', () => {
     message: 'x',
     timestamp: 0,
   });
+
+  // Mutating nested objects should not affect internal state
+  snap1.recentEvents[0].message = 'mutated event';
+  snap1.actionNeeded[0].message = 'mutated action';
+
   const snap3 = state.snapshot();
-  assert.equal(snap3.recentEvents.length, 1);
-  assert.equal(snap3.actionNeeded.length, 0);
+  assert.equal(snap3.recentEvents.length, 2);
+  assert.equal(snap3.recentEvents[0]?.message, 'starting ticket run');
+  assert.equal(snap3.actionNeeded.length, 1);
+  assert.equal(snap3.actionNeeded[0]?.message, 'permission message');
 });
 
 test('recent events are capped', () => {

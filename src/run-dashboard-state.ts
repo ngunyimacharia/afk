@@ -274,9 +274,9 @@ export class RunDashboardState {
       elapsedMs: this.now() - this.startTime,
       features,
       tickets: ticketSnapshots,
-      actionNeeded: Array.from(this.actionNeeded.values()),
+      actionNeeded: Array.from(this.actionNeeded.values()).map((a) => structuredClone(a)),
       aggregate,
-      recentEvents: [...this.recentEvents],
+      recentEvents: this.recentEvents.map((e) => structuredClone(e)),
     };
   }
 
