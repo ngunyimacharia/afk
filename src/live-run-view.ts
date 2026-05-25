@@ -18,15 +18,16 @@ export interface LiveRunViewOptions {
   providerName?: string;
   selectedTickets?: TicketRecord[];
   runOptions?: RunDashboardStateOptions;
+  repoRoot?: string;
 }
 
 export function createLiveRunView(options: LiveRunViewOptions): LiveRunView {
-  const { kind = 'text', stdout, isPromptActive, providerName, selectedTickets, runOptions } = options;
+  const { kind = 'text', stdout, isPromptActive, providerName, selectedTickets, runOptions, repoRoot } = options;
   if (kind === 'dashboard' && stdout.isTTY) {
     const proxy = new DashboardProxy(
       stdout,
       { isPromptActive, providerName },
-      { stdout, selectedTickets, runOptions },
+      { stdout, selectedTickets, runOptions, repoRoot },
       (opts) => createOpenTuiDashboard(opts),
     );
     proxy.start().catch(() => {});

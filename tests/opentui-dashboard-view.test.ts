@@ -653,7 +653,7 @@ test('createOpenTuiDashboard renders selected ticket details panel', async () =>
     { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
   ];
 
-  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets, repoRoot: '/tmp' }, module);
   assert.ok(view);
 
   view?.update({ ticketLabel: 'feat-a/001', message: 'starting ticket run', sessionId: 'sess-1' });
@@ -661,9 +661,10 @@ test('createOpenTuiDashboard renders selected ticket details panel', async () =>
   const detailsBox = boxes.find((b) => b.title === 'Details');
   assert.ok(detailsBox, 'Details box should exist');
   const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
-  assert.match(detailsContent, /feat-a\/001/);
+  assert.match(detailsContent, /001/);
   assert.match(detailsContent, /⏳/);
   assert.match(detailsContent, /sess-1/);
+  assert.match(detailsContent, /Path: feat-a-001\.md/);
 
   view?.done();
 });
@@ -730,6 +731,7 @@ test('createOpenTuiDashboard renders metadata in selected ticket details panel',
     {
       stdout,
       selectedTickets: tickets,
+      repoRoot: '/tmp',
       runOptions: { runId: 'run-123', modelId: 'model-x', harness: 'opencode' },
     },
     module,
@@ -754,14 +756,107 @@ test('createOpenTuiDashboard renders metadata in selected ticket details panel',
   const detailsBox = boxes.find((b) => b.title === 'Details');
   assert.ok(detailsBox, 'Details box should exist');
   const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
-  assert.match(detailsContent, /feat-a\/001/);
+  assert.match(detailsContent, /001/);
   assert.match(detailsContent, /✅/);
+  assert.match(detailsContent, /Path: feat-a-001\.md/);
   assert.match(detailsContent, /Model: model-x/);
   assert.match(detailsContent, /Harness: opencode/);
   assert.match(detailsContent, /Review: approved \(clean\)/);
   assert.match(detailsContent, /Phases:/);
   assert.match(detailsContent, /execution 60000ms/);
   assert.doesNotMatch(detailsContent, /Recent events:/);
+
+  view?.done();
+});
+
+test('createOpenTuiDashboard strips feature prefix from labels and formats paths', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/repo/.scratch/feat-a/issues/01-do-thing.md', feature: 'feat-a', issueName: '01-do-thing', label: 'feat-a/01-do-thing', executorAfk: true },
+    { path: '/outside/02-other.md', feature: 'feat-b', issueName: '02-other', label: 'no-slash', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets, repoRoot: '/repo' }, module);
+  assert.ok(view);
+
+  view?.update({ ticketLabel: 'feat-a/01-do-thing', message: 'starting' });
+  view?.update({ ticketLabel: 'no-slash', message: 'running' });
+
+  const ticketsBox = boxes.find((b) => b.title === 'Tickets [j/k]');
+  assert.ok(ticketsBox, 'Tickets box should exist');
+  const ticketsContent = ticketsBox.children.map((c) => c.content).join('\n');
+  assert.match(ticketsContent, /> 01-do-thing/);
+  assert.match(ticketsContent, /no-slash/);
+
+  const eventsBox = boxes.find((b) => b.title === 'Recent Events');
+  assert.ok(eventsBox, 'Recent Events box should exist');
+  const eventsContent = eventsBox.children.map((c) => c.content).join('\n');
+  assert.match(eventsContent, /01-do-thing: starting/);
+  assert.match(eventsContent, /no-slash: running/);
+
+  const detailsBox = boxes.find((b) => b.title === 'Details');
+  assert.ok(detailsBox, 'Details box should exist');
+  const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
+  assert.match(detailsContent, /01-do-thing/);
+  assert.match(detailsContent, /Path: \.scratch\/feat-a\/issues\/01-do-thing\.md/);
+
+  // Select the second ticket to check outside-repo path formatting
+  (view as unknown as { handleKey(sequence: string): boolean }).handleKey('j');
+  const detailsContent2 = detailsBox.children.map((c) => c.content).join('\n');
+  assert.match(detailsContent2, /no-slash/);
+  assert.match(detailsContent2, /Path: 02-other\.md/);
 
   view?.done();
 });
@@ -909,7 +1004,7 @@ test('createOpenTuiDashboard renders timestamps in recent events panel', async (
   const eventsBox = boxes.find((b) => b.title === 'Recent Events');
   assert.ok(eventsBox, 'Recent Events box should exist');
   const eventsContent = eventsBox.children.map((c) => c.content).join('\n');
-  assert.match(eventsContent, /^\d{2}:\d{2}:\d{2} feat-a\/001: run completed$/m);
+  assert.match(eventsContent, /^\d{2}:\d{2}:\d{2} 001: run completed$/m);
 
   view?.done();
 });
@@ -1044,8 +1139,8 @@ test('createOpenTuiDashboard ticket list shows selection indicator', async () =>
   const ticketsBox = boxes.find((b) => b.title === 'Tickets [j/k]');
   assert.ok(ticketsBox, 'Tickets box should exist');
   const ticketsContent = ticketsBox.children.map((c) => c.content).join('\n');
-  assert.match(ticketsContent, /> feat-a\/001/);
-  assert.match(ticketsContent, / {2}feat-a\/002/);
+  assert.match(ticketsContent, /> 001/);
+  assert.match(ticketsContent, / {2}002/);
 
   view?.done();
 });

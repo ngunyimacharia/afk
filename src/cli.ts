@@ -308,6 +308,7 @@ export async function runAfk(
     isPromptActive: () => permissionCoordinator.promptActive,
     providerName: providerNameFromHarness(harness),
     selectedTickets: plan.tickets,
+    repoRoot,
     runOptions: {
       runId,
       modelId: plan.model.id,

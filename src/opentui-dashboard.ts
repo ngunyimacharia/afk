@@ -9,11 +9,14 @@ import {
   type RunDashboardStateOptions,
 } from './run-dashboard-state.js';
 import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
+import { classifyPathAgainstRepoRoot } from './repo-boundary.js';
+import path from 'node:path';
 
 export interface OpenTuiDashboardOptions {
   stdout: NodeJS.WriteStream;
   selectedTickets?: TicketRecord[];
   runOptions?: RunDashboardStateOptions;
+  repoRoot?: string;
 }
 
 export interface OpenTuiDashboardModule {
@@ -81,6 +84,20 @@ const FEATURE_STATE_ICONS: Record<DashboardTicketRuntimeState, string> = {
   skipped: '⏭',
 };
 
+export function stripFeaturePrefix(label: string): string {
+  const slashIndex = label.indexOf('/');
+  if (slashIndex === -1) return label;
+  return label.slice(slashIndex + 1);
+}
+
+function formatPath(targetPath: string, repoRoot: string): string {
+  const result = classifyPathAgainstRepoRoot(repoRoot, targetPath);
+  if (result.classification === 'inside-repo') {
+    return path.relative(repoRoot, targetPath);
+  }
+  return path.basename(targetPath);
+}
+
 function formatHeader(snap: DashboardSnapshot): string {
   const elapsed = formatElapsed(snap.elapsedMs);
   const parts: string[] = [];
@@ -116,14 +133,14 @@ function formatTickets(snap: DashboardSnapshot, frameCounter: number): string {
         : TICKET_STATE_ICONS[t.runtimeState];
       const msg = t.latestMessage ? ` - ${t.latestMessage.slice(0, 40)}` : '';
       const selected = snap.selectedTicket?.label === t.label ? '>' : ' ';
-      return `${selected} ${t.label} ${icon}${msg}`;
+      return `${selected} ${stripFeaturePrefix(t.label)} ${icon}${msg}`;
     })
     .join('\n');
 }
 
 function formatActionNeeded(snap: DashboardSnapshot): string {
   if (snap.actionNeeded.length === 0) return 'No action needed';
-  return snap.actionNeeded.map((a) => `[${a.kind}] ${a.ticketLabel}: ${a.message.slice(0, 60)}`).join('\n');
+  return snap.actionNeeded.map((a) => `[${a.kind}] ${stripFeaturePrefix(a.ticketLabel)}: ${a.message.slice(0, 60)}`).join('\n');
 }
 
 function formatEvents(snap: DashboardSnapshot): string {
@@ -132,12 +149,12 @@ function formatEvents(snap: DashboardSnapshot): string {
     .slice(-10)
     .map((e) => {
       const time = e.timestamp ? formatTime(e.timestamp) : '--:--:--';
-      return `${time} ${e.ticketLabel}: ${e.message.slice(0, 80)}`;
+      return `${time} ${stripFeaturePrefix(e.ticketLabel)}: ${e.message.slice(0, 80)}`;
     })
     .join('\n');
 }
 
-function formatDetails(snap: DashboardSnapshot): string {
+function formatDetails(snap: DashboardSnapshot, repoRoot: string): string {
   const details = snap.selectedTicketDetails;
   if (!details) {
     if (snap.tickets.length === 0) return 'No tickets in run';
@@ -145,8 +162,8 @@ function formatDetails(snap: DashboardSnapshot): string {
   }
 
   const lines: string[] = [];
-  lines.push(`${details.label} ${TICKET_STATE_ICONS[details.runtimeState]}`);
-  lines.push(`Path: ${details.path}`);
+  lines.push(`${stripFeaturePrefix(details.label)} ${TICKET_STATE_ICONS[details.runtimeState]}`);
+  lines.push(`Path: ${formatPath(details.path, repoRoot)}`);
   if (details.status) lines.push(`Status: ${details.status}`);
   if (details.sessionId) lines.push(`Session: ${details.sessionId}`);
   if (snap.modelId) lines.push(`Model: ${snap.modelId}`);
@@ -186,6 +203,7 @@ class OpenTuiDashboard implements LiveRunView {
     selectedTickets: TicketRecord[],
     runOptions: RunDashboardStateOptions,
     private readonly opentui: OpenTuiDashboardModule,
+    private readonly repoRoot: string,
   ) {
     this.state = new RunDashboardState(runOptions, selectedTickets);
     this.buildLayout();
@@ -344,7 +362,7 @@ class OpenTuiDashboard implements LiveRunView {
     this.featuresText.content = formatFeatures(snap);
     this.ticketsText.content = formatTickets(snap, this.frameCounter);
     this.actionText.content = formatActionNeeded(snap);
-    this.detailsText.content = formatDetails(snap);
+    this.detailsText.content = formatDetails(snap, this.repoRoot);
     this.eventsText.content = formatEvents(snap);
     this.maybeStopTimer(snap);
   }
@@ -391,7 +409,7 @@ export async function createOpenTuiDashboard(
       exitOnCtrlC: false,
       testing: false,
     });
-    return new OpenTuiDashboard(renderer, options.selectedTickets ?? [], options.runOptions ?? {}, opentui);
+    return new OpenTuiDashboard(renderer, options.selectedTickets ?? [], options.runOptions ?? {}, opentui, options.repoRoot ?? process.cwd());
   } catch {
     return null;
   }
