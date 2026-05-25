@@ -1,9 +1,9 @@
-import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
+import type { BoxRenderable, CliRenderer, TextRenderable } from '@opentui/core';
 import type { LiveRunView } from './live-run-view.js';
 import type { ProgressLine, ProgressLineOptions } from './progress-line.js';
 import { createProgressLine } from './progress-line.js';
-import { RunDashboardState, type DashboardSnapshot, type RunDashboardStateOptions } from './run-dashboard-state.js';
-import type { CliRenderer, BoxRenderable, TextRenderable } from '@opentui/core';
+import { type DashboardSnapshot, RunDashboardState, type RunDashboardStateOptions } from './run-dashboard-state.js';
+import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
 
 export interface OpenTuiDashboardOptions {
   stdout: NodeJS.WriteStream;
@@ -19,19 +19,25 @@ export interface OpenTuiDashboardModule {
     exitOnCtrlC?: boolean;
     testing?: boolean;
   }): Promise<CliRenderer>;
-  BoxRenderable: new (ctx: CliRenderer, options: {
-    flexDirection?: string;
-    width?: number | string;
-    height?: number | string;
-    flexGrow?: number;
-    gap?: number;
-    border?: boolean;
-    title?: string;
-    titleAlignment?: string;
-  }) => BoxRenderable;
-  TextRenderable: new (ctx: CliRenderer, options: {
-    content?: string;
-  }) => TextRenderable;
+  BoxRenderable: new (
+    ctx: CliRenderer,
+    options: {
+      flexDirection?: string;
+      width?: number | string;
+      height?: number | string;
+      flexGrow?: number;
+      gap?: number;
+      border?: boolean;
+      title?: string;
+      titleAlignment?: string;
+    },
+  ) => BoxRenderable;
+  TextRenderable: new (
+    ctx: CliRenderer,
+    options: {
+      content?: string;
+    },
+  ) => TextRenderable;
 }
 
 function formatElapsed(ms: number): string {
@@ -70,9 +76,7 @@ function formatTickets(snap: DashboardSnapshot): string {
 
 function formatActionNeeded(snap: DashboardSnapshot): string {
   if (snap.actionNeeded.length === 0) return 'No action needed';
-  return snap.actionNeeded
-    .map((a) => `[${a.kind}] ${a.ticketLabel}: ${a.message.slice(0, 60)}`)
-    .join('\n');
+  return snap.actionNeeded.map((a) => `[${a.kind}] ${a.ticketLabel}: ${a.message.slice(0, 60)}`).join('\n');
 }
 
 function formatEvents(snap: DashboardSnapshot): string {
@@ -220,8 +224,8 @@ export class DashboardProxy implements LiveRunView {
   private finalized = false;
 
   constructor(
-    private readonly stdout: NodeJS.WriteStream,
-    private readonly options: ProgressLineOptions,
+    readonly stdout: NodeJS.WriteStream,
+    readonly options: ProgressLineOptions,
     private readonly dashboardOptions: OpenTuiDashboardOptions,
     private readonly createDashboard: (opts: OpenTuiDashboardOptions) => Promise<LiveRunView | null>,
   ) {

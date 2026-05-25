@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createProgressLine } from '../src/progress-line.js';
 import { createLiveRunView } from '../src/live-run-view.js';
+import { createProgressLine } from '../src/progress-line.js';
 
 test('progress line is a no-op for non-tty output', () => {
   const writes: string[] = [];

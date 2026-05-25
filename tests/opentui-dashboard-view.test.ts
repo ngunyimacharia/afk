@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { CliRenderer, TextRenderable } from '@opentui/core';
+import type { LiveRunView } from '../src/live-run-view.js';
 import { createLiveRunView } from '../src/live-run-view.js';
 import { createOpenTuiDashboard, DashboardProxy, type OpenTuiDashboardModule } from '../src/opentui-dashboard.js';
-import type { CliRenderer, BoxRenderable, TextRenderable } from '@opentui/core';
-import type { AgentExecutionProgressEvent, TicketRecord } from '../src/types.js';
-import type { LiveRunView } from '../src/live-run-view.js';
+import type { TicketRecord } from '../src/types.js';
 
 function fakeStdout(isTTY: boolean, writes: string[] = []): NodeJS.WriteStream {
   return {
@@ -118,9 +118,9 @@ test('createOpenTuiDashboard creates a view that updates on events with fake mod
   );
 
   assert.ok(view);
-  view!.update({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
-  view!.update({ ticketLabel: 'feat-a/001', message: 'run completed' });
-  view!.done();
+  view?.update({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
+  view?.update({ ticketLabel: 'feat-a/001', message: 'run completed' });
+  view?.done();
 });
 
 test('DashboardProxy buffers events while starting and flushes when dashboard is ready', async () => {
@@ -134,12 +134,7 @@ test('DashboardProxy buffers events while starting and flushes when dashboard is
     return createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
   };
 
-  const proxy = new DashboardProxy(
-    stdout,
-    {},
-    { stdout, selectedTickets: sampleTickets },
-    createDashboard,
-  );
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, createDashboard);
 
   // Start async creation so subsequent updates are buffered
   const startPromise = proxy.start();
@@ -158,12 +153,7 @@ test('DashboardProxy falls back to text progress when dashboard creation fails',
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);
 
-  const proxy = new DashboardProxy(
-    stdout,
-    {},
-    { stdout },
-    async () => null,
-  );
+  const proxy = new DashboardProxy(stdout, {}, { stdout }, async () => null);
 
   proxy.update({ ticketLabel: 'feat-a/001', message: 'starting' });
   await proxy.start();
@@ -180,11 +170,8 @@ test('DashboardProxy cleanup is safe to call multiple times', async () => {
   const stdout = fakeStdout(true, writes);
   const { module } = makeFakeTextModule();
 
-  const proxy = new DashboardProxy(
-    stdout,
-    {},
-    { stdout, selectedTickets: sampleTickets },
-    (opts) => createOpenTuiDashboard(opts, module),
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, (opts) =>
+    createOpenTuiDashboard(opts, module),
   );
 
   proxy.update({ ticketLabel: 'feat-a/001', message: 'starting' });

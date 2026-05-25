@@ -1,8 +1,7 @@
-import type { AgentExecutionProgressEvent } from './types.js';
-import { createProgressLine } from './progress-line.js';
-import type { TicketRecord } from './types.js';
-import type { RunDashboardStateOptions } from './run-dashboard-state.js';
 import { createOpenTuiDashboard, DashboardProxy } from './opentui-dashboard.js';
+import { createProgressLine } from './progress-line.js';
+import type { RunDashboardStateOptions } from './run-dashboard-state.js';
+import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
 
 export interface LiveRunView {
   update(event: AgentExecutionProgressEvent): void;
