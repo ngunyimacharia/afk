@@ -304,7 +304,7 @@ test('recovers stale opencode prompts in the same session', async () => {
               },
               {
                 info: { role: 'assistant' },
-                parts: [{ type: 'text', text: 'Recovered and completed\nAFK_TICKET_RESULT: success' }],
+                parts: [{ type: 'text', text: 'Recovered and completed' }],
               },
             ],
           },
@@ -324,13 +324,8 @@ test('recovers stale opencode prompts in the same session', async () => {
 
   assert.equal(result.sessionId, 'session-stale');
   assert.equal(result.terminalError, null);
-  assert.equal(result.finalMessageText, 'Recovered and completed\nAFK_TICKET_RESULT: success');
-  assert.deepEqual(result.output, [
-    'opencode error: Aborted',
-    'stale attempt aborted',
-    'Recovered and completed',
-    'AFK_TICKET_RESULT: success',
-  ]);
+  assert.equal(result.finalMessageText, 'Recovered and completed');
+  assert.deepEqual(result.output, ['opencode error: Aborted', 'stale attempt aborted', 'Recovered and completed']);
   assert.equal(createCalls, 1);
   assert.equal(abortCalls, 1);
   assert.deepEqual(promptPaths, ['session-stale', 'session-stale']);
@@ -408,7 +403,7 @@ test('does not mark a running opencode tool stale at the normal progress timeout
             messages: async () => [
               {
                 role: 'assistant',
-                parts: [{ type: 'text', text: 'Slow tests completed\nAFK_TICKET_RESULT: success' }],
+                parts: [{ type: 'text', text: 'Slow tests completed' }],
               },
             ],
           },
@@ -427,7 +422,7 @@ test('does not mark a running opencode tool stale at the normal progress timeout
   });
 
   assert.equal(result.terminalError, null);
-  assert.equal(result.finalMessageText, 'Slow tests completed\nAFK_TICKET_RESULT: success');
+  assert.equal(result.finalMessageText, 'Slow tests completed');
   assert.match(progress.join('\n'), /tool bash running: Runs slow tests/);
   assert.doesNotMatch(progress.join('\n'), /opencode session stale after 5ms/);
 });

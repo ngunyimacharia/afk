@@ -155,51 +155,36 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
               .filter((worktreePath) => worktreePath !== request.plan.checkout?.worktreePath),
           }),
       });
-      const finalResult = invocationMode === 'execution' ? parseAfkTicketResult(result.finalMessageText) : null;
       const outputFailure = result.terminalError ?? this.config.failureDetector(result.output ?? []);
-      const missingSentinel =
-        finalResult?.status === 'unknown' && finalResult.reason === 'final AFK result sentinel missing';
-      const inferredSuccess = missingSentinel && inferCompletionFromOutput(result.output ?? [], result.finalMessageText);
-      if (inferredSuccess) {
-        request.onProgress?.({
-          ticketLabel: ticket.label,
-          kind: 'failure',
-          message: `provider warning: final AFK result sentinel missing; inferring success from output`,
-          sessionId: result.sessionId ?? null,
-        });
-      }
-      const failureReason = finalResult
-        ? (inferredSuccess ? null : formatAfkTicketFailure(finalResult))
-        : outputFailure;
-      if (failureReason) {
+      if (outputFailure) {
         request.onProgress?.({
           ticketLabel: ticket.label,
           kind: 'failure',
           message: formatProviderFailureMessage({
             modelId: model?.id ?? 'unknown',
             mode: invocationMode,
-            reason: failureReason,
+            reason: outputFailure,
           }),
           sessionId: result.sessionId ?? null,
         });
       }
       request.onProgress?.({
         ticketLabel: ticket.label,
-        message: failureReason
+        message: outputFailure
           ? invocationMode === 'reviewer'
-            ? `${providerName} reviewer session failed: ${failureReason}`
-            : `${providerName} session failed: ${failureReason}`
+            ? `${providerName} reviewer session failed: ${outputFailure}`
+            : `${providerName} session failed: ${outputFailure}`
           : invocationMode === 'reviewer'
             ? `${providerName} reviewer session completed`
             : `${providerName} session completed`,
         sessionId: result.sessionId ?? null,
       });
       return {
-        status: failureReason ? 'failed' : 'completed',
+        status: outputFailure ? 'failed' : 'completed',
         sessionId: result.sessionId ?? null,
-        removable: !failureReason,
+        removable: !outputFailure,
         output: result.output,
-        unsafeReason: failureReason ?? (result.sessionId ? null : this.config.sessionIdUnavailableReason),
+        unsafeReason: outputFailure ?? (result.sessionId ? null : this.config.sessionIdUnavailableReason),
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message : `${this.config.providerName} execution failed`;
@@ -344,44 +329,4 @@ export function detectOpenCodeFailure(output: string[]): string | null {
     );
   });
   return failure ?? null;
-}
-
-export type AfkTicketResult =
-  | { status: 'success' }
-  | { status: 'failed'; reason?: string }
-  | { status: 'unknown'; reason: string };
-
-export function parseAfkTicketResult(finalMessageText: string | null | undefined): AfkTicketResult | null {
-  if (typeof finalMessageText !== 'string') return null;
-
-  const lines = finalMessageText.split(/\r?\n/).map((line) => line.trim());
-  const hasSuccess = lines.includes('AFK_TICKET_RESULT: success');
-  const hasFailed = lines.includes('AFK_TICKET_RESULT: failed');
-  if (hasSuccess && hasFailed) return { status: 'unknown', reason: 'final AFK result sentinel is ambiguous' };
-  if (hasSuccess) return { status: 'success' };
-  if (hasFailed) return { status: 'failed', reason: extractAfkFailureReason(lines) };
-  return { status: 'unknown', reason: 'final AFK result sentinel missing' };
-}
-
-function inferCompletionFromOutput(output: string[], finalMessageText: string | null | undefined): boolean {
-  const allText = [...output, finalMessageText ?? ''].join('\n').toLowerCase();
-  const hasTicketDone = allText.includes('status: done') || allText.includes('status=done');
-  const hasCommit = /commit [`']?[a-f0-9]{7,}[`']?/i.test(allText) || allText.includes('committed');
-  const hasSummary = allText.includes('## afk summary');
-  const hasTestsPass = allText.includes('tests pass') || allText.includes('all tests passed');
-  return hasTicketDone && hasCommit && (hasSummary || hasTestsPass);
-}
-
-function formatAfkTicketFailure(result: AfkTicketResult): string | null {
-  if (result.status === 'success') return null;
-  if (result.status === 'failed') return result.reason ? `AFK ticket failed: ${result.reason}` : 'AFK ticket failed';
-  return result.reason;
-}
-
-function extractAfkFailureReason(lines: string[]): string | undefined {
-  const reason = lines
-    .find((line) => line.startsWith('Reason:'))
-    ?.replace(/^Reason:\s*/, '')
-    .trim();
-  return reason || undefined;
 }

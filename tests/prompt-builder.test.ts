@@ -38,9 +38,6 @@ test('prompt consumes prepared checkout context', () => {
   assert.match(prompt, /Access policy: source-code reads, searches, tests, and edits must use the Working checkout/);
   assert.match(prompt, /Root repo writes are allowed only under the listed shared \.scratch artifact paths/);
   assert.match(prompt, /Search policy: search only inside the Working checkout/);
-  assert.match(prompt, /## Final Result Contract/);
-  assert.match(prompt, /^AFK_TICKET_RESULT: success$/m);
-  assert.match(prompt, /^AFK_TICKET_RESULT: failed$/m);
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
 });
 
