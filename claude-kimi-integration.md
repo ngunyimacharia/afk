@@ -69,7 +69,12 @@ The SDK emits `SDKMessage` variants including:
 The SDK's `Query` object exposes `interrupt()` to stop the current turn. We can implement stale detection using the same timeout logic as Kimi/OpenCode:
 - Track last meaningful progress timestamp
 - If timeout exceeded, call `query.interrupt()`
-- Re-query with the stale recovery prompt
+- Re-query in the same session with the single-word prompt `Continue`
+
+Current default budgets in AFK:
+- `staleProgressTimeoutMs`: 10 minutes
+- `activeToolStaleTimeoutMs`: 10 minutes
+- `maxStaleRecoveries`: 5
 
 ### 8. Sync Adapter
 Claude Code reads skills from `~/.claude/skills/` and prompts from `~/.claude/prompts/` (based on observed config structure).

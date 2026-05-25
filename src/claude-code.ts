@@ -18,9 +18,9 @@ import type {
 import { buildStaleRecoveryPrompt, parseModelId } from './opencode.js';
 import type { LaunchModel } from './types.js';
 
-const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 120_000;
-const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 30 * 60_000;
-const DEFAULT_MAX_STALE_RECOVERIES = 3;
+const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_MAX_STALE_RECOVERIES = 5;
 const KIMI_BASE_URL = 'https://api.kimi.com/coding/';
 
 let cachedClaudeCodePath: string | undefined | null = null;
@@ -392,5 +392,3 @@ function formatDuration(ms: number): string {
   if (ms % 1_000 === 0) return `${ms / 1_000}s`;
   return `${ms}ms`;
 }
-
-

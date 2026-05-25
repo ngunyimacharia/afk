@@ -12,9 +12,9 @@ import type {
 import { buildStaleRecoveryPrompt } from './opencode.js';
 import type { LaunchModel } from './types.js';
 
-const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 120_000;
-const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 30 * 60_000;
-const DEFAULT_MAX_STALE_RECOVERIES = 3;
+const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_MAX_STALE_RECOVERIES = 5;
 const EMPTY_KIMI_CONFIG = '{}';
 
 interface KimiActiveToolState {

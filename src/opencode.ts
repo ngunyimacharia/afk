@@ -3,9 +3,9 @@ import prompts from 'prompts';
 import type { LaunchModel } from './types.js';
 
 const OPENCODE_EPHEMERAL_PORT = 0;
-const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 120_000;
-const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 30 * 60_000;
-const DEFAULT_MAX_STALE_RECOVERIES = 3;
+const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_MAX_STALE_RECOVERIES = 5;
 
 type OpenCodeActivityKind = 'assistant' | 'tool' | 'permission' | 'session' | 'diff' | 'other';
 
@@ -297,23 +297,15 @@ async function abortSession(
 }
 
 export function buildStaleRecoveryPrompt(
-  originalPrompt: string,
-  attempt: number,
-  maxAttempts: number,
-  providerName = 'OpenCode',
+  _originalPrompt?: string,
+  _attempt?: number,
+  _maxAttempts?: number,
+  _providerName = 'OpenCode',
 ): string {
-  return [
-    `AFK stale-session recovery attempt ${attempt}/${maxAttempts}.`,
-    '',
-    `The previous turn in this same ${providerName} session appeared stale and was interrupted.`,
-    'Continue in this same session. Use the existing transcript, current worktree state, and any completed work already present.',
-    'Do not restart discovery from scratch unless the current state requires it.',
-    'Continue the original AFK ticket requirements. Before exiting, update the ticket file with the final status and append/update `## AFK Summary` if complete.',
-    'Start your final assistant message with exactly one AFK result sentinel line: `AFK_TICKET_RESULT: success` when complete, or `AFK_TICKET_RESULT: failed` when incomplete or blocked. Place this line BEFORE any summary.',
-    '',
-    'Original AFK prompt for reference:',
-    originalPrompt,
-  ].join('\n');
+  if (typeof _attempt === 'number' && typeof _maxAttempts === 'number') {
+    return `Continue (stale recovery attempt ${_attempt}/${_maxAttempts}).`;
+  }
+  return 'Continue';
 }
 
 function isMeaningfulProgress(event: OpenCodeSessionProgressEvent): boolean {

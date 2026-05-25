@@ -33,7 +33,7 @@ This is the bulk of the work. It must provide:
     - Tool results (`tool <name> completed/failed`)
     - Errors
   - **Permissions**: The `decidePermission` callback is invoked before executing each tool call. Since AFK defaults to `autoApprove: true`, this is mostly for logging. Map the decision to allow/reject the tool call.
-  - **Stale handling**: Implement the same stale-progress timeout logic as Kimi/OpenCode. If no meaningful progress event occurs within the timeout, interrupt the current turn and send a recovery prompt.
+- **Stale handling**: Implement the same stale-progress timeout logic as Kimi/OpenCode. If no meaningful progress event occurs within the timeout, interrupt the current turn and send only `Continue` to the same session.
   - **Output extraction**: Collect all assistant text into `output` lines. The final assistant message text is `finalMessageText`. Terminal errors (API errors, tool failures) are surfaced as `terminalError`.
 
 ### 2. Update `src/types.ts`
@@ -124,7 +124,7 @@ Use flat model IDs (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`) 
 5. **Reviewer Mode**: Run a ticket with reviewer harness set to `Claude`. The review completes and returns findings.
 6. **Execution Mode**: Run a simple ticket (e.g., a documentation update) with implementation harness set to `Claude`. The agent reads files, writes changes, and the ticket completes.
 7. **Session Resume**: Interrupt an in-progress Claude ticket and relaunch. The session resumes from the previous turn.
-8. **Stale Recovery**: Verify that if Claude stops producing progress, the stale timeout triggers a recovery prompt.
+8. **Stale Recovery**: Verify that if Claude stops producing progress, the stale timeout triggers a `Continue` retry in the same session (defaults: 10-minute progress timeout, 10-minute active-tool timeout, 5 recoveries).
 
 ## Estimated Complexity
 

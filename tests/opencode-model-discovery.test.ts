@@ -334,9 +334,8 @@ test('recovers stale opencode prompts in the same session', async () => {
   assert.equal(createCalls, 1);
   assert.equal(abortCalls, 1);
   assert.deepEqual(promptPaths, ['session-stale', 'session-stale']);
-  assert.match(JSON.stringify(promptBodies[1]), /AFK stale-session recovery attempt 1\/3/);
-  assert.match(JSON.stringify(promptBodies[1]), /Original prompt/);
-  assert.match(progress.join('\n'), /opencode stale recovery attempt 1\/3/);
+  assert.match(JSON.stringify(promptBodies[1]), /Continue/);
+  assert.match(progress.join('\n'), /opencode stale recovery attempt 1\/5/);
 });
 
 test('stops same-session stale recovery after configured cap', async () => {
