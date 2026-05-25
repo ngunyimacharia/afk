@@ -1,6 +1,6 @@
 import type { AgentExecutionProgressEvent, PhaseHistoryEntry, RuntimeMetadataRecord, TicketRecord } from './types.js';
 
-export type DashboardTicketRuntimeState = 'ready' | 'running' | 'blocked' | 'failed' | 'complete';
+export type DashboardTicketRuntimeState = 'ready' | 'running' | 'blocked' | 'failed' | 'complete' | 'skipped';
 
 export interface DashboardTicketSnapshot {
   label: string;
@@ -68,6 +68,7 @@ export interface DashboardSnapshot {
     failed: number;
     complete: number;
     ready: number;
+    skipped: number;
     total: number;
   };
   recentEvents: AgentExecutionProgressEvent[];
@@ -100,7 +101,7 @@ interface InternalTicketState {
 const MAX_RECENT_EVENTS = 50;
 
 function isTerminalState(state: DashboardTicketRuntimeState): boolean {
-  return state === 'complete' || state === 'failed' || state === 'blocked';
+  return state === 'complete' || state === 'failed' || state === 'blocked' || state === 'skipped';
 }
 
 function inferRuntimeStateFromMessage(message: string): DashboardTicketRuntimeState | null {
@@ -119,6 +120,7 @@ function computeFeatureAggregateState(tickets: DashboardTicketSnapshot[]): Dashb
   if (tickets.some((t) => t.runtimeState === 'blocked')) return 'blocked';
   if (tickets.some((t) => t.runtimeState === 'failed')) return 'failed';
   if (tickets.every((t) => t.runtimeState === 'complete')) return 'complete';
+  if (tickets.every((t) => t.runtimeState === 'skipped')) return 'skipped';
   return 'ready';
 }
 
@@ -319,7 +321,7 @@ export class RunDashboardState {
     }
   }
 
-  setTicketOutcome(label: string, outcome: 'completed' | 'blocked' | 'failed' | 'not-scheduled'): void {
+  setTicketOutcome(label: string, outcome: 'completed' | 'blocked' | 'failed' | 'not-scheduled' | 'skipped'): void {
     const ticket = this.tickets.get(label);
     if (!ticket) return;
 
@@ -328,6 +330,7 @@ export class RunDashboardState {
       blocked: 'blocked',
       failed: 'failed',
       'not-scheduled': 'blocked',
+      skipped: 'skipped',
     };
     ticket.runtimeState = mapping[outcome];
 
@@ -367,6 +370,7 @@ export class RunDashboardState {
       failed: 0,
       complete: 0,
       ready: 0,
+      skipped: 0,
       total: ticketSnapshots.length,
     };
     for (const ts of ticketSnapshots) {

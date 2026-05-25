@@ -2,7 +2,12 @@ import type { BoxRenderable, CliRenderer, TextRenderable } from '@opentui/core';
 import type { LiveRunView } from './live-run-view.js';
 import type { ProgressLine, ProgressLineOptions } from './progress-line.js';
 import { createProgressLine } from './progress-line.js';
-import { type DashboardSnapshot, RunDashboardState, type RunDashboardStateOptions } from './run-dashboard-state.js';
+import {
+  type DashboardSnapshot,
+  type DashboardTicketRuntimeState,
+  RunDashboardState,
+  type RunDashboardStateOptions,
+} from './run-dashboard-state.js';
 import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
 
 export interface OpenTuiDashboardOptions {
@@ -48,6 +53,26 @@ function formatElapsed(ms: number): string {
   return `${seconds}s`;
 }
 
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸'];
+
+const TICKET_STATE_ICONS: Record<DashboardTicketRuntimeState, string> = {
+  running: '⏳',
+  complete: '✅',
+  failed: '❌',
+  ready: '⏸',
+  blocked: '🚫',
+  skipped: '⏭',
+};
+
+const FEATURE_STATE_ICONS: Record<DashboardTicketRuntimeState, string> = {
+  running: '●',
+  complete: '✅',
+  failed: '❌',
+  ready: '⏸',
+  blocked: '🚫',
+  skipped: '⏭',
+};
+
 function formatHeader(snap: DashboardSnapshot): string {
   const elapsed = formatElapsed(snap.elapsedMs);
   const parts: string[] = [];
@@ -60,28 +85,30 @@ function formatHeader(snap: DashboardSnapshot): string {
 }
 
 function formatAggregate(snap: DashboardSnapshot): string {
-  return `Ready: ${snap.aggregate.ready} | Running: ${snap.aggregate.running} | Blocked: ${snap.aggregate.blocked} | Failed: ${snap.aggregate.failed} | Complete: ${snap.aggregate.complete}`;
+  return `Ready: ${snap.aggregate.ready} | Running: ${snap.aggregate.running} | Blocked: ${snap.aggregate.blocked} | Failed: ${snap.aggregate.failed} | Complete: ${snap.aggregate.complete} | Skipped: ${snap.aggregate.skipped}`;
 }
 
 function formatFeatures(snap: DashboardSnapshot): string {
   if (snap.features.length === 0) return 'No features';
   return snap.features
     .map((f) => {
-      const state = f.aggregateState.toUpperCase();
+      const icon = FEATURE_STATE_ICONS[f.aggregateState];
       const count = f.tickets.length;
-      return `${f.feature} [${state}] (${count} ticket${count === 1 ? '' : 's'})`;
+      return `${icon} ${f.feature} (${count} ticket${count === 1 ? '' : 's'})`;
     })
     .join('\n');
 }
 
-function formatTickets(snap: DashboardSnapshot): string {
+function formatTickets(snap: DashboardSnapshot, frameCounter: number): string {
   if (snap.tickets.length === 0) return 'No tickets';
   return snap.tickets
     .map((t) => {
-      const state = t.runtimeState.toUpperCase();
+      const icon = t.runtimeState === 'running'
+        ? SPINNER_FRAMES[frameCounter % SPINNER_FRAMES.length]
+        : TICKET_STATE_ICONS[t.runtimeState];
       const msg = t.latestMessage ? ` - ${t.latestMessage.slice(0, 40)}` : '';
       const selected = snap.selectedTicket?.label === t.label ? '>' : ' ';
-      return `${selected} ${t.label} [${state}]${msg}`;
+      return `${selected} ${t.label} ${icon}${msg}`;
     })
     .join('\n');
 }
@@ -107,7 +134,7 @@ function formatDetails(snap: DashboardSnapshot): string {
   }
 
   const lines: string[] = [];
-  lines.push(`${details.label} [${details.runtimeState.toUpperCase()}]`);
+  lines.push(`${details.label} ${TICKET_STATE_ICONS[details.runtimeState]}`);
   lines.push(`Path: ${details.path}`);
   if (details.status) lines.push(`Status: ${details.status}`);
   if (details.sessionId) lines.push(`Session: ${details.sessionId}`);
@@ -145,6 +172,8 @@ class OpenTuiDashboard implements LiveRunView {
   private actionText!: TextRenderable;
   private eventsText!: TextRenderable;
   private detailsText!: TextRenderable;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private frameCounter = 0;
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -156,6 +185,39 @@ class OpenTuiDashboard implements LiveRunView {
     this.buildLayout();
     this.registerInputHandler();
     this.refresh();
+    this.startTimer();
+  }
+
+  private startTimer(): void {
+    if (this.destroyed) return;
+    this.timer = setInterval(() => {
+      if (this.destroyed) return;
+      this.frameCounter += 1;
+      this.refresh();
+    }, 1000);
+  }
+
+  private stopTimer(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  private maybeStopTimer(snap: DashboardSnapshot): void {
+    if (this.timer === null) return;
+    const allTerminal =
+      snap.tickets.length === 0 ||
+      snap.tickets.every(
+        (t) =>
+          t.runtimeState === 'complete' ||
+          t.runtimeState === 'failed' ||
+          t.runtimeState === 'blocked' ||
+          t.runtimeState === 'skipped',
+      );
+    if (allTerminal) {
+      this.stopTimer();
+    }
   }
 
   private buildLayout(): void {
@@ -274,20 +336,26 @@ class OpenTuiDashboard implements LiveRunView {
     const snap = this.state.snapshot();
     this.headerText.content = [formatHeader(snap), formatAggregate(snap)].join('\n');
     this.featuresText.content = formatFeatures(snap);
-    this.ticketsText.content = formatTickets(snap);
+    this.ticketsText.content = formatTickets(snap, this.frameCounter);
     this.actionText.content = formatActionNeeded(snap);
     this.detailsText.content = formatDetails(snap);
     this.eventsText.content = formatEvents(snap);
+    this.maybeStopTimer(snap);
   }
 
   done(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.stopTimer();
     this.renderer.destroy();
   }
 
   cleanup(): void {
-    this.done();
+    if (!this.destroyed) {
+      this.destroyed = true;
+      this.stopTimer();
+    }
+    this.renderer.destroy();
   }
 }
 

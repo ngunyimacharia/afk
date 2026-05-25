@@ -427,7 +427,7 @@ test('createOpenTuiDashboard renders feature region with aggregate states', asyn
   const featuresContent = featuresBox.children.map((c) => c.content).join('\n');
   assert.match(featuresContent, /feat-a/);
   assert.match(featuresContent, /feat-b/);
-  assert.match(featuresContent, /COMPLETE/);
+  assert.match(featuresContent, /✅/);
 
   view?.done();
 });
@@ -587,7 +587,7 @@ test('createOpenTuiDashboard renders selected ticket details panel', async () =>
   assert.ok(detailsBox, 'Details box should exist');
   const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
   assert.match(detailsContent, /feat-a\/001/);
-  assert.match(detailsContent, /RUNNING/);
+  assert.match(detailsContent, /⏳/);
   assert.match(detailsContent, /sess-1/);
 
   view?.done();
@@ -673,7 +673,7 @@ test('createOpenTuiDashboard renders metadata in selected ticket details panel',
   assert.ok(detailsBox, 'Details box should exist');
   const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
   assert.match(detailsContent, /feat-a\/001/);
-  assert.match(detailsContent, /COMPLETE/);
+  assert.match(detailsContent, /✅/);
   assert.match(detailsContent, /Review: approved \(clean\)/);
   assert.match(detailsContent, /Phases:/);
   assert.match(detailsContent, /execution 60000ms/);
@@ -815,4 +815,275 @@ test('createOpenTuiDashboard ticket list shows selection indicator', async () =>
   assert.match(ticketsContent, / {2}feat-a\/002/);
 
   view?.done();
+});
+
+test('createOpenTuiDashboard starts a 1-second refresh timer on creation', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  let intervalDelay = 0;
+  let intervalCallback: (() => void) | null = null;
+
+  global.setInterval = ((callback: () => void, delay: number) => {
+    intervalDelay = delay;
+    intervalCallback = callback;
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof global.setInterval;
+  global.clearInterval = () => {};
+
+  try {
+    const stdout = fakeStdout(true);
+    const { module } = makeFakeTextModule();
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+    assert.ok(view);
+    assert.equal(intervalDelay, 1000);
+    assert.ok(intervalCallback);
+    view?.done();
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+  }
+});
+
+test('createOpenTuiDashboard stops timer when all tickets are terminal', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  let cleared = false;
+  const callbacks: Array<() => void> = [];
+
+  global.setInterval = ((callback: () => void, _delay: number) => {
+    callbacks.push(callback);
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof global.setInterval;
+  global.clearInterval = () => {
+    cleared = true;
+  };
+
+  try {
+    const stdout = fakeStdout(true);
+    const { module } = makeFakeTextModule();
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+    assert.ok(view);
+    assert.ok(callbacks.length > 0);
+
+    view?.update({ ticketLabel: 'feat-a/001', message: 'run completed' });
+    callbacks[0]?.();
+
+    assert.equal(cleared, true);
+    view?.done();
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+  }
+});
+
+test('createOpenTuiDashboard clears timer on done', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  let cleared = false;
+
+  global.setInterval = ((_callback: () => void, _delay: number) => {
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof global.setInterval;
+  global.clearInterval = () => {
+    cleared = true;
+  };
+
+  try {
+    const stdout = fakeStdout(true);
+    const { module } = makeFakeTextModule();
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+    assert.ok(view);
+    view?.done();
+    assert.equal(cleared, true);
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+  }
+});
+
+test('createOpenTuiDashboard clears timer on cleanup', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  let cleared = false;
+
+  global.setInterval = ((_callback: () => void, _delay: number) => {
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof global.setInterval;
+  global.clearInterval = () => {
+    cleared = true;
+  };
+
+  try {
+    const stdout = fakeStdout(true);
+    const { module } = makeFakeTextModule();
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+    assert.ok(view);
+    view?.cleanup();
+    assert.equal(cleared, true);
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+  }
+});
+
+test('createOpenTuiDashboard renders static icons for non-running ticket states', async () => {
+  const stdout = fakeStdout(true);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        this._content = String(value);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  assert.ok(view);
+
+  view?.update({ ticketLabel: 'feat-a/001', message: 'run completed' });
+
+  const ticketsBox = boxes.find((b) => b.title === 'Tickets');
+  assert.ok(ticketsBox);
+  const content = ticketsBox.children.map((c) => c.content).join('\n');
+  assert.match(content, /✅/);
+
+  view?.done();
+});
+
+test('createOpenTuiDashboard cycles braille spinner for running tickets on timer tick', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  const callbacks: Array<() => void> = [];
+
+  global.setInterval = ((callback: () => void, _delay: number) => {
+    callbacks.push(callback);
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof global.setInterval;
+  global.clearInterval = () => {};
+
+  try {
+    const stdout = fakeStdout(true);
+
+    const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+    const module: OpenTuiDashboardModule = {
+      createCliRenderer: async () =>
+        ({
+          root: { add: () => {} },
+          destroy: () => {},
+          addInputHandler: () => {},
+          removeInputHandler: () => {},
+        }) as unknown as CliRenderer,
+      BoxRenderable: class FakeBox {
+        title = '';
+        children: Array<{ content: string }> = [];
+        constructor(_ctx: unknown, options: { title?: string }) {
+          this.title = options.title ?? '';
+          boxes.push(this);
+        }
+        add(child: { content?: string }) {
+          this.children.push(child as { content: string });
+        }
+      } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+      TextRenderable: class FakeText {
+        _content = '';
+        get content(): string {
+          return this._content;
+        }
+        set content(value: string | { toString(): string }) {
+          this._content = String(value);
+        }
+        constructor(_ctx: unknown, options: { content?: string }) {
+          this._content = options.content ?? '';
+        }
+        add() {
+          return 0;
+        }
+        remove() {}
+        clear() {}
+        destroy() {}
+        onLifecyclePass = () => {};
+        textNode = undefined as unknown as TextRenderable['textNode'];
+        chunks = [];
+        getTextChildren() {
+          return [];
+        }
+        insertBefore(): number {
+          return 0;
+        }
+      } as unknown as OpenTuiDashboardModule['TextRenderable'],
+    };
+
+    const tickets: TicketRecord[] = [
+      { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    ];
+
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+    assert.ok(view);
+
+    view?.update({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
+
+    const ticketsBoxBefore = boxes.find((b) => b.title === 'Tickets');
+    assert.ok(ticketsBoxBefore);
+    const contentBefore = ticketsBoxBefore.children.map((c) => c.content).join('\n');
+    assert.match(contentBefore, /[⠋⠙⠹⠸]/);
+
+    callbacks[0]?.();
+
+    const ticketsBoxAfter = boxes.find((b) => b.title === 'Tickets');
+    assert.ok(ticketsBoxAfter);
+    const contentAfter = ticketsBoxAfter.children.map((c) => c.content).join('\n');
+    assert.match(contentAfter, /[⠋⠙⠹⠸]/);
+
+    view?.done();
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+  }
 });
