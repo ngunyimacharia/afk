@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createProgressLine } from '../src/progress-line.js';
+import { createLiveRunView } from '../src/live-run-view.js';
 
 test('progress line is a no-op for non-tty output', () => {
   const writes: string[] = [];
@@ -11,6 +12,71 @@ test('progress line is a no-op for non-tty output', () => {
   progressLine.done();
 
   assert.deepEqual(writes, []);
+});
+
+test('progress line cleanup is safe to call multiple times', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.cleanup();
+  progressLine.cleanup();
+  progressLine.done();
+
+  // Cleanup finalizes output; subsequent cleanup/done should not throw or re-emit.
+  assert.doesNotThrow(() => progressLine.done());
+  assert.doesNotThrow(() => progressLine.cleanup());
+});
+
+test('progress line done is safe to call multiple times', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const progressLine = createProgressLine(stdout);
+
+  progressLine.update({ ticketLabel: 'feat/001', message: 'starting' });
+  progressLine.done();
+  const outputAfterFirstDone = writes.join('');
+
+  progressLine.done();
+  const outputAfterSecondDone = writes.join('');
+
+  assert.equal(outputAfterFirstDone, outputAfterSecondDone);
+});
+
+test('live run view factory creates text progress line for tty', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const view = createLiveRunView({ kind: 'text', stdout });
+
+  view.update({ ticketLabel: 'feat/001', message: 'starting' });
+  view.done();
+
+  const output = writes.join('');
+  assert.match(output, /[|/\\-]: starting/);
+});
+
+test('live run view factory falls back to no-op for non-tty', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(false, writes);
+  const view = createLiveRunView({ kind: 'text', stdout });
+
+  view.update({ ticketLabel: 'feat/001', message: 'starting' });
+  view.done();
+
+  assert.deepEqual(writes, []);
+});
+
+test('live run view factory falls back to text for unimplemented dashboard kind', () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const view = createLiveRunView({ kind: 'dashboard', stdout });
+
+  view.update({ ticketLabel: 'feat/001', message: 'starting' });
+  view.done();
+
+  const output = writes.join('');
+  assert.match(output, /[|/\\-]: starting/);
 });
 
 test('progress line updates in place and finalizes once', () => {

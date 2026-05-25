@@ -4,6 +4,7 @@ import type { AgentExecutionProgressEvent } from './types.js';
 export interface ProgressLine {
   update(event: AgentExecutionProgressEvent): void;
   done(): void;
+  cleanup(): void;
 }
 
 export interface ProgressLineOptions {
@@ -19,6 +20,7 @@ export function createProgressLine(stdout: NodeJS.WriteStream, options: Progress
 class NoopProgressLine implements ProgressLine {
   update(_event: AgentExecutionProgressEvent): void {}
   done(): void {}
+  cleanup(): void {}
 }
 
 class LogUpdateProgressLine implements ProgressLine {
@@ -70,6 +72,19 @@ class LogUpdateProgressLine implements ProgressLine {
     if (!this.hasRendered) return;
     this.logUpdate.done();
     this.stdout.write('\n');
+    this.hasRendered = false;
+  }
+
+  cleanup(): void {
+    this.stopSpinner();
+    if (this.hasRendered) {
+      this.logUpdate.done();
+      this.stdout.write('\n');
+    }
+    this.hasRendered = false;
+    this.latestEvent = undefined;
+    this.latestByTicket.clear();
+    this.activePermissionKey = undefined;
   }
 
   private startSpinner(): void {

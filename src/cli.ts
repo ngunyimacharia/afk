@@ -20,7 +20,7 @@ import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
-import { createProgressLine } from './progress-line.js';
+import { createLiveRunView } from './live-run-view.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
@@ -289,7 +289,9 @@ export async function runAfk(
     launchPreferences.budgets,
   );
   const scheduler = new Scheduler(runner, concurrency);
-  const progressLine = createProgressLine(io.stdout, {
+  const progressLine = createLiveRunView({
+    kind: 'text',
+    stdout: io.stdout,
     isPromptActive: () => permissionCoordinator.promptActive,
     providerName: providerNameFromHarness(harness),
   });
