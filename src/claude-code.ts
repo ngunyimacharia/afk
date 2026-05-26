@@ -112,7 +112,7 @@ export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
           allowDangerouslySkipPermissions: true,
           canUseTool: input.decidePermission
             ? async (): Promise<PermissionResult> => {
-                const decision = await input.decidePermission!({
+                const decision = await input.decidePermission?.({
                   sessionId,
                   permissionId: 'claude-tool',
                   type: 'tool',

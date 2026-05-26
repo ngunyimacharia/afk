@@ -13,10 +13,10 @@ import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
+import { createLiveRunView } from './live-run-view.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
-import { createLiveRunView } from './live-run-view.js';
 import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
@@ -30,9 +30,9 @@ import { runSync } from './sync/runner.js';
 import { TicketRepository } from './ticket-repository.js';
 import type { LaunchModel, TicketRecord } from './types.js';
 import {
-  type WorkspaceExecutionGraph,
   orderSelectedFeaturesByWaves,
   refreshWorkspaceExecutionGraph,
+  type WorkspaceExecutionGraph,
 } from './workspace-execution-graph.js';
 import { WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
 
@@ -297,9 +297,8 @@ export async function runAfk(
       concurrency,
     },
   });
-  const progressLine = 'updateNotificationState' in view
-    ? (view as unknown as { updateNotificationState(state: unknown): void })
-    : null;
+  const progressLine =
+    'updateNotificationState' in view ? (view as unknown as { updateNotificationState(state: unknown): void }) : null;
   if (progressLine) {
     progressLine.updateNotificationState({
       capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',

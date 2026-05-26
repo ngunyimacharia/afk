@@ -29,7 +29,7 @@ export interface CleanupPlan {
   workspaceExecutionPath?: string;
 }
 
-function readTerminalStatuses(): Set<string> {
+function _readTerminalStatuses(): Set<string> {
   return TERMINAL_STATUSES;
 }
 
@@ -75,7 +75,12 @@ function ticketMetadataPath(repoRoot: string, feature: string, issueName: string
   return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`);
 }
 
-function ticketSentinelPath(repoRoot: string, feature: string, issueName: string, kind: 'done' | 'failed' | 'handoff'): string {
+function ticketSentinelPath(
+  repoRoot: string,
+  feature: string,
+  issueName: string,
+  kind: 'done' | 'failed' | 'handoff',
+): string {
   return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', `${feature}-${issueName}.${kind}`);
 }
 
@@ -89,10 +94,7 @@ function readRuntimeMetadataRecord(repoRoot: string, feature: string, issueName:
   }
 }
 
-function isTerminalTicketStatus(
-  status: string | undefined,
-  runtime: RuntimeMetadataRecord | null,
-): boolean {
+function isTerminalTicketStatus(status: string | undefined, runtime: RuntimeMetadataRecord | null): boolean {
   const normalized = normalize(status);
   const isFrontmatterTerminal = TERMINAL_STATUSES.has(normalized);
   // Preserve handoff/manual-review work even if frontmatter looks terminal

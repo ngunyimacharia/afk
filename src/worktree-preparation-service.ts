@@ -5,9 +5,9 @@ import type { AfkProjectConfig } from './project-config.js';
 import {
   buildWorktreeReadiness,
   detectTestSuite,
-  runReadinessCommands,
   type ReadinessCheckMetadata,
   type ReadinessCommandExecutor,
+  runReadinessCommands,
 } from './readiness-service.js';
 
 export interface PreparedCheckoutContext {

@@ -120,12 +120,7 @@ function classify(
     text.includes('success')
   )
     return 'completed';
-  if (
-    normalized.includes('handoff') ||
-    text.includes('handoff') ||
-    text.includes('manual review')
-  )
-    return 'handoff';
+  if (normalized.includes('handoff') || text.includes('handoff') || text.includes('manual review')) return 'handoff';
   if (
     normalized.includes('fail') ||
     normalized.includes('block') ||

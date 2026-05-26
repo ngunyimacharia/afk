@@ -218,20 +218,12 @@ test('rejects stale harness values Kimi and Claude-Anthropic from persisted pref
   const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
   mkdirSync(path.dirname(preferencesPath), { recursive: true });
 
-  writeFileSync(
-    preferencesPath,
-    JSON.stringify({ harness: 'Kimi', reviewerHarness: 'Claude-Anthropic' }),
-    'utf8',
-  );
+  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Kimi', reviewerHarness: 'Claude-Anthropic' }), 'utf8');
   const stale = store.readLaunchPreferences();
   assert.equal(stale.harness, undefined);
   assert.equal(stale.reviewerHarness, undefined);
 
-  writeFileSync(
-    preferencesPath,
-    JSON.stringify({ harness: 'Claude-Anthropic', reviewerHarness: 'OpenCode' }),
-    'utf8',
-  );
+  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Claude-Anthropic', reviewerHarness: 'OpenCode' }), 'utf8');
   const partial = store.readLaunchPreferences();
   assert.equal(partial.harness, undefined);
   assert.equal(partial.reviewerHarness, 'OpenCode');

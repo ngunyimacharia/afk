@@ -60,7 +60,17 @@ export class Scheduler {
     const startNext = (): void => {
       while (running.size < this.concurrencyLimit) {
         const index = pending.findIndex((ticket) =>
-          isReady(ticket, plannedTickets, completed, failed, runningTickets, runningFeatures, completedFeatures, plannedFeatures, plan.featureDependencies),
+          isReady(
+            ticket,
+            plannedTickets,
+            completed,
+            failed,
+            runningTickets,
+            runningFeatures,
+            completedFeatures,
+            plannedFeatures,
+            plan.featureDependencies,
+          ),
         );
         if (index === -1) {
           if (!running.size) resolveIdle?.();

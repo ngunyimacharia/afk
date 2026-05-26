@@ -541,9 +541,7 @@ test('does not block on unselected complete upstream features', async () => {
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
-    tickets: [
-      { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
-    ],
+    tickets: [{ path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true }],
     gitContext: { commits: [] },
     checkout: {
       featureSlug: 'feat-b',

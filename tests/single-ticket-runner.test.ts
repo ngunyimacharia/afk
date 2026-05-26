@@ -1711,10 +1711,7 @@ test('reviewer prompt includes updated ticket content after execution edits', as
           output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
         };
       }
-      writeFileSync(
-        ticketPath,
-        '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nCompleted.\n',
-      );
+      writeFileSync(ticketPath, '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nCompleted.\n');
       return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
     },
   });
@@ -1760,11 +1757,13 @@ test('updated ticket content appears before execution output in reviewer prompt'
           output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
         };
       }
-      writeFileSync(
-        ticketPath,
-        '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nDone.\n',
-      );
-      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['execution line 1', 'execution line 2'] };
+      writeFileSync(ticketPath, '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nDone.\n');
+      return {
+        status: 'completed',
+        sessionId: 'session-exec',
+        removable: true,
+        output: ['execution line 1', 'execution line 2'],
+      };
     },
   });
   const plan = {
@@ -1830,7 +1829,12 @@ test('second reviewer prompt after fixup includes latest ticket text from disk',
           '---\nstatus: done\n---\n\n## Title\n\nDo the thing\n\n## AFK Summary\n\nFixup complete.\n',
         );
       }
-      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['implementation pass complete'] };
+      return {
+        status: 'completed',
+        sessionId: 'session-exec',
+        removable: true,
+        output: ['implementation pass complete'],
+      };
     },
   });
   const plan = {
@@ -1878,7 +1882,9 @@ test('blocks run without reviewer invocation when updated ticket cannot be read 
         };
       }
       // Delete the ticket file during execution so the pre-review read fails
-      try { unlinkSync(ticketPath); } catch {}
+      try {
+        unlinkSync(ticketPath);
+      } catch {}
       return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
     },
   });
@@ -2021,9 +2027,7 @@ test('hands off without fixup when reviewer reports target mismatch', async () =
     model: { id: 'model-1' },
     reviewerModel: { id: 'review-model' },
     reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
-    tickets: [
-      { path: ticketPath, feature: 'feat', issueName: 'tm', label: 'feat/tm', executorAfk: true },
-    ],
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'tm', label: 'feat/tm', executorAfk: true }],
     gitContext: { commits: [] },
     checkout: {
       featureSlug: 'feat',
@@ -2089,7 +2093,13 @@ test('preserves implementation success when reviewer provider fails deterministi
     reviewerModel: { id: 'review-model' },
     reviewerPrompt: resolveReviewerPromptTemplate(),
     tickets: [
-      { path: ticketPath, feature: 'feat', issueName: 'review-handoff', label: 'feat/review-handoff', executorAfk: true },
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'review-handoff',
+        label: 'feat/review-handoff',
+        executorAfk: true,
+      },
     ],
     gitContext: { commits: [] },
     checkout: {
@@ -2132,7 +2142,10 @@ test('preserves implementation success when reviewer provider fails deterministi
   assert.equal(metadata.DETERMINISTIC_PROVIDER_FAILURE, true);
   assert.equal(metadata.PROVIDER_FAILURE_KIND, 'model-unavailable');
   assert.equal(metadata.PROVIDER_FAILURE_SOURCE, 'provider-error');
-  assert.equal(existsSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-review-handoff.handoff')), true);
+  assert.equal(
+    existsSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-review-handoff.handoff')),
+    true,
+  );
 });
 
 test('short-circuits deterministic provider launch failures after small retry budget', async () => {
@@ -2194,9 +2207,7 @@ test('does not classify provider failures from ordinary assistant prose', async 
           status: 'failed',
           sessionId: 's-exec',
           unsafeReason: null,
-          output: [
-            'I was thinking about the model_not_available_for_integrator error but it is not a real failure.',
-          ],
+          output: ['I was thinking about the model_not_available_for_integrator error but it is not a real failure.'],
         };
       },
     },

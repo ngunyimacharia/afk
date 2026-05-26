@@ -185,7 +185,8 @@ test('detects configured test suites and blocks missing env without disabled con
   assert.equal(detectTestSuite(repoRoot).detected, true);
   assert.equal(needsDisabledTestsDecision(repoRoot), true);
   assert.throws(
-    () => new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'missing-env', readinessExecutor: executor }),
+    () =>
+      new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'missing-env', readinessExecutor: executor }),
     WorktreeReadinessBlockedError,
   );
 });
@@ -468,10 +469,7 @@ test('existing worktree skips command checks on second prepare call', () => {
 
 test('existing worktree still blocks on structural precondition failure', () => {
   const repoRoot = createRepo('afk-preflight-stale-lock-');
-  writeFileSync(
-    path.join(repoRoot, 'package.json'),
-    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts' } }),
-  );
+  writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts' } }));
   mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
   writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
   writeFileSync(path.join(repoRoot, '.env.testing'), 'TEST=yes\n');

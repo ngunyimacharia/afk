@@ -112,4 +112,3 @@ test('isDeterministicFailureKind returns true for known deterministic kinds', ()
   assert.equal(isDeterministicFailureKind('auth'), true);
   assert.equal(isDeterministicFailureKind('unknown'), false);
 });
-

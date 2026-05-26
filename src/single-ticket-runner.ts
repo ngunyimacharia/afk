@@ -309,8 +309,22 @@ export class SingleTicketRunner {
               plan,
               ticketIndex: 0,
               prompt: useReviewerRepairPrompt
-                ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent, snapshot)
-                : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent, snapshot),
+                ? this.buildReviewerRepairPrompt(
+                    ticket.label,
+                    reviewerPromptText,
+                    sessionId,
+                    executionForReview,
+                    updatedTicketContent,
+                    snapshot,
+                  )
+                : this.buildReviewerPrompt(
+                    ticket.label,
+                    reviewerPromptText,
+                    sessionId,
+                    executionForReview,
+                    updatedTicketContent,
+                    snapshot,
+                  ),
               invocationMode: 'reviewer',
               sessionId,
               onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
@@ -329,8 +343,9 @@ export class SingleTicketRunner {
           const message =
             reviewResult.unsafeReason ??
             ((reviewResult.output ?? []).join('\n') || `reviewer returned ${reviewResult.status}`);
-          const source: 'provider-error' | 'agent-thrown' =
-            reviewResult.unsafeReason && reviewResult.unsafeReason.trim() ? 'provider-error' : 'agent-thrown';
+          const source: 'provider-error' | 'agent-thrown' = reviewResult.unsafeReason?.trim()
+            ? 'provider-error'
+            : 'agent-thrown';
           const classification = classifyProviderFailureFromSource(message, source);
           const isDeterministic = classification ? isDeterministicFailureKind(classification.kind) : false;
           if (isDeterministic && classification) {
@@ -372,7 +387,10 @@ export class SingleTicketRunner {
             );
             return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
               this.runtimeStore.markHandoff(record, `reviewer provider failure: ${classification?.kind ?? 'unknown'}`);
-              this.runtimeStore.appendLog(record.logPath, `run handoff: reviewer provider failure after implementation completed`);
+              this.runtimeStore.appendLog(
+                record.logPath,
+                `run handoff: reviewer provider failure after implementation completed`,
+              );
               this.emitProgress(record.metadataPath, options.onProgress, {
                 ticketLabel: ticket.label,
                 message: `run handoff: reviewer provider failure after implementation completed`,
@@ -415,7 +433,10 @@ export class SingleTicketRunner {
               }),
             );
             this.runtimeStore.markHandoff(record, 'handoff');
-            this.runtimeStore.appendLog(record.logPath, `run handoff: reviewer provider failure after implementation completed`);
+            this.runtimeStore.appendLog(
+              record.logPath,
+              `run handoff: reviewer provider failure after implementation completed`,
+            );
             this.emitProgress(record.metadataPath, options.onProgress, {
               ticketLabel: ticket.label,
               message: `run handoff: reviewer provider failure after implementation completed`,
@@ -487,7 +508,11 @@ export class SingleTicketRunner {
             });
             this.runtimeStore.markDone(record);
             this.runtimeStore.appendLog(record.logPath, 'run completed');
-            this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel: ticket.label, message: 'run completed', sessionId });
+            this.emitProgress(record.metadataPath, options.onProgress, {
+              ticketLabel: ticket.label,
+              message: 'run completed',
+              sessionId,
+            });
             return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'completed' };
           });
         }
@@ -521,7 +546,11 @@ export class SingleTicketRunner {
             this.runtimeStore.markFailed(record, 'needs-human handoff required');
             this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
             this.runtimeStore.appendLog(record.logPath, 'run blocked');
-            this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel: ticket.label, message: 'run blocked', sessionId });
+            this.emitProgress(record.metadataPath, options.onProgress, {
+              ticketLabel: ticket.label,
+              message: 'run blocked',
+              sessionId,
+            });
             return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
           });
         }
@@ -659,8 +688,16 @@ export class SingleTicketRunner {
       }
       this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${reason}`);
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
-      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: `budget handoff: ${reason}`, sessionId });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: implementationCompleted ? 'handoff' : 'blocked' };
+      this.emitProgress(record.metadataPath, options.onProgress, {
+        ticketLabel,
+        message: `budget handoff: ${reason}`,
+        sessionId,
+      });
+      return {
+        scheduled: true,
+        message: `Scheduled ${ticketLabel}`,
+        outcome: implementationCompleted ? 'handoff' : 'blocked',
+      };
     });
   }
 
@@ -713,7 +750,11 @@ export class SingleTicketRunner {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
-      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: 'malformed reviewer output handoff', sessionId });
+      this.emitProgress(record.metadataPath, options.onProgress, {
+        ticketLabel,
+        message: 'malformed reviewer output handoff',
+        sessionId,
+      });
       return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
     });
   }
@@ -765,7 +806,11 @@ export class SingleTicketRunner {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'empty reviewer output handoff: reviewer-empty-output');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
-      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: 'empty reviewer output handoff', sessionId });
+      this.emitProgress(record.metadataPath, options.onProgress, {
+        ticketLabel,
+        message: 'empty reviewer output handoff',
+        sessionId,
+      });
       return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
     });
   }
@@ -815,7 +860,11 @@ export class SingleTicketRunner {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'review target mismatch handoff: review-target-mismatch');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
-      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: 'review target mismatch handoff', sessionId });
+      this.emitProgress(record.metadataPath, options.onProgress, {
+        ticketLabel,
+        message: 'review target mismatch handoff',
+        sessionId,
+      });
       return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
     });
   }
@@ -962,13 +1011,11 @@ export class SingleTicketRunner {
       PROVIDER_SESSION_ID: sessionId,
       PROVIDER_SESSION_REMOVABLE: result.removable ?? false,
       UNSAFE_REASON: result.unsafeReason ?? null,
-      FAILURE_KIND:
-        result.status === 'completed'
-          ? null
-          : (classification?.kind ?? 'unknown'),
+      FAILURE_KIND: result.status === 'completed' ? null : (classification?.kind ?? 'unknown'),
       PROVIDER_FAILURE_KIND: result.status === 'completed' ? null : (classification?.kind ?? 'unknown'),
       PROVIDER_FAILURE_SOURCE: result.status === 'completed' ? null : (classification?.source ?? failureSource),
-      PROVIDER_FAILURE_EVIDENCE: result.status === 'completed' ? null : (classification?.matchedEvidence ?? result.unsafeReason ?? null),
+      PROVIDER_FAILURE_EVIDENCE:
+        result.status === 'completed' ? null : (classification?.matchedEvidence ?? result.unsafeReason ?? null),
       INSPECTION_PROVIDER: result.inspectionTargetIdentifier ? 'tmux' : null,
       INSPECTION_TARGET_IDENTIFIER: result.inspectionTargetIdentifier ?? null,
     });
@@ -1010,7 +1057,14 @@ export class SingleTicketRunner {
     snapshot?: AfkStateSnapshot,
   ): string {
     return [
-      this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult, updatedTicketContent, snapshot),
+      this.buildReviewerPrompt(
+        ticketLabel,
+        reviewerPromptText,
+        sessionId,
+        executionResult,
+        updatedTicketContent,
+        snapshot,
+      ),
       '',
       REVIEWER_FORMAT_REPAIR_INSTRUCTIONS,
     ].join('\n');
