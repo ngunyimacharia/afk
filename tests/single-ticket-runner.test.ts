@@ -2348,6 +2348,7 @@ test('runs static check commands after successful execution when afk.json define
   assert.match(reviewerPrompt, /Static check results:/);
   assert.match(reviewerPrompt, /echo pass: exit code 0/);
   assert.match(reviewerPrompt, /echo fail >&2; exit 1: exit code 1/);
+  assert.match(reviewerPrompt, /  ```\n  fail\n  ```/);
 });
 
 test('does not run static checks when afk.json is missing', async () => {
