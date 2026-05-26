@@ -178,10 +178,14 @@ test('detects configured test suites and blocks missing env without disabled con
   mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
   writeFileSync(path.join(repoRoot, 'tests', 'sample.test.ts'), 'test("x", () => {});\n');
 
+  const executor: ReadinessCommandExecutor = {
+    run: () => ({ exitCode: 0, output: 'ok' }),
+  };
+
   assert.equal(detectTestSuite(repoRoot).detected, true);
   assert.equal(needsDisabledTestsDecision(repoRoot), true);
   assert.throws(
-    () => new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'missing-env' }),
+    () => new WorktreePreparationService().prepare({ repoRoot, featureSlug: 'missing-env', readinessExecutor: executor }),
     WorktreeReadinessBlockedError,
   );
 });
@@ -192,10 +196,15 @@ test('records disabled tests decision when missing env is confirmed', () => {
   mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
   writeFileSync(path.join(repoRoot, 'tests', 'sample.test.ts'), 'test("x", () => {});\n');
 
+  const executor: ReadinessCommandExecutor = {
+    run: () => ({ exitCode: 0, output: 'ok' }),
+  };
+
   const result = new WorktreePreparationService().prepare({
     repoRoot,
     featureSlug: 'disabled-tests',
     testsDisabledByUser: true,
+    readinessExecutor: executor,
   });
 
   assert.equal(result.readiness?.checks?.terminalState, 'disabled-by-user');
@@ -355,4 +364,136 @@ test('readiness detects stale git index lock in linked worktree git dir', () => 
 
   assert.equal(readiness.terminalState, 'blocked');
   assert.match(readiness.blockReason ?? '', /index lock/);
+});
+
+test('pre-flight smoke failure blocks worktree creation', () => {
+  const repoRoot = createRepo('afk-preflight-smoke-fail-');
+  writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts', lint: 'eslint .' } }),
+  );
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+
+  const executor: ReadinessCommandExecutor = {
+    run: (command) => {
+      if (command.includes('test')) return { exitCode: 1, output: 'smoke failed' };
+      return { exitCode: 0, output: 'ok' };
+    },
+  };
+
+  const service = new WorktreePreparationService();
+  assert.throws(
+    () => service.prepare({ repoRoot, featureSlug: 'preflight-smoke-fail', readinessExecutor: executor }),
+    (err: unknown) => {
+      assert.ok(err instanceof WorktreeReadinessBlockedError);
+      assert.match((err as WorktreeReadinessBlockedError).message, /smoke readiness failed/);
+      return true;
+    },
+  );
+
+  const worktreePath = path.join(repoRoot, '.worktree', 'preflight-smoke-fail');
+  assert.equal(existsSync(worktreePath), false);
+});
+
+test('pre-flight static failure blocks worktree creation', () => {
+  const repoRoot = createRepo('afk-preflight-static-fail-');
+  writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts', lint: 'eslint .' } }),
+  );
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+
+  const executor: ReadinessCommandExecutor = {
+    run: (command) => {
+      if (command.includes('lint')) return { exitCode: 1, output: 'lint failed' };
+      return { exitCode: 0, output: 'ok' };
+    },
+  };
+
+  const service = new WorktreePreparationService();
+  assert.throws(
+    () => service.prepare({ repoRoot, featureSlug: 'preflight-static-fail', readinessExecutor: executor }),
+    (err: unknown) => {
+      assert.ok(err instanceof WorktreeReadinessBlockedError);
+      assert.match((err as WorktreeReadinessBlockedError).message, /static-style readiness failed/);
+      return true;
+    },
+  );
+
+  const worktreePath = path.join(repoRoot, '.worktree', 'preflight-static-fail');
+  assert.equal(existsSync(worktreePath), false);
+});
+
+test('existing worktree skips command checks on second prepare call', () => {
+  const repoRoot = createRepo('afk-preflight-skip-existing-');
+  writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts', lint: 'eslint .' } }),
+  );
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'TEST=yes\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+
+  const commands: string[] = [];
+  const executor: ReadinessCommandExecutor = {
+    run: (command) => {
+      commands.push(command);
+      return { exitCode: 0, output: 'ok' };
+    },
+  };
+
+  const service = new WorktreePreparationService();
+  const first = service.prepare({ repoRoot, featureSlug: 'skip-existing', readinessExecutor: executor });
+
+  assert.ok(commands.length > 0, 'first prepare should run pre-flight commands');
+
+  commands.length = 0;
+
+  const second = service.prepare({ repoRoot, featureSlug: 'skip-existing', readinessExecutor: executor });
+
+  assert.equal(commands.length, 0, 'second prepare should skip command checks');
+  assert.equal(second.readiness?.checks?.smoke.status, 'skipped');
+  assert.equal(second.readiness?.checks?.smoke.reason, 'existing worktree');
+  assert.deepEqual(second.readiness?.checks?.staticStyleChecks, []);
+  assert.equal(second.worktreePath, first.worktreePath);
+});
+
+test('existing worktree still blocks on structural precondition failure', () => {
+  const repoRoot = createRepo('afk-preflight-stale-lock-');
+  writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts' } }),
+  );
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'TEST=yes\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+
+  const executor: ReadinessCommandExecutor = {
+    run: () => ({ exitCode: 0, output: 'ok' }),
+  };
+
+  const service = new WorktreePreparationService();
+  const first = service.prepare({ repoRoot, featureSlug: 'stale-lock', readinessExecutor: executor });
+
+  const lockPath = git(first.worktreePath, ['rev-parse', '--git-path', 'index.lock']);
+  writeFileSync(lockPath, 'stale\n');
+
+  assert.throws(
+    () => service.prepare({ repoRoot, featureSlug: 'stale-lock', readinessExecutor: executor }),
+    (err: unknown) => {
+      assert.ok(err instanceof WorktreeReadinessBlockedError);
+      assert.match((err as WorktreeReadinessBlockedError).message, /index lock/);
+      return true;
+    },
+  );
 });
