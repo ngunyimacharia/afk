@@ -422,7 +422,7 @@ test('hands off when reviewer output stays empty after retry', async () => {
     path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-empty-review.json'),
     'utf8',
   );
-  assert.equal(reviewerCalls, 11);
+  assert.equal(reviewerCalls, 3);
   assert.match(metadata, /"STATUS": "blocked"/);
   assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
   assert.match(metadata, /"FAILURE_KIND": "reviewer-empty-output"/);
@@ -495,6 +495,84 @@ test('records clean approval metadata when reviewer confirms done with no findin
   assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "approved"/);
   assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
   assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[\]/);
+});
+
+test('hands off without fixup when reviewer returns no findings and done:false', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-findings-handoff-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  let executionCalls = 0;
+  let reviewerCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [
+            JSON.stringify({
+              done: false,
+              summary: 'No specific issues found but ticket seems incomplete',
+              findings: [],
+            }),
+          ],
+        };
+      }
+      executionCalls += 1;
+      return {
+        status: 'completed',
+        sessionId: 'session-exec',
+        removable: true,
+        output: ['implementation pass complete'],
+      };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'empty-findings',
+        label: 'feat/empty-findings',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.equal(executionCalls, 1);
+  assert.equal(reviewerCalls, 1);
+  const metadataPath = path.join(
+    repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    'runtime-metadata',
+    'feat-empty-findings.json',
+  );
+  const metadata = readFileSync(metadataPath, 'utf8');
+  assert.match(metadata, /"STATUS": "blocked"/);
+  assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "missing-findings-handoff"/);
+  assert.match(metadata, /"classification": "missing-findings-handoff"/);
+  assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[\]/);
+  assert.match(metadata, /Reviewer output had no actionable findings/);
 });
 
 test('records real-finding loop and handoff metadata for unresolved major findings', async () => {
@@ -1525,7 +1603,7 @@ test('retries malformed reviewer output once before implementation fixup', async
   assert.deepEqual(callOrder, ['execution-1', 'reviewer-1', 'reviewer-2', 'execution-2', 'reviewer-3']);
   assert.match(malformedRetryPrompt, /The previous reviewer response was malformed and could not be parsed\./);
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-malformed-retry.log');
-  assert.match(readFileSync(logPath, 'utf8'), /malformed reviewer output retry 1\/10/);
+  assert.match(readFileSync(logPath, 'utf8'), /malformed reviewer output retry 1\/2/);
 });
 
 test('hands off after repeated malformed reviewer output without implementation fixup', async () => {
@@ -1582,7 +1660,7 @@ test('hands off after repeated malformed reviewer output without implementation 
 
   await runner.launch(plan as never, { onProgress: (event) => progress.push(event.message) });
 
-  assert.deepEqual(callOrder, ['execution', ...Array.from({ length: 11 }, () => 'reviewer')]);
+  assert.deepEqual(callOrder, ['execution', ...Array.from({ length: 3 }, () => 'reviewer')]);
   const metadataPath = path.join(
     repoRoot,
     '.scratch',
@@ -1598,13 +1676,13 @@ test('hands off after repeated malformed reviewer output without implementation 
   assert.match(metadata, /"FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET":/);
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-malformed-handoff.log');
   const log = readFileSync(logPath, 'utf8');
-  assert.match(log, /malformed reviewer output retry 1\/10/);
-  assert.match(log, /malformed reviewer output retry 10\/10/);
+  assert.match(log, /malformed reviewer output retry 1\/2/);
+  assert.match(log, /malformed reviewer output retry 2\/2/);
   assert.match(log, /malformed reviewer output handoff: reviewer-output-malformed/);
   assert.deepEqual(
     progress.filter((line) => line.startsWith('malformed reviewer output')),
     [
-      ...Array.from({ length: 10 }, (_, index) => `malformed reviewer output retry ${index + 1}/10`),
+      ...Array.from({ length: 2 }, (_, index) => `malformed reviewer output retry ${index + 1}/2`),
       'malformed reviewer output handoff',
     ],
   );

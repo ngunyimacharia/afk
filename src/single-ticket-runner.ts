@@ -35,7 +35,7 @@ const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
 ].join(' ');
 const MAX_MALFORMED_OUTPUT_SNIPPET_CHARS = 500;
 const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
-  malformedReviewerRetries: 10,
+  malformedReviewerRetries: 2,
   fixupCycleLimit: 50,
   providerFailureRetries: 10,
 };
@@ -354,6 +354,8 @@ export class SingleTicketRunner {
         }
 
         if (decision.decision === 'needs-human') {
+          const classification: ReviewOutcomeClassification =
+            decision.findings.length === 0 ? 'missing-findings-handoff' : 'real-finding-handoff';
           this.runtimeStore.updateMetadata(record.metadataPath, {
             STATUS: 'blocked',
             UNSAFE_REASON: decision.reason,
@@ -365,7 +367,7 @@ export class SingleTicketRunner {
               outcome: 'needs-human',
               reason: decision.reason,
               cycle: reviewCycle + 1,
-              classification: 'real-finding-handoff',
+              classification,
               malformed: false,
               findings: decision.findings.map((finding) => ({
                 severity: finding.severity,
@@ -812,7 +814,9 @@ export class SingleTicketRunner {
             ? decision.decision === 'needs-human'
               ? 'real-finding-handoff'
               : 'real-finding-loop'
-            : undefined,
+            : decision.findings.length === 0
+              ? 'missing-findings-handoff'
+              : undefined,
     };
   }
 

@@ -160,7 +160,8 @@ export type ReviewOutcomeClassification =
   | 'real-finding-loop'
   | 'real-finding-handoff'
   | 'malformed-output-handoff'
-  | 'empty-output-handoff';
+  | 'empty-output-handoff'
+  | 'missing-findings-handoff';
 
 export interface ReviewCycleHistoryEntry {
   cycle: number;

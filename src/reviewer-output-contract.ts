@@ -117,18 +117,27 @@ export function decideReviewOutcome(
   const maxCycles = normalizePositiveInteger(options.maxCycles ?? 3, 3);
   const highestSeverity = review.highestSeverity;
 
-  // Approval only when reviewer explicitly says done:true AND there are no findings
+  // Approval only when reviewer explicitly says done:true AND there are no findings.
+  // If reviewer says done:false with no findings, hand off instead of looping without actionable work.
   const decision: ReviewDecision =
-    review.done && review.findings.length === 0 ? 'approve' : cycle >= maxCycles ? 'needs-human' : 'loop';
+    review.done && review.findings.length === 0
+      ? 'approve'
+      : !review.done && review.findings.length === 0
+        ? 'needs-human'
+        : cycle >= maxCycles
+          ? 'needs-human'
+          : 'loop';
 
   const reason =
     decision === 'approve'
       ? 'Reviewer confirmed ticket is complete'
-      : decision === 'needs-human'
-        ? 'Reviewer cycle cap reached with unresolved findings'
-        : review.fallback
-          ? 'Reviewer output was malformed and requires a retry'
-          : 'Reviewer findings require fixup';
+      : decision === 'needs-human' && !review.done && review.findings.length === 0
+        ? 'Reviewer output had no actionable findings'
+        : decision === 'needs-human'
+          ? 'Reviewer cycle cap reached with unresolved findings'
+          : review.fallback
+            ? 'Reviewer output was malformed and requires a retry'
+            : 'Reviewer findings require fixup';
 
   return {
     decision,
