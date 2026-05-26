@@ -101,7 +101,7 @@ export class Scheduler {
         if (waveTicketKeys.every((key) => completed.has(key))) {
           highestCompleted = wave;
           if (this.deps.featureMergeBackProvider) {
-            const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+            const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
             if (this.deps.featureMergeBackProvider.isWaveMerged(feature, wave, issueNames)) {
               highestMerged = wave;
             } else {
@@ -159,10 +159,22 @@ export class Scheduler {
           ...plan.checkouts,
           ...Object.fromEntries(scratchWorktrees),
         };
+        const snapshot = plan.snapshots?.[ticket.label];
+        const snapshots: LaunchPlan['snapshots'] = snapshot
+          ? {
+              ...plan.snapshots,
+              [ticket.label]: {
+                ...snapshot,
+                worktreePath: scratchCheckout.worktreePath,
+                worktreeName: scratchCheckout.effectiveWorktreeName,
+                branchName: scratchCheckout.effectiveBranchName,
+              },
+            }
+          : plan.snapshots;
 
         const run = this.deps.runner
           .launch(
-            { ...plan, checkout, checkouts, tickets: [ticket] },
+            { ...plan, checkout, checkouts, snapshots, tickets: [ticket] },
             { onProgress: options.onProgress, runId: options.runId },
           )
           .then(async (result) => {
@@ -196,12 +208,12 @@ export class Scheduler {
                   }
                   // Trigger merge-back when a wave completes
                   if (this.deps.onWaveComplete) {
-                    const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+                    const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
                     await this.deps.onWaveComplete(ticket.feature, ticketWave, issueNames);
                   }
                   // Update merged wave if provider acknowledges merge-back
                   if (this.deps.featureMergeBackProvider) {
-                    const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+                    const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
                     if (this.deps.featureMergeBackProvider.isWaveMerged(ticket.feature, ticketWave, issueNames)) {
                       const currentMerged = featureMergedWave.get(ticket.feature) ?? -1;
                       if (ticketWave > currentMerged) {
@@ -258,6 +270,10 @@ function ticketKey(ticket: TicketRecord): string {
   return `${ticket.feature}/${ticket.issueName}`;
 }
 
+function issueNameFromTicketKey(key: string): string {
+  return key.slice(key.indexOf('/') + 1);
+}
+
 function isComplete(status?: string): boolean {
   const normalized = status?.trim().toLowerCase();
   return normalized === 'done' || normalized === 'closed' || normalized === 'complete' || normalized === 'resolved';
@@ -268,7 +284,8 @@ function computeWaves(tickets: TicketRecord[]): Map<string, number> {
   const waves = new Map<string, number>();
 
   const compute = (issueName: string): number => {
-    if (waves.has(issueName)) return waves.get(issueName)!;
+    const cachedWave = waves.get(issueName);
+    if (cachedWave !== undefined) return cachedWave;
     const ticket = byName.get(issueName);
     if (!ticket) return 0;
     const deps = (ticket.dependsOn ?? []).filter((dep) => byName.has(dep));
@@ -320,7 +337,7 @@ function isReady(
       for (let wave = highestMergedWave + 1; wave < ticketWave; wave++) {
         const waveTicketKeys = waves.get(wave) ?? [];
         if (waveTicketKeys.every((key) => completed.has(key))) {
-          const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+          const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
           if (featureMergeBackProvider.isWaveMerged(ticket.feature, wave, issueNames)) {
             highestMergedWave = wave;
             featureMergedWave.set(ticket.feature, wave);

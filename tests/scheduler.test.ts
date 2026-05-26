@@ -3,7 +3,6 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { RuntimeStore } from '../src/runtime-store.js';
 import { type FeatureLockProvider, type FeatureMergeBackProvider, Scheduler } from '../src/scheduler.js';
 import type { LaunchPlan, TicketRecord } from '../src/types.js';
 
@@ -393,6 +392,57 @@ test('passes scratch worktree checkout and all scratch worktrees in checkouts to
   assert.equal(second.checkoutsPaths.includes('/scratch/feat-b-001'), true);
 });
 
+test('updates ticket snapshot to match scratch checkout before runner launch', async () => {
+  const seen: Array<{ checkoutPath: string; snapshotPath?: string; snapshotBranch?: string }> = [];
+  const scheduler = createScheduler({
+    launch: async (plan: LaunchPlan) => {
+      const ticket = plan.tickets[0];
+      assert.ok(ticket);
+      const snapshot = plan.snapshots?.[ticket.label];
+      seen.push({
+        checkoutPath: plan.checkout.worktreePath,
+        snapshotPath: snapshot?.worktreePath,
+        snapshotBranch: snapshot?.branchName,
+      });
+      return { scheduled: true, message: ticket.label };
+    },
+  });
+
+  const plan = basePlan({
+    tickets: [{ path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true }],
+    snapshots: {
+      'feat-a/001': {
+        generatedAt: 'now',
+        ticketLabel: 'feat-a/001',
+        ticketStatus: 'ready-for-agent',
+        ticketIssueName: '001',
+        featureSlug: 'feat-a',
+        ticketPath: '/tmp/a-1.md',
+        scratchFeaturePath: '/tmp/.scratch/feat-a',
+        repoRoot: '/tmp',
+        worktreePath: '/tmp/feature-worktree',
+        worktreeName: 'feat-a',
+        branchName: 'feat-a',
+        head: 'abc123',
+        gitStatusShort: [],
+        ticketOutsideWorktree: true,
+        dependencies: [],
+        readiness: null,
+      },
+    },
+  });
+
+  await scheduler.launch(plan as never);
+
+  assert.deepEqual(seen, [
+    {
+      checkoutPath: '/scratch/feat-a-001',
+      snapshotPath: '/scratch/feat-a-001',
+      snapshotBranch: 'afk/feat-a/001',
+    },
+  ]);
+});
+
 test('waits for upstream feature completion before launching downstream feature tickets', async () => {
   const started: string[] = [];
   const scheduler = createScheduler(
@@ -699,7 +749,10 @@ test('allows later waves to proceed when merge-back completes after wave ticket 
   const result = await scheduler.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
-  assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
+  assert.equal(
+    result.ticketResults.every((r) => r.outcome === 'completed'),
+    true,
+  );
 });
 
 test('calls onWaveComplete when a wave completes and waits before advancing', async () => {
@@ -753,5 +806,8 @@ test('calls onWaveComplete when a wave completes and waits before advancing', as
   assert.equal(waveCompleteCalls[1]?.feature, 'feat-a');
   assert.equal(waveCompleteCalls[1]?.wave, 1);
   assert.deepEqual(waveCompleteCalls[1]?.issueNames, ['002']);
-  assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
+  assert.equal(
+    result.ticketResults.every((r) => r.outcome === 'completed'),
+    true,
+  );
 });
