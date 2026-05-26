@@ -6,6 +6,10 @@ export interface FeatureLockProvider {
   isLocked(feature: string): boolean;
 }
 
+export interface FeatureMergeBackProvider {
+  isWaveMerged(feature: string, wave: number, issueNames: string[]): boolean;
+}
+
 export interface SchedulerTicketResult {
   ticket: TicketRecord;
   outcome: NonNullable<SingleTicketRunResult['outcome']>;
@@ -25,6 +29,7 @@ export interface SchedulerDependencies {
   runner: SingleTicketRunner;
   scratchWorktreeService: ScratchWorktreeService;
   featureLockProvider?: FeatureLockProvider;
+  featureMergeBackProvider?: FeatureMergeBackProvider;
   concurrencyLimit?: number;
 }
 
@@ -71,6 +76,7 @@ export class Scheduler {
     const featureWaves = new Map<string, Map<string, number>>();
     const featureWaveTickets = new Map<string, Map<number, string[]>>();
     const featureCompletedWave = new Map<string, number>();
+    const featureMergedWave = new Map<string, number>();
 
     for (const feature of plannedFeatures) {
       const featureTickets = plan.tickets.filter((t) => t.feature === feature);
@@ -87,16 +93,28 @@ export class Scheduler {
       featureWaveTickets.set(feature, waveTickets);
 
       let highestCompleted = -1;
+      let highestMerged = -1;
       for (let wave = 0; ; wave++) {
         const waveTicketKeys = waveTickets.get(wave);
         if (!waveTicketKeys) break;
         if (waveTicketKeys.every((key) => completed.has(key))) {
           highestCompleted = wave;
+          if (this.deps.featureMergeBackProvider) {
+            const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+            if (this.deps.featureMergeBackProvider.isWaveMerged(feature, wave, issueNames)) {
+              highestMerged = wave;
+            } else {
+              break;
+            }
+          } else {
+            highestMerged = wave;
+          }
         } else {
           break;
         }
       }
       featureCompletedWave.set(feature, highestCompleted);
+      featureMergedWave.set(feature, highestMerged);
     }
 
     const startNext = (): void => {
@@ -111,7 +129,7 @@ export class Scheduler {
             completedFeatures,
             plannedFeatures,
             featureWaves,
-            featureCompletedWave,
+            featureMergedWave,
             this.deps.featureLockProvider,
             plan.featureDependencies,
           ),
@@ -140,7 +158,10 @@ export class Scheduler {
         };
 
         const run = this.deps.runner
-          .launch({ ...plan, checkout, checkouts, tickets: [ticket] }, { onProgress: options.onProgress, runId: options.runId })
+          .launch(
+            { ...plan, checkout, checkouts, tickets: [ticket] },
+            { onProgress: options.onProgress, runId: options.runId },
+          )
           .then((result) => {
             const outcome = result.outcome ?? (result.scheduled ? 'completed' : 'not-scheduled');
             ticketResults.push({
@@ -169,6 +190,16 @@ export class Scheduler {
                   const currentCompleted = featureCompletedWave.get(ticket.feature) ?? -1;
                   if (ticketWave > currentCompleted) {
                     featureCompletedWave.set(ticket.feature, ticketWave);
+                  }
+                  // Update merged wave if provider acknowledges merge-back
+                  if (this.deps.featureMergeBackProvider) {
+                    const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+                    if (this.deps.featureMergeBackProvider.isWaveMerged(ticket.feature, ticketWave, issueNames)) {
+                      const currentMerged = featureMergedWave.get(ticket.feature) ?? -1;
+                      if (ticketWave > currentMerged) {
+                        featureMergedWave.set(ticket.feature, ticketWave);
+                      }
+                    }
                   }
                 }
               }
@@ -259,7 +290,7 @@ function isReady(
   completedFeatures: Set<string>,
   plannedFeatures: Set<string>,
   featureWaves: Map<string, Map<string, number>>,
-  featureCompletedWave: Map<string, number>,
+  featureMergedWave: Map<string, number>,
   featureLockProvider: FeatureLockProvider | undefined,
   featureDependencies?: Record<string, string[]>,
 ): boolean {
@@ -269,10 +300,10 @@ function isReady(
   for (const dep of deps) {
     if (plannedFeatures.has(dep) && !completedFeatures.has(dep)) return false;
   }
-  // Wave boundary check: a ticket is ready only when all previous waves are fully completed.
+  // Wave boundary check: a ticket is ready only when all previous waves are fully merged back.
   const ticketWave = featureWaves.get(ticket.feature)?.get(ticket.issueName) ?? 0;
-  const highestCompletedWave = featureCompletedWave.get(ticket.feature) ?? -1;
-  if (ticketWave > highestCompletedWave + 1) return false;
+  const highestMergedWave = featureMergedWave.get(ticket.feature) ?? -1;
+  if (ticketWave > highestMergedWave + 1) return false;
   return (ticket.dependsOn ?? []).every((dependency) => {
     const key = `${ticket.feature}/${dependency}`;
     if (!plannedTickets.has(key)) return true;

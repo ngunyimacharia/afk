@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { RuntimeStore } from '../src/runtime-store.js';
-import { Scheduler, type FeatureLockProvider } from '../src/scheduler.js';
+import { type FeatureLockProvider, type FeatureMergeBackProvider, Scheduler } from '../src/scheduler.js';
 import type { LaunchPlan, TicketRecord } from '../src/types.js';
 
 function createMockScratchWorktreeService() {
@@ -21,11 +21,27 @@ function createMockScratchWorktreeService() {
   };
 }
 
-function createScheduler(runner: { launch: (plan: LaunchPlan) => Promise<{ scheduled: boolean; message: string; outcome?: string; launchBlock?: unknown }> }, options?: { featureLockProvider?: FeatureLockProvider; concurrencyLimit?: number }) {
+const defaultMergeBackProvider: FeatureMergeBackProvider = {
+  isWaveMerged: () => true,
+};
+
+function createScheduler(
+  runner: {
+    launch: (
+      plan: LaunchPlan,
+    ) => Promise<{ scheduled: boolean; message: string; outcome?: string; launchBlock?: unknown }>;
+  },
+  options?: {
+    featureLockProvider?: FeatureLockProvider;
+    featureMergeBackProvider?: FeatureMergeBackProvider;
+    concurrencyLimit?: number;
+  },
+) {
   return new Scheduler({
     runner: runner as never,
     scratchWorktreeService: createMockScratchWorktreeService() as never,
     featureLockProvider: options?.featureLockProvider,
+    featureMergeBackProvider: options?.featureMergeBackProvider ?? defaultMergeBackProvider,
     concurrencyLimit: options?.concurrencyLimit,
   });
 }
@@ -598,5 +614,45 @@ test('wave-by-wave execution with parallel tickets in the same wave', async () =
   // Wave 0: 001 and 002 can run in any order (parallel)
   assert.equal(started.indexOf('feat-a/003') > started.indexOf('feat-a/001'), true);
   assert.equal(started.indexOf('feat-a/003') > started.indexOf('feat-a/002'), true);
-  assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
+  assert.equal(
+    result.ticketResults.every((r) => r.outcome === 'completed'),
+    true,
+  );
+});
+
+test('blocks later waves when previous wave is not merged back', async () => {
+  const started: string[] = [];
+  const mergeBackProvider: FeatureMergeBackProvider = {
+    isWaveMerged: () => false,
+  };
+  const scheduler = createScheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        return { scheduled: true, message: ticket.label };
+      },
+    },
+    { featureMergeBackProvider: mergeBackProvider, concurrencyLimit: 3 },
+  );
+
+  const plan = basePlan({
+    tickets: [
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    ],
+  });
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/001']);
+  assert.equal(result.ticketResults.find((r) => r.ticket.label === 'feat-a/002')?.outcome, 'not-scheduled');
 });

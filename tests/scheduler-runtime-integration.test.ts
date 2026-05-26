@@ -35,6 +35,7 @@ test('starts ready tickets concurrently across and within features', async () =>
       },
     } as never,
     scratchWorktreeService: createMockScratchWorktreeService() as never,
+    featureMergeBackProvider: { isWaveMerged: () => true },
   });
 
   const plan = {
