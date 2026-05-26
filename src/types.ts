@@ -37,6 +37,7 @@ export interface BudgetPolicy {
   malformedReviewerRetries: number;
   fixupCycleLimit: number;
   providerFailureRetries: number;
+  deterministicProviderFailureRetries: number;
   ticketWallClockMs?: number;
   phaseWallClockMs?: Partial<Record<BudgetPhaseName, number>>;
 }
@@ -184,6 +185,11 @@ export interface ReviewTerminalOutcomeRecord {
   malformedOutputSnippet?: string;
 }
 
+export type ImplementationStatus = 'completed' | 'failed' | 'interrupted' | 'blocked' | 'unknown' | 'not-started';
+export type ReviewStatus = 'approved' | 'needs-human' | 'failed' | 'unavailable' | 'unknown' | 'not-started';
+export type RunStatus = 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted' | 'unknown';
+export type ProviderFailureSource = 'provider-error' | 'agent-output' | 'agent-thrown' | 'unknown';
+
 export interface PhaseHistoryEntry {
   name: string;
   startTime: string;
@@ -225,6 +231,13 @@ export interface RuntimeMetadataRecord {
   INSPECTION_TARGET_IDENTIFIER: string | null;
   FAILURE_KIND?: string | null;
   UNSAFE_REASON: string | null;
+  IMPLEMENTATION_STATUS?: ImplementationStatus;
+  REVIEW_STATUS?: ReviewStatus;
+  RUN_STATUS?: RunStatus;
+  PROVIDER_FAILURE_KIND?: string | null;
+  PROVIDER_FAILURE_SOURCE?: ProviderFailureSource | null;
+  PROVIDER_FAILURE_EVIDENCE?: string | null;
+  DETERMINISTIC_PROVIDER_FAILURE?: boolean;
   SNAPSHOT_GENERATED_AT?: string;
   SNAPSHOT_SAFE_FIELDS?: {
     ticketLabel: string;

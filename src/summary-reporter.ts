@@ -109,7 +109,7 @@ function fieldValue(fields: Record<string, string>, ...names: string[]): string 
 function classify(
   status: string | undefined,
   attempt: SummaryAttempt,
-): 'completed' | 'failed' | 'interrupted' | 'missing' | 'other' {
+): 'completed' | 'failed' | 'interrupted' | 'handoff' | 'missing' | 'other' {
   const normalized = normalize(status);
   const text = `${attempt.text} ${Object.values(attempt.fields).join(' ')}`.toLowerCase();
   if (
@@ -120,6 +120,12 @@ function classify(
     text.includes('success')
   )
     return 'completed';
+  if (
+    normalized.includes('handoff') ||
+    text.includes('handoff') ||
+    text.includes('manual review')
+  )
+    return 'handoff';
   if (
     normalized.includes('fail') ||
     normalized.includes('block') ||
@@ -179,11 +185,15 @@ function formatAttempt(item: SummaryGroupItem): string {
   const reviewCycleCount = metadata?.REVIEW_CYCLE_HISTORY?.length;
   const fixupCycleCount = (metadata?.PHASE_HISTORY ?? []).filter((entry) => entry.name === 'fixup').length;
   const readinessBlocker =
-    metadata?.STATUS === 'blocked' ? (metadata.FAILURE_KIND ?? metadata.UNSAFE_REASON ?? undefined) : undefined;
+    metadata?.STATUS === 'blocked' || metadata?.RUN_STATUS === 'blocked'
+      ? (metadata.FAILURE_KIND ?? metadata.UNSAFE_REASON ?? undefined)
+      : undefined;
   const bits = [
     `- ${issue.feature}/${issue.issueName}`,
     issue.status ? `status: ${issue.status}` : null,
-    metadata?.STATUS ? `runtime: ${metadata.STATUS}` : null,
+    metadata?.RUN_STATUS ? `run: ${metadata.RUN_STATUS}` : metadata?.STATUS ? `runtime: ${metadata.STATUS}` : null,
+    metadata?.IMPLEMENTATION_STATUS ? `implementation: ${metadata.IMPLEMENTATION_STATUS}` : null,
+    metadata?.REVIEW_STATUS ? `review: ${metadata.REVIEW_STATUS}` : null,
     metadata?.START_TIME ? `started: ${metadata.START_TIME}` : null,
     fieldValue(attempt?.fields ?? {}, 'timestamp')
       ? `timestamp: ${fieldValue(attempt?.fields ?? {}, 'timestamp')}`
@@ -289,6 +299,7 @@ export class SummaryReporter {
     const metadata = readRuntimeMetadata(this.input.repoRoot);
     const byTicket = new Map(metadata.map((entry) => [path.basename(entry.TICKET_PATH), entry]));
     const completed: string[] = [];
+    const handoff: string[] = [];
     const failed: string[] = [];
     const interrupted: string[] = [];
     const missing: string[] = [];
@@ -308,6 +319,7 @@ export class SummaryReporter {
         const rendered = formatAttempt({ issue, attempt, metadata: runtime });
         const bucket = classify(issue.status, attempt);
         if (bucket === 'completed') completed.push(rendered);
+        else if (bucket === 'handoff') handoff.push(rendered);
         else if (bucket === 'failed') failed.push(rendered);
         else if (bucket === 'interrupted') interrupted.push(rendered);
       }
@@ -318,6 +330,9 @@ export class SummaryReporter {
       '',
       'Completed or successful work',
       ...(completed.length ? completed : ['- none']),
+      '',
+      'Handoff or manual review',
+      ...(handoff.length ? handoff : ['- none']),
       '',
       'Failed or blocked work',
       ...(failed.length ? failed : ['- none']),

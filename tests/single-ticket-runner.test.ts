@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -1138,10 +1138,16 @@ test('treats failed reviewer sessions as provider failures instead of malformed 
   );
   const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
     STATUS: string;
+    IMPLEMENTATION_STATUS?: string;
+    REVIEW_STATUS?: string;
+    RUN_STATUS?: string;
     FAILURE_KIND?: string;
     FINAL_REVIEW_CLASSIFICATION?: string;
   };
-  assert.equal(metadata.STATUS, 'failed');
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.IMPLEMENTATION_STATUS, 'completed');
+  assert.equal(metadata.REVIEW_STATUS, 'failed');
+  assert.equal(metadata.RUN_STATUS, 'handoff');
   assert.equal(metadata.FAILURE_KIND, 'opencode-session-stale');
   assert.notEqual(metadata.FINAL_REVIEW_CLASSIFICATION, 'malformed-output-handoff');
 });
@@ -2048,4 +2054,231 @@ test('hands off without fixup when reviewer reports target mismatch', async () =
   assert.equal(metadata.REVIEW_CYCLE_HISTORY?.[0]?.classification, 'review-target-mismatch');
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-tm.log');
   assert.match(readFileSync(logPath, 'utf8'), /review target mismatch handoff: review-target-mismatch/);
+});
+
+test('preserves implementation success when reviewer provider fails deterministically', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-review-handoff-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  let executionCalls = 0;
+  let reviewCalls = 0;
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async ({ invocationMode }) => {
+        if (invocationMode === 'reviewer') {
+          reviewCalls += 1;
+          return {
+            status: 'failed',
+            sessionId: `s-review-${reviewCalls}`,
+            unsafeReason: 'The requested model is not available for integrator "copilot-language-server".',
+            output: ['The requested model is not available for integrator "copilot-language-server".'],
+          };
+        }
+        executionCalls += 1;
+        return { status: 'completed', sessionId: 's-exec' };
+      },
+    },
+    { providerFailureRetries: 5, deterministicProviderFailureRetries: 2 },
+  );
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      { path: ticketPath, feature: 'feat', issueName: 'review-handoff', label: 'feat/review-handoff', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(executionCalls, 1);
+  assert.equal(reviewCalls, 2);
+  assert.equal(result.outcome, 'handoff');
+  const metadataPath = path.join(
+    repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    'runtime-metadata',
+    'feat-review-handoff.json',
+  );
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    STATUS: string;
+    IMPLEMENTATION_STATUS?: string;
+    REVIEW_STATUS?: string;
+    RUN_STATUS?: string;
+    FAILURE_KIND?: string;
+    DETERMINISTIC_PROVIDER_FAILURE?: boolean;
+    PROVIDER_FAILURE_KIND?: string;
+    PROVIDER_FAILURE_SOURCE?: string;
+  };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.IMPLEMENTATION_STATUS, 'completed');
+  assert.equal(metadata.REVIEW_STATUS, 'failed');
+  assert.equal(metadata.RUN_STATUS, 'handoff');
+  assert.equal(metadata.FAILURE_KIND, 'model-unavailable');
+  assert.equal(metadata.DETERMINISTIC_PROVIDER_FAILURE, true);
+  assert.equal(metadata.PROVIDER_FAILURE_KIND, 'model-unavailable');
+  assert.equal(metadata.PROVIDER_FAILURE_SOURCE, 'provider-error');
+  assert.equal(existsSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-review-handoff.handoff')), true);
+});
+
+test('short-circuits deterministic provider launch failures after small retry budget', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-deterministic-short-circuit-'));
+  const store = new RuntimeStore({ repoRoot });
+  let calls = 0;
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async () => {
+        calls += 1;
+        throw new Error('The requested model is not available for integrator "copilot-language-server".');
+      },
+    },
+    { providerFailureRetries: 10, deterministicProviderFailureRetries: 2 },
+  );
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'det', label: 'feat/det', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, 'failed');
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-det.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    DETERMINISTIC_PROVIDER_FAILURE?: boolean;
+    FAILURE_KIND?: string;
+    IMPLEMENTATION_STATUS?: string;
+    RUN_STATUS?: string;
+  };
+  assert.equal(metadata.DETERMINISTIC_PROVIDER_FAILURE, true);
+  assert.equal(metadata.FAILURE_KIND, 'model-unavailable');
+  assert.equal(metadata.IMPLEMENTATION_STATUS, 'failed');
+  assert.equal(metadata.RUN_STATUS, 'failed');
+});
+
+test('does not classify provider failures from ordinary assistant prose', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-prose-safety-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async () => {
+        return {
+          status: 'failed',
+          sessionId: 's-exec',
+          unsafeReason: null,
+          output: [
+            'I was thinking about the model_not_available_for_integrator error but it is not a real failure.',
+          ],
+        };
+      },
+    },
+    { providerFailureRetries: 0 },
+  );
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: 'prose', label: 'feat/prose', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
+  };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-prose.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    FAILURE_KIND?: string;
+    PROVIDER_FAILURE_KIND?: string;
+    PROVIDER_FAILURE_SOURCE?: string;
+  };
+  assert.equal(metadata.FAILURE_KIND, 'unknown');
+  assert.equal(metadata.PROVIDER_FAILURE_KIND, 'unknown');
+  assert.equal(metadata.PROVIDER_FAILURE_SOURCE, 'unknown');
+});
+
+test('budget handoff preserves implementation success when execution completed', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-handoff-'));
+  let tick = 0;
+  const store = new RuntimeStore({ repoRoot, now: () => tick++ * 10 });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async ({ invocationMode }) =>
+        invocationMode === 'reviewer'
+          ? {
+              status: 'completed',
+              sessionId: 's-review',
+              output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
+            }
+          : { status: 'completed', sessionId: 's-exec' },
+    },
+    { phaseWallClockMs: { execution: 5 } },
+  );
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'bh', label: 'feat/bh', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-bh.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    STATUS: string;
+    IMPLEMENTATION_STATUS?: string;
+    RUN_STATUS?: string;
+    BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }>;
+  };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.IMPLEMENTATION_STATUS, 'completed');
+  assert.equal(metadata.RUN_STATUS, 'handoff');
+  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'phase-execution-wall-clock-ms');
+  assert.equal(existsSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-bh.handoff')), true);
 });

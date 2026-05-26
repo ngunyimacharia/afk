@@ -28,6 +28,7 @@ export interface RuntimeRecordHandle {
   logPath: string;
   doneSentinelPath: string;
   failedSentinelPath: string;
+  handoffSentinelPath: string;
 }
 
 interface RuntimePhase {
@@ -126,11 +127,13 @@ export class RuntimeStore {
     const metadataPath = path.join(this.metadataRoot, `${context.featureSlug}-${context.issueName}.json`);
     const doneSentinelPath = path.join(this.sentinelRoot, `${context.featureSlug}-${context.issueName}.done`);
     const failedSentinelPath = path.join(this.sentinelRoot, `${context.featureSlug}-${context.issueName}.failed`);
+    const handoffSentinelPath = path.join(this.sentinelRoot, `${context.featureSlug}-${context.issueName}.handoff`);
     const startEpoch = this.now();
     this.assertManagedPath(logPath, 'runtime log');
     this.assertManagedPath(metadataPath, 'runtime metadata');
     this.assertManagedPath(doneSentinelPath, 'done sentinel');
     this.assertManagedPath(failedSentinelPath, 'failed sentinel');
+    this.assertManagedPath(handoffSentinelPath, 'handoff sentinel');
     this.writeMetadata(metadataPath, {
       ...(context.runId ? { RUN_ID: context.runId } : {}),
       TICKET_PATH: context.ticketPath,
@@ -159,8 +162,15 @@ export class RuntimeStore {
       FINAL_REVIEW_FINDINGS: [],
       FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET: null,
       UNSAFE_REASON: 'session capture pending',
+      IMPLEMENTATION_STATUS: 'not-started',
+      REVIEW_STATUS: 'not-started',
+      RUN_STATUS: 'unknown',
+      PROVIDER_FAILURE_KIND: null,
+      PROVIDER_FAILURE_SOURCE: null,
+      PROVIDER_FAILURE_EVIDENCE: null,
+      DETERMINISTIC_PROVIDER_FAILURE: false,
     });
-    return { metadataPath, logPath, doneSentinelPath, failedSentinelPath };
+    return { metadataPath, logPath, doneSentinelPath, failedSentinelPath, handoffSentinelPath };
   }
 
   startPhase(name: string, cycle?: number): RuntimePhase {
@@ -277,6 +287,12 @@ export class RuntimeStore {
     this.assertManagedPath(handle.failedSentinelPath, 'failed sentinel');
     mkdirSync(path.dirname(handle.failedSentinelPath), { recursive: true });
     writeFileSync(handle.failedSentinelPath, `${isoFromEpoch(this.now())} ${reason}\n`, 'utf8');
+  }
+
+  markHandoff(handle: RuntimeRecordHandle, reason: string): void {
+    this.assertManagedPath(handle.handoffSentinelPath, 'handoff sentinel');
+    mkdirSync(path.dirname(handle.handoffSentinelPath), { recursive: true });
+    writeFileSync(handle.handoffSentinelPath, `${isoFromEpoch(this.now())} ${reason}\n`, 'utf8');
   }
 
   private writeMetadata(metadataPath: string, record: RuntimeMetadataRecord): void {

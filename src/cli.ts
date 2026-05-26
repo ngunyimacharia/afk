@@ -21,7 +21,7 @@ import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-noti
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
-import { classifyProviderFailure } from './provider-failure.js';
+import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
@@ -518,7 +518,7 @@ async function preflightModel(
 
 export function detectPreflightFailureReason(output: string[]): string | null {
   const reason = output.find((line) => {
-    const classification = classifyProviderFailure(line);
+    const classification = classifyProviderFailureFromSource(line, 'agent-output');
     return classification && classification.kind !== 'unknown';
   });
   return reason ?? null;

@@ -207,3 +207,59 @@ Outcome: completed`,
   assert.doesNotMatch(report.message, /Missing summaries\n- feat\/01/);
   assert.match(report.message, /Completed or successful work[\s\S]*feat\/01/);
 });
+
+test('reports handoff state from runtime metadata', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(issuesDir, { recursive: true });
+  mkdirSync(metadataDir, { recursive: true });
+
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    `---
+feature: feat
+status: ready-for-agent
+---
+
+## AFK Summary
+Timestamp: 2026-05-18T00:00:00.000Z
+Outcome: handoff
+`,
+  );
+
+  writeFileSync(
+    path.join(metadataDir, 'feat-01.json'),
+    JSON.stringify(
+      {
+        TICKET_PATH: path.join(issuesDir, '01.md'),
+        FEATURE_SLUG: 'feat',
+        ISSUE_NAME: '01',
+        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
+        START_TIME: '2026-05-18T00:00:00.000Z',
+        START_EPOCH: 1,
+        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
+        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
+        STATUS: 'blocked',
+        IMPLEMENTATION_STATUS: 'completed',
+        REVIEW_STATUS: 'unavailable',
+        RUN_STATUS: 'handoff',
+        EXECUTION_PROVIDER: 'opencode',
+        PROVIDER_SESSION_ID: 'session-1',
+        PROVIDER_SESSION_REMOVABLE: true,
+        INSPECTION_PROVIDER: null,
+        INSPECTION_TARGET_IDENTIFIER: null,
+        UNSAFE_REASON: null,
+      },
+      null,
+      2,
+    ),
+  );
+
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Handoff or manual review[\s\S]*feat\/01/);
+  assert.match(report.message, /run: handoff/);
+  assert.match(report.message, /implementation: completed/);
+  assert.match(report.message, /review: unavailable/);
+  assert.doesNotMatch(report.message, /Failed or blocked work[\s\S]*feat\/01/);
+});

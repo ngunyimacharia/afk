@@ -241,3 +241,28 @@ test('rejects stale harness values Kimi and Claude-Anthropic from persisted pref
   assert.equal(valid.harness, 'OpenCode');
   assert.equal(valid.reviewerHarness, 'Claude-Kimi');
 });
+
+test('initializes separate status fields on record creation', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-status-fields-'));
+  const store = new RuntimeStore({ repoRoot });
+  const record = store.createRecord({ featureSlug: 'feat', issueName: 'status', ticketPath: '/tmp/ticket.md' });
+
+  const metadata = JSON.parse(readFileSync(record.metadataPath, 'utf8')) as Record<string, unknown>;
+  assert.equal(metadata.IMPLEMENTATION_STATUS, 'not-started');
+  assert.equal(metadata.REVIEW_STATUS, 'not-started');
+  assert.equal(metadata.RUN_STATUS, 'unknown');
+  assert.equal(metadata.PROVIDER_FAILURE_KIND, null);
+  assert.equal(metadata.PROVIDER_FAILURE_SOURCE, null);
+  assert.equal(metadata.PROVIDER_FAILURE_EVIDENCE, null);
+  assert.equal(metadata.DETERMINISTIC_PROVIDER_FAILURE, false);
+  assert.ok(record.handoffSentinelPath);
+});
+
+test('writes handoff sentinel', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-handoff-'));
+  const store = new RuntimeStore({ repoRoot });
+  const record = store.createRecord({ featureSlug: 'feat', issueName: 'handoff', ticketPath: '/tmp/ticket.md' });
+  store.markHandoff(record, 'review unavailable');
+  assert.equal(existsSync(record.handoffSentinelPath), true);
+  assert.match(readFileSync(record.handoffSentinelPath, 'utf8'), /review unavailable/);
+});

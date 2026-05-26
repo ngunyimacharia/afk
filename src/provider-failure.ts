@@ -1,3 +1,5 @@
+import type { ProviderFailureSource } from './types.js';
+
 export type ProviderFailureKind =
   | 'model-unavailable'
   | 'auth'
@@ -14,11 +16,56 @@ export interface ProviderFailureClassification {
   kind: ProviderFailureKind;
   reason: string;
   availableModels: string[];
+  source?: ProviderFailureSource;
+  matchedEvidence?: string;
 }
 
-export function classifyProviderFailure(reason: string | null | undefined): ProviderFailureClassification | null {
+const DETERMINISTIC_FAILURE_KINDS: Set<ProviderFailureKind> = new Set([
+  'model-unavailable',
+  'auth',
+  'context-overflow',
+  'path-not-found',
+  'patch-context-mismatch',
+  'dependency-missing',
+  'opencode-session-stale',
+  'claude-session-stale',
+]);
+
+export function isDeterministicFailureKind(kind: ProviderFailureKind): boolean {
+  return DETERMINISTIC_FAILURE_KINDS.has(kind);
+}
+
+export function classifyProviderFailureFromSource(
+  reason: string | null | undefined,
+  source: ProviderFailureSource = 'unknown',
+): ProviderFailureClassification | null {
   const normalizedReason = reason?.trim();
   if (!normalizedReason) return null;
+
+  // For unstructured sources (agent-output, unknown), require higher-confidence signals.
+  // Only classify when the source is a structured provider/runtime error.
+  if (source === 'agent-output' || source === 'unknown') {
+    // Only classify if the reason starts with a known provider error prefix
+    // or contains a very specific structured marker.
+    const lower = normalizedReason.toLowerCase();
+    const hasStructuredPrefix =
+      lower.startsWith('providerautherror') ||
+      lower.startsWith('opencode error:') ||
+      lower.startsWith('claude error:') ||
+      lower.startsWith('tool failed:') ||
+      lower.startsWith('the requested model is not available');
+    if (!hasStructuredPrefix) {
+      return { kind: 'unknown', reason: normalizedReason, availableModels: [], source, matchedEvidence: undefined };
+    }
+  }
+
+  const classification = classifyProviderFailure(normalizedReason);
+  return { ...classification, source, matchedEvidence: classification.reason };
+}
+
+export function classifyProviderFailure(reason: string | null | undefined): ProviderFailureClassification {
+  const normalizedReason = reason?.trim();
+  if (!normalizedReason) return { kind: 'unknown', reason: '', availableModels: [] };
   const lower = normalizedReason.toLowerCase();
 
   if (lower.includes('model_not_available_for_integrator') || lower.includes('requested model is not available')) {

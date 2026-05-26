@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import type { RuntimeMetadataRecord } from './types.js';
 
 const TERMINAL_STATUSES = new Set(['done', 'closed', 'complete', 'resolved']);
 
@@ -16,6 +17,7 @@ export interface CleanupTarget {
   metadataPath?: string;
   doneSentinelPath?: string;
   failedSentinelPath?: string;
+  handoffSentinelPath?: string;
   reason: string;
 }
 
@@ -73,8 +75,30 @@ function ticketMetadataPath(repoRoot: string, feature: string, issueName: string
   return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`);
 }
 
-function ticketSentinelPath(repoRoot: string, feature: string, issueName: string, kind: 'done' | 'failed'): string {
+function ticketSentinelPath(repoRoot: string, feature: string, issueName: string, kind: 'done' | 'failed' | 'handoff'): string {
   return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', `${feature}-${issueName}.${kind}`);
+}
+
+function readRuntimeMetadataRecord(repoRoot: string, feature: string, issueName: string): RuntimeMetadataRecord | null {
+  const metadataPath = ticketMetadataPath(repoRoot, feature, issueName);
+  if (!fileExists(metadataPath)) return null;
+  try {
+    return JSON.parse(readFileSync(metadataPath, 'utf8')) as RuntimeMetadataRecord;
+  } catch {
+    return null;
+  }
+}
+
+function isTerminalTicketStatus(
+  status: string | undefined,
+  runtime: RuntimeMetadataRecord | null,
+): boolean {
+  const normalized = normalize(status);
+  const isFrontmatterTerminal = TERMINAL_STATUSES.has(normalized);
+  // Preserve handoff/manual-review work even if frontmatter looks terminal
+  if (runtime?.RUN_STATUS === 'handoff') return false;
+  if (runtime?.IMPLEMENTATION_STATUS === 'completed' && runtime?.REVIEW_STATUS === 'unavailable') return false;
+  return isFrontmatterTerminal;
 }
 
 export class CleanupPlanner {
@@ -102,8 +126,8 @@ export class CleanupPlanner {
         const frontmatter = parseFrontmatter(content);
         const status = parseStatus(content, frontmatter);
         const issueName = path.basename(file, '.md');
-        const normalized = normalize(status);
-        const isTerminal = readTerminalStatuses().has(normalized);
+        const runtime = readRuntimeMetadataRecord(this.input.repoRoot, featureDir.name, issueName);
+        const isTerminal = isTerminalTicketStatus(status, runtime);
         if (isTerminal) {
           terminalTargets.push({
             feature: featureDir.name,
@@ -123,6 +147,11 @@ export class CleanupPlanner {
             )
               ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed')
               : undefined,
+            handoffSentinelPath: fileExists(
+              ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'handoff'),
+            )
+              ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'handoff')
+              : undefined,
             reason: `terminal status: ${status}`,
           });
         } else {
@@ -139,6 +168,7 @@ export class CleanupPlanner {
       if (target.metadataPath) preservedArtifacts.push(target.metadataPath);
       if (target.doneSentinelPath) preservedArtifacts.push(target.doneSentinelPath);
       if (target.failedSentinelPath) preservedArtifacts.push(target.failedSentinelPath);
+      if (target.handoffSentinelPath) preservedArtifacts.push(target.handoffSentinelPath);
     }
 
     const workspaceExecutionPath = fileExists(path.join(scratchRoot, 'execution.json'))
@@ -158,6 +188,7 @@ export class CleanupExecutor {
         target.metadataPath,
         target.doneSentinelPath,
         target.failedSentinelPath,
+        target.handoffSentinelPath,
       ].filter((value): value is string => Boolean(value))) {
         try {
           rmSync(filePath, { force: true, recursive: false });

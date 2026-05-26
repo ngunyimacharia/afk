@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { detectPreflightFailureReason, formatPreflightFailure } from '../src/cli.js';
-import { classifyProviderFailure, formatProviderFailureMessage } from '../src/provider-failure.js';
+import {
+  classifyProviderFailure,
+  classifyProviderFailureFromSource,
+  formatProviderFailureMessage,
+  isDeterministicFailureKind,
+} from '../src/provider-failure.js';
 
 test('classifies Copilot unavailable-model errors and extracts alternatives', () => {
   const classification = classifyProviderFailure(
@@ -74,5 +79,37 @@ test('classifies missing dependency failures', () => {
 test('classifies stale opencode sessions', () => {
   const classification = classifyProviderFailure('opencode session stale after 3 recovery attempts');
   assert.equal(classification?.kind, 'opencode-session-stale');
+});
+
+test('source-aware classification returns unknown for ordinary assistant prose', () => {
+  const classification = classifyProviderFailureFromSource(
+    'I noticed the model_not_available_for_integrator error in my thinking but it is not a real failure',
+    'agent-output',
+  );
+  assert.equal(classification?.kind, 'unknown');
+});
+
+test('source-aware classification allows structured provider errors through agent-output', () => {
+  const classification = classifyProviderFailureFromSource(
+    'The requested model is not available for integrator "copilot-language-server".',
+    'agent-output',
+  );
+  assert.equal(classification?.kind, 'model-unavailable');
+});
+
+test('source-aware classification classifies thrown errors fully', () => {
+  const classification = classifyProviderFailureFromSource(
+    'ENOENT: no such file or directory, open "/tmp/missing.md"',
+    'agent-thrown',
+  );
+  assert.equal(classification?.kind, 'path-not-found');
+  assert.equal(classification?.source, 'agent-thrown');
+  assert.ok(classification?.matchedEvidence);
+});
+
+test('isDeterministicFailureKind returns true for known deterministic kinds', () => {
+  assert.equal(isDeterministicFailureKind('model-unavailable'), true);
+  assert.equal(isDeterministicFailureKind('auth'), true);
+  assert.equal(isDeterministicFailureKind('unknown'), false);
 });
 
