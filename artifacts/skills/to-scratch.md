@@ -102,7 +102,6 @@ afk_branch: custom-name
 - Call out whether the dependency is a linear stack or fan-in. First-pass AFK branch automation supports linear stacks only; fan-in or multiple-parent branch preparation is deferred/manual unless a PRD explicitly scopes it.
 - Add same-feature issue dependencies to issue YAML frontmatter as `Depends-On` using issue basenames only, without paths or `.md`.
 - Use `Depends-On` only for true same-feature issue blockers, not preferred ordering.
-- The prose `## Dependencies` section is informational only. Scheduling dependencies are defined exclusively in frontmatter `Depends-On`.
 
 Dependency frontmatter examples:
 
@@ -153,10 +152,9 @@ Include:
 - the user or system outcome
 - background and current behavior
 - goals and non-goals
-- functional requirements
+- requirements (functional needs and externally observable success conditions)
 - UX, API, CLI, data, or operational behavior when relevant
 - dependency notes and feature-level blockers
-- acceptance criteria or externally observable success conditions
 - risks, edge cases, and open questions
 
 Do not include file paths unless the user explicitly asks for them or a path is necessary to explain Local Markdown scratch output.
@@ -198,31 +196,8 @@ Do not publish an issue unless all of these are true:
 - acceptance criteria are observable
 - verification is concrete
 - the issue has enough local context to execute without reopening the whole PRD
-- AFK/HITL classification is justified
 
 If these conditions are not met, keep the issue in proposal form and surface the gap.
-
-## Classification Semantics
-
-Classification is operational, not just descriptive.
-
-- `AFK`: this issue can be executed end-to-end without additional human product, design, or architecture decisions beyond normal review
-- `HITL`: this issue requires a specific human checkpoint, decision, or approval before completion
-
-Rules:
-
-- Every `HITL` issue must name the exact checkpoint needed.
-- Do not mark an issue `HITL` just because it is important, risky, or large.
-- If an issue can be split into AFK pre-work plus a smaller HITL decision point, prefer that split.
-- Map `AFK` and `HITL` to the repo's configured local status or label conventions when present.
-
-## Automated Code Test Expectations
-
-Every implementation issue must include automated code test expectations in its Verification section:
-
-- Name the automated code tests to add or run.
-- If no automated code test is appropriate, explicitly say so and provide fallback verification such as manual steps, demo output, logs, or screenshots.
-- Distinguish automated code tests from manual checks or non-code verification.
 
 ## Issue Template
 
@@ -237,10 +212,6 @@ status: ready-for-agent
 
 A concise, outcome-oriented title describing one slice.
 
-## Why
-
-1-3 sentences on the user, system, or business value of this slice.
-
 ## Scope
 
 Includes:
@@ -249,35 +220,11 @@ Includes:
 Excludes:
 - closely related work intentionally left out of this slice
 
-## Context
-
-- Parent PRD/spec: <link or reference>
-- Relevant design/tech notes: <links only, brief note if essential>
-
-## Dependencies
-
-- Frontmatter `Depends-On`: <issue refs only if true blockers>
-
-Related:
-- <optional non-blocking references>
-
 ## Acceptance Criteria
 
 1. <observable condition of done>
 2. <observable condition of done>
 3. <edge case or failure-mode condition if materially relevant>
-
-## Verification
-
-- Automated code tests: <name the automated code tests to add or run, or explicitly state why no automated code test is appropriate and provide fallback verification>
-- <demo, repro steps, or operational checks if applicable>
-- <what evidence is expected: passing test, screenshot, logs, PR link>
-
-## Classification
-
-- Executor: `AFK` or `HITL`
-- Rationale: <one sentence>
-- If HITL: <exact human input, decision, or approval required>
 ```
 
 ## Process
@@ -287,10 +234,9 @@ Related:
 3. Identify the intended outcome, major user flows, implementation seams, natural slice boundaries, and true sequencing constraints.
 4. Create or update the canonical PRD when needed.
 5. Draft dependency-ordered implementation issues.
-6. Classify each issue as AFK or HITL and explain why.
-7. Publish issues under `.scratch/<feature-slug>/issues/` only when they satisfy Definition Of Ready and can be written without overwriting existing user work.
-8. Display a tree view of generated or updated files and the best execution order.
-9. Report preserved existing issues and any stale issue warnings.
+6. Publish issues under `.scratch/<feature-slug>/issues/` only when they satisfy Definition Of Ready and can be written without overwriting existing user work.
+7. Display a tree view of generated or updated files and the best execution order.
+8. Report preserved existing issues and any stale issue warnings.
 
 ## Output Contract
 
