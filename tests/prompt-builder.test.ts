@@ -215,6 +215,50 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
   assert.doesNotMatch(prompt, /super secret scratch text/);
 });
 
+test('snapshot includes implementation HEAD in executor prompt', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
+    snapshot: {
+      generatedAt: '2024-01-01T00:00:00Z',
+      ticketLabel: 'feat/01',
+      ticketStatus: 'ready-for-agent',
+      ticketIssueName: '01',
+      featureSlug: 'feat',
+      ticketPath: '/repo/.scratch/feat/issues/01.md',
+      scratchFeaturePath: '/repo/.scratch/feat',
+      featurePrdPath: '/repo/.scratch/feat/PRD.md',
+      repoRoot: '/repo',
+      worktreePath: '/repo/.git/worktrees/feat',
+      worktreeName: 'feat',
+      branchName: 'feat',
+      head: 'abc123def456',
+      gitStatusShort: [],
+      ticketOutsideWorktree: true,
+      dependencies: [],
+      readiness: null,
+    },
+  });
+  assert.match(prompt, /Implementation HEAD: abc123def456/);
+  assert.match(prompt, /Repo root.*: \/repo/);
+  assert.match(prompt, /Scratch feature path: \/repo\/\.scratch\/feat/);
+  assert.match(prompt, /Feature PRD: \/repo\/\.scratch\/feat\/PRD\.md/);
+});
+
 test('launch plan snapshots use per-feature checkouts', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-prompt-multi-checkout-'));
   const ticketA = path.join(repoRoot, '.scratch', 'feat-a', 'issues', '01.md');

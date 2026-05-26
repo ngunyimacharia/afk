@@ -240,3 +240,31 @@ test('hands off with no actionable findings and preserves empty findings array',
   assert.equal(decision.findings.length, 0);
   assert.match(decision.reason, /no actionable findings/);
 });
+
+test('parses targetMismatch flag from reviewer output', () => {
+  const review = parseReviewerOutput({
+    done: false,
+    summary: 'Review target mismatch: HEAD does not match',
+    targetMismatch: true,
+    findings: [],
+  });
+
+  assert.equal(review.fallback, false);
+  assert.equal(review.done, false);
+  assert.equal(review.targetMismatch, true);
+  assert.equal(review.findings.length, 0);
+});
+
+test('decideReviewOutcome hands off immediately for target mismatch', () => {
+  const review = parseReviewerOutput({
+    done: false,
+    summary: 'Review target mismatch: wrong worktree',
+    targetMismatch: true,
+    findings: [],
+  });
+
+  const decision = decideReviewOutcome(review, { cycle: 1, maxCycles: 3 });
+  assert.equal(decision.decision, 'needs-human');
+  assert.equal(decision.targetMismatch, true);
+  assert.match(decision.reason, /target mismatch/);
+});

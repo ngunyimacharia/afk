@@ -1909,3 +1909,143 @@ test('blocks run without reviewer invocation when updated ticket cannot be read 
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-trf.log');
   assert.match(readFileSync(logPath, 'utf8'), /updated ticket context could not be read before review/);
 });
+
+test('reviewer prompt includes exact target context when snapshot is available', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-target-ctx-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  let reviewerPrompt = '';
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ prompt, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerPrompt = prompt;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'rtc', label: 'feat/rtc', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+    snapshots: {
+      'feat/rtc': {
+        generatedAt: 'now',
+        ticketLabel: 'feat/rtc',
+        ticketStatus: 'done',
+        ticketIssueName: 'rtc',
+        featureSlug: 'feat',
+        ticketPath,
+        scratchFeaturePath: path.join(repoRoot, '.scratch', 'feat'),
+        repoRoot,
+        worktreePath: '/tmp/worktree',
+        worktreeName: 'feat',
+        branchName: 'feat',
+        head: 'abc123def456',
+        gitStatusShort: [],
+        ticketOutsideWorktree: true,
+        dependencies: [],
+        readiness: null,
+      },
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.match(reviewerPrompt, /## Review Target/);
+  assert.match(reviewerPrompt, /Repo root: /);
+  assert.match(reviewerPrompt, /Worktree path: \/tmp\/worktree/);
+  assert.match(reviewerPrompt, /Branch: feat/);
+  assert.match(reviewerPrompt, /Implementation HEAD: abc123def456/);
+  assert.match(reviewerPrompt, /Ticket path: /);
+  assert.match(reviewerPrompt, /Run `git rev-parse HEAD` in the worktree path/);
+  assert.match(reviewerPrompt, /do not produce code findings/i);
+  assert.match(reviewerPrompt, /Do not request cosmetic fixup commits for stale or wrong-worktree findings/);
+});
+
+test('hands off without fixup when reviewer reports target mismatch', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-target-mismatch-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  let executionCalls = 0;
+  let reviewerCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [
+            JSON.stringify({
+              done: false,
+              summary: 'Review target mismatch: HEAD is stale',
+              targetMismatch: true,
+              findings: [],
+            }),
+          ],
+        };
+      }
+      executionCalls += 1;
+      return { status: 'completed', sessionId: 'session-exec', removable: true };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: 'src/prompts/reviewer-default.md' },
+    tickets: [
+      { path: ticketPath, feature: 'feat', issueName: 'tm', label: 'feat/tm', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(executionCalls, 1);
+  assert.equal(reviewerCalls, 1);
+  assert.equal(result.outcome, 'blocked');
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-tm.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    STATUS: string;
+    FAILURE_KIND?: string;
+    FINAL_REVIEW_OUTCOME?: string;
+    FINAL_REVIEW_CLASSIFICATION?: string;
+    REVIEW_CYCLE_HISTORY?: Array<{ classification?: string }>;
+  };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.FAILURE_KIND, 'review-target-mismatch');
+  assert.equal(metadata.FINAL_REVIEW_OUTCOME, 'needs-human');
+  assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, 'review-target-mismatch');
+  assert.equal(metadata.REVIEW_CYCLE_HISTORY?.[0]?.classification, 'review-target-mismatch');
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-tm.log');
+  assert.match(readFileSync(logPath, 'utf8'), /review target mismatch handoff: review-target-mismatch/);
+});
