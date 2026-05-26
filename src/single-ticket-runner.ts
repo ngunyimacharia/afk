@@ -511,11 +511,11 @@ export class SingleTicketRunner {
               REVIEW_STATUS: 'approved',
               RUN_STATUS: 'completed',
             });
-            this.runtimeStore.markDone(record);
             // Attempt merge-back into feature branch so subsequent waves can build on this work
             const featureCheckout = plan.checkouts?.[ticket.feature];
             if (featureCheckout && featureCheckout.effectiveBranchName !== plan.checkout.effectiveBranchName) {
               try {
+                discardWorktreeChanges(featureCheckout.worktreePath);
                 runGit(featureCheckout.worktreePath, ['merge', '--no-edit', plan.checkout.effectiveBranchName]);
                 this.runtimeStore.appendLog(
                   record.logPath,
@@ -526,6 +526,7 @@ export class SingleTicketRunner {
                 this.runtimeStore.appendLog(record.logPath, `merge-back failed: ${message}`);
               }
             }
+            this.runtimeStore.markDone(record);
             this.runtimeStore.appendLog(record.logPath, 'run completed');
             this.emitProgress(record.metadataPath, options.onProgress, {
               ticketLabel: ticket.label,
@@ -1237,4 +1238,9 @@ function normalizeStatus(status: string): 'completed' | 'failed' | 'interrupted'
   )
     return status;
   return 'unknown';
+}
+
+function discardWorktreeChanges(worktreePath: string): void {
+  runGit(worktreePath, ['reset', '--hard', 'HEAD']);
+  runGit(worktreePath, ['clean', '-fd']);
 }

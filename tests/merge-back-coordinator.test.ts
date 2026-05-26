@@ -391,3 +391,43 @@ test('tracks merged waves via isWaveMerged', async () => {
 
   assert.equal(coordinator.isWaveMerged(feature, 0, ['001']), true);
 });
+
+test('discards feature worktree changes before merge wave', async () => {
+  const repoRoot = createRepo('merge-back-dirty-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  const scratch = createScratchWorktree(repoRoot, feature, '001', feature);
+  writeFileSync(path.join(scratch.worktreePath, 'a.txt'), 'a\n');
+  git(scratch.worktreePath, ['add', 'a.txt']);
+  git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
+
+  writeFileSync(path.join(featureWorktreePath, 'README.md'), 'dirty\n');
+  writeFileSync(path.join(featureWorktreePath, 'temp.txt'), 'temp\n');
+
+  const store = new RuntimeStore({ repoRoot });
+  const meta = setupTicketMetadata(store, feature, '001');
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const result = await coordinator.mergeWave({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    wave: 0,
+    tickets: [
+      { feature, issueName: '001', branchName: scratch.branchName, worktreePath: scratch.worktreePath, ...meta },
+    ],
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.mergedTickets, ['001']);
+  assert.equal(result.failedTickets.length, 0);
+  assert.equal(readFileSync(path.join(featureWorktreePath, 'README.md'), 'utf8'), 'test\n');
+  assert.equal(git(featureWorktreePath, ['status', '--porcelain']), '');
+});

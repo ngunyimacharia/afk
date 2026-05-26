@@ -111,6 +111,24 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
     input: MergeWaveInput,
     ticket: MergeBackTicket,
   ): Promise<{ success: boolean; reason: string; conflictPaths?: string[] }> {
+    try {
+      discardWorktreeChanges(input.featureWorktreePath);
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : 'Failed to discard feature worktree changes before merge-back';
+      this.deps.runtimeStore.updateMetadata(ticket.metadataPath, {
+        MERGE_STATUS: 'failed',
+        MERGE_CONFLICT_PATHS: null,
+        MERGE_RESOLUTION_OUTPUT: null,
+      });
+      this.deps.runtimeStore.appendLog(
+        ticket.logPath,
+        JSON.stringify({ event: 'merge-back', status: 'failed', branch: ticket.branchName, reason }),
+      );
+      input.onProgress?.({ ticketLabel: `${ticket.feature}/${ticket.issueName}`, message: reason, kind: 'failure' });
+      return { success: false, reason };
+    }
+
     const mergeResult = tryMerge(input.featureWorktreePath, ticket.branchName);
 
     if (mergeResult.success) {
@@ -291,6 +309,11 @@ function tryMerge(worktreePath: string, branchName: string): { success: boolean;
     const output = error instanceof Error ? error.message : String(error);
     return { success: false, output };
   }
+}
+
+function discardWorktreeChanges(worktreePath: string): void {
+  runGit(worktreePath, ['reset', '--hard', 'HEAD']);
+  runGit(worktreePath, ['clean', '-fd']);
 }
 
 function getConflictPaths(worktreePath: string): string[] {
