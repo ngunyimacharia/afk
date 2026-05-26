@@ -21,6 +21,7 @@ import type {
   ReviewOutcomeClassification,
   ReviewTerminalOutcomeRecord,
 } from './types.js';
+import { runGit } from './worktree-preparation-service.js';
 
 const FIXUP_REMEDIATION_GUIDANCE =
   'Remediation instructions: create one or more additional conventional fixup commits for the reviewer findings before the next review pass.';
@@ -507,6 +508,20 @@ export class SingleTicketRunner {
               RUN_STATUS: 'completed',
             });
             this.runtimeStore.markDone(record);
+            // Attempt merge-back into feature branch so subsequent waves can build on this work
+            const featureCheckout = plan.checkouts?.[ticket.feature];
+            if (featureCheckout && featureCheckout.effectiveBranchName !== plan.checkout.effectiveBranchName) {
+              try {
+                runGit(featureCheckout.worktreePath, ['merge', '--no-edit', plan.checkout.effectiveBranchName]);
+                this.runtimeStore.appendLog(
+                  record.logPath,
+                  `merged ${plan.checkout.effectiveBranchName} into ${featureCheckout.effectiveBranchName}`,
+                );
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'merge failed';
+                this.runtimeStore.appendLog(record.logPath, `merge-back failed: ${message}`);
+              }
+            }
             this.runtimeStore.appendLog(record.logPath, 'run completed');
             this.emitProgress(record.metadataPath, options.onProgress, {
               ticketLabel: ticket.label,
