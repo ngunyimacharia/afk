@@ -1290,7 +1290,7 @@ test('createOpenTuiDashboard starts a 1-second refresh timer on creation', async
     const { module } = makeFakeTextModule();
     const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
     assert.ok(view);
-    assert.equal(intervalDelay, 1000);
+    assert.equal(intervalDelay, 200);
     assert.ok(intervalCallback);
     view?.done();
   } finally {

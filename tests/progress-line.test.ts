@@ -53,7 +53,7 @@ test('live run view factory creates text progress line for tty', () => {
   view.done();
 
   const output = writes.join('');
-  assert.match(output, /[|/\\-]/);
+  assert.match(output, /[▏▎▍▌▋▊▉█]/);
   assert.match(output, /: starting/);
 });
 
@@ -89,7 +89,7 @@ test('progress line updates in place and finalizes once', () => {
   progressLine.done();
 
   const output = writes.join('');
-  assert.match(output, /[|/\\-]/);
+  assert.match(output, /[▏▎▍▌▋▊▉█]/);
   assert.match(output, /: starting/);
   assert.match(output, /: opencode session completed \[opencode: abc\]/);
   assert.doesNotMatch(output, /feat\/001/);

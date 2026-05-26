@@ -77,7 +77,7 @@ function joinStyledTexts(items: StyledText[], separator: string): StyledText {
   return new StyledText(chunks);
 }
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸'];
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 const TICKET_STATE_ICONS: Record<DashboardTicketRuntimeState, string> = {
   running: '⏳',
@@ -155,9 +155,8 @@ function formatTickets(snap: DashboardSnapshot, frameCounter: number): StyledTex
       ticket.runtimeState === 'running'
         ? cyan(SPINNER_FRAMES[frameCounter % SPINNER_FRAMES.length])
         : TICKET_STATE_ICONS[ticket.runtimeState];
-    const msg = ticket.latestMessage ? ` - ${ticket.latestMessage.slice(0, 40)}` : '';
     const selected = snap.selectedTicket?.label === ticket.label ? '>' : ' ';
-    return t`${selected} ${stripFeaturePrefix(ticket.label)} ${icon}${msg}`;
+    return t`${selected} ${stripFeaturePrefix(ticket.label)} ${icon}`;
   });
   return joinStyledTexts(parts, '\n');
 }
@@ -246,7 +245,7 @@ class OpenTuiDashboard implements LiveRunView {
       if (this.destroyed) return;
       this.frameCounter += 1;
       this.refresh();
-    }, 1000);
+    }, 200);
   }
 
   private stopTimer(): void {

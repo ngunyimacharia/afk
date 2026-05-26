@@ -40,7 +40,7 @@ class NoopProgressLine implements ProgressLine {
 }
 
 class LogUpdateProgressLine implements ProgressLine {
-  private static readonly spinnerFrames = ['|', '/', '-', '\\'];
+  private static readonly spinnerFrames = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█', '▉', '▊', '▋', '▌', '▍', '▎', '▏'];
   private readonly logUpdate: ReturnType<typeof createLogUpdate>;
   private readonly latestByTicket = new Map<string, string>();
   private latestEvent: AgentExecutionProgressEvent | undefined;
