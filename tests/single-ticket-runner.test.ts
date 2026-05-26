@@ -2335,9 +2335,9 @@ test('budget handoff preserves implementation success when execution completed',
   assert.equal(existsSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-bh.handoff')), true);
 });
 
-test('runs static check commands after successful execution when afk.json defines them', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-checks-'));
-  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-worktree-'));
+test('does not run static check commands or inject static check output into reviewer prompt', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-checks-disabled-'));
+  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-checks-disabled-worktree-'));
   writeFileSync(
     path.join(repoRoot, 'afk.json'),
     JSON.stringify({ testsEnabled: false, staticCheckCommands: ['echo pass', 'echo fail >&2; exit 1'] }),
@@ -2346,6 +2346,7 @@ test('runs static check commands after successful execution when afk.json define
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
   let reviewerPrompt = '';
+  let staticCheckCalls = 0;
   const runner = new SingleTicketRunner(
     store,
     {
@@ -2364,9 +2365,9 @@ test('runs static check commands after successful execution when afk.json define
     },
     {},
     {
-      run: (command, _cwd) => {
-        if (command === 'echo pass') return { exitCode: 0, output: 'pass\n' };
-        return { exitCode: 1, output: 'fail\n' };
+      run: () => {
+        staticCheckCalls += 1;
+        return { exitCode: 0, output: '' };
       },
     },
   );
@@ -2389,133 +2390,16 @@ test('runs static check commands after successful execution when afk.json define
 
   await runner.launch(plan as never);
 
+  assert.equal(staticCheckCalls, 0);
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-sc.log');
-  const log = readFileSync(logPath, 'utf8');
-  assert.match(log, /static check: echo pass exited with code 0/);
-  assert.match(log, /static check: echo fail >&2; exit 1 exited with code 1/);
-  assert.match(reviewerPrompt, /Static check results:/);
-  assert.match(reviewerPrompt, /echo pass: exit code 0/);
-  assert.match(reviewerPrompt, /echo fail >&2; exit 1: exit code 1/);
-  assert.match(reviewerPrompt, / {2}```\n {2}fail\n {2}```/);
-});
-
-test('does not run static checks when afk.json is missing', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-no-static-'));
-  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-no-static-worktree-'));
-  const store = new RuntimeStore({ repoRoot });
-  const ticketPath = path.join(repoRoot, 'ticket.md');
-  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
-  let reviewerPrompt = '';
-  let executorCalls = 0;
-  const runner = new SingleTicketRunner(
-    store,
-    {
-      execute: async ({ prompt, invocationMode }) => {
-        if (invocationMode === 'reviewer') {
-          reviewerPrompt = prompt;
-          return {
-            status: 'completed',
-            sessionId: 'session-review',
-            removable: true,
-            output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
-          };
-        }
-        return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
-      },
-    },
-    {},
-    {
-      run: () => {
-        executorCalls += 1;
-        return { exitCode: 0, output: '' };
-      },
-    },
-  );
-  const plan = {
-    repoRoot,
-    model: { id: 'model-1' },
-    reviewerModel: { id: 'review-model' },
-    reviewerPrompt: resolveReviewerPromptTemplate(),
-    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'nsc', label: 'feat/nsc', executorAfk: true }],
-    gitContext: { commits: [] },
-    checkout: {
-      featureSlug: 'feat',
-      defaultWorktreeName: 'feat',
-      effectiveWorktreeName: 'feat',
-      defaultBranchName: 'feat',
-      effectiveBranchName: 'feat',
-      worktreePath,
-    },
-  };
-
-  await runner.launch(plan as never);
-
-  assert.equal(executorCalls, 0);
-  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-nsc.log');
   const log = readFileSync(logPath, 'utf8');
   assert.doesNotMatch(log, /static check:/);
   assert.doesNotMatch(reviewerPrompt, /Static check results:/);
 });
 
-test('does not run static checks when staticCheckCommands is empty', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-static-'));
-  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-static-worktree-'));
-  writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));
-  const store = new RuntimeStore({ repoRoot });
-  const ticketPath = path.join(repoRoot, 'ticket.md');
-  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
-  let executorCalls = 0;
-  const runner = new SingleTicketRunner(
-    store,
-    {
-      execute: async ({ invocationMode }) => {
-        if (invocationMode === 'reviewer') {
-          return {
-            status: 'completed',
-            sessionId: 'session-review',
-            removable: true,
-            output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
-          };
-        }
-        return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
-      },
-    },
-    {},
-    {
-      run: () => {
-        executorCalls += 1;
-        return { exitCode: 0, output: '' };
-      },
-    },
-  );
-  const plan = {
-    repoRoot,
-    model: { id: 'model-1' },
-    reviewerModel: { id: 'review-model' },
-    reviewerPrompt: resolveReviewerPromptTemplate(),
-    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'esc', label: 'feat/esc', executorAfk: true }],
-    gitContext: { commits: [] },
-    checkout: {
-      featureSlug: 'feat',
-      defaultWorktreeName: 'feat',
-      effectiveWorktreeName: 'feat',
-      defaultBranchName: 'feat',
-      effectiveBranchName: 'feat',
-      worktreePath,
-    },
-  };
-
-  await runner.launch(plan as never);
-
-  assert.equal(executorCalls, 0);
-  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-esc.log');
-  const log = readFileSync(logPath, 'utf8');
-  assert.doesNotMatch(log, /static check:/);
-});
-
-test('includes static check results in reviewer repair prompt', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-repair-'));
-  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-repair-worktree-'));
+test('reviewer repair prompt omits static check results', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-repair-no-inject-'));
+  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-repair-no-inject-worktree-'));
   writeFileSync(
     path.join(repoRoot, 'afk.json'),
     JSON.stringify({ testsEnabled: false, staticCheckCommands: ['echo fail >&2; exit 1'] }),
@@ -2525,31 +2409,24 @@ test('includes static check results in reviewer repair prompt', async () => {
   writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nDo thing\n');
   let repairPrompt = '';
   let reviewerCalls = 0;
-  const runner = new SingleTicketRunner(
-    store,
-    {
-      execute: async ({ prompt, invocationMode }) => {
-        if (invocationMode === 'reviewer') {
-          reviewerCalls += 1;
-          if (reviewerCalls === 1) {
-            repairPrompt = prompt;
-            return { status: 'completed', sessionId: 'session-review', removable: true, output: ['not json'] };
-          }
-          return {
-            status: 'completed',
-            sessionId: 'session-review',
-            removable: true,
-            output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
-          };
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ prompt, invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        if (reviewerCalls === 1) {
+          repairPrompt = prompt;
+          return { status: 'completed', sessionId: 'session-review', removable: true, output: ['not json'] };
         }
-        return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
-      },
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
     },
-    {},
-    {
-      run: () => ({ exitCode: 1, output: 'fail\n' }),
-    },
-  );
+  });
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
@@ -2570,6 +2447,6 @@ test('includes static check results in reviewer repair prompt', async () => {
   await runner.launch(plan as never);
 
   assert.equal(reviewerCalls, 2);
-  assert.match(repairPrompt, /Static check results:/);
-  assert.match(repairPrompt, /echo fail >&2; exit 1: exit code 1/);
+  assert.doesNotMatch(repairPrompt, /Static check results:/);
+  assert.doesNotMatch(repairPrompt, /echo fail >&2; exit 1/);
 });

@@ -95,18 +95,16 @@ test('lightweight reviewer prompt matches the markdown prompt source', () => {
   assert.equal(template.content, source);
 });
 
-test('default reviewer prompt references static check results', () => {
+test('default reviewer prompt does not require static check result inspection', () => {
   const source = readFileSync(promptPath('reviewer-default.md'), 'utf8');
-  assert.match(source, /static check results/);
-  assert.match(source, /If all static checks passed, confirm this/);
-  assert.match(source, /If any static check failed/);
-  assert.match(source, /severity at least `major`/);
+  assert.doesNotMatch(source, /static check results/i);
+  assert.doesNotMatch(source, /If all static checks passed/i);
+  assert.doesNotMatch(source, /If any static check failed/i);
 });
 
-test('lightweight reviewer prompt references static check results', () => {
+test('lightweight reviewer prompt does not require static check result inspection', () => {
   const source = readFileSync(promptPath('reviewer-lightweight.md'), 'utf8');
-  assert.match(source, /Static check results are inspected/);
-  assert.match(source, /If all passed, confirm this/);
-  assert.match(source, /If any failed/);
-  assert.match(source, /severity at least `major`/);
+  assert.doesNotMatch(source, /Static check results are inspected/i);
+  assert.doesNotMatch(source, /If all passed, confirm this/i);
+  assert.doesNotMatch(source, /If any failed/i);
 });
