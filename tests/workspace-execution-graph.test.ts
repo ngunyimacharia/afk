@@ -31,7 +31,7 @@ test('ignores self references in Depends-On-Features frontmatter', () => {
   assert.deepEqual(parseFeatureDependencies(repoRoot, 'child'), []);
 });
 
-test('rejects PRDs with more than one Depends-On-Features entry', () => {
+test('parseFeatureDependencies throws when PRD lists multiple Depends-On-Features', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
   writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent1\n  - parent2\n---\n');
   assert.throws(
