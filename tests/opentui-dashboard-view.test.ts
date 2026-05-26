@@ -1882,3 +1882,454 @@ test('createOpenTuiDashboard done destroys renderer when run is incomplete', asy
 
   assert.equal(destroyCalled, true);
 });
+
+test('createOpenTuiDashboard renders footer with default quit hint', async () => {
+  const stdout = fakeStdout(true);
+  const contents: string[] = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+        contents.push(this._content);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+        contents.push(this._content);
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+  assert.ok(contents.includes('Ctrl+C or q to quit'));
+  view?.done();
+});
+
+test('createOpenTuiDashboard pressing q arms quit and updates footer', async () => {
+  const stdout = fakeStdout(true);
+  const contents: string[] = [];
+  let destroyCalled = false;
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {
+          destroyCalled = true;
+        },
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+        contents.push(this._content);
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+        contents.push(this._content);
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  const dashboard = view as unknown as { handleKey(sequence: string): boolean };
+  const handled = dashboard.handleKey('q');
+  assert.equal(handled, true);
+  assert.ok(contents.includes('Press again to quit'));
+  assert.equal(destroyCalled, false);
+
+  view?.done();
+});
+
+test('createOpenTuiDashboard pressing q twice destroys renderer', async () => {
+  const stdout = fakeStdout(true);
+  let destroyCalled = false;
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {
+          destroyCalled = true;
+        },
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  const dashboard = view as unknown as { handleKey(sequence: string): boolean };
+
+  dashboard.handleKey('q');
+  assert.equal(destroyCalled, false);
+
+  dashboard.handleKey('q');
+  assert.equal(destroyCalled, true);
+});
+
+test('createOpenTuiDashboard pressing Ctrl+C twice destroys renderer', async () => {
+  const stdout = fakeStdout(true);
+  let destroyCalled = false;
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {
+          destroyCalled = true;
+        },
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  const dashboard = view as unknown as { handleKey(sequence: string): boolean };
+
+  dashboard.handleKey('\x03');
+  assert.equal(destroyCalled, false);
+
+  dashboard.handleKey('\x03');
+  assert.equal(destroyCalled, true);
+});
+
+test('createOpenTuiDashboard quit auto-disarms after timeout', async () => {
+  const origSetTimeout = global.setTimeout;
+  const origClearTimeout = global.clearTimeout;
+  let timeoutCallback: unknown = null;
+  let timeoutDelay = 0;
+
+  global.setTimeout = ((callback: () => void, delay: number) => {
+    timeoutCallback = callback;
+    timeoutDelay = delay;
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as unknown as typeof global.setTimeout;
+  global.clearTimeout = () => {};
+
+  try {
+    const stdout = fakeStdout(true);
+    const contents: string[] = [];
+
+    const module: OpenTuiDashboardModule = {
+      createCliRenderer: async () =>
+        ({
+          root: { add: () => {} },
+          destroy: () => {},
+          addInputHandler: () => {},
+          removeInputHandler: () => {},
+        }) as unknown as CliRenderer,
+      BoxRenderable: class FakeBox {
+        add() {}
+      } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+      TextRenderable: class FakeText {
+        _content = '';
+        get content(): string {
+          return this._content;
+        }
+        set content(value: string | { toString(): string }) {
+          if (
+            value &&
+            typeof value === 'object' &&
+            'chunks' in value &&
+            Array.isArray((value as Record<string, unknown>).chunks)
+          ) {
+            this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+              .map((c) => c.text)
+              .join('');
+          } else {
+            this._content = String(value);
+          }
+          contents.push(this._content);
+        }
+        constructor(_ctx: unknown, options: { content?: string }) {
+          this._content = options.content ?? '';
+          contents.push(this._content);
+        }
+        add() {
+          return 0;
+        }
+        remove() {}
+        clear() {}
+        destroy() {}
+        onLifecyclePass = () => {};
+        textNode = undefined as unknown as TextRenderable['textNode'];
+        chunks = [];
+        getTextChildren() {
+          return [];
+        }
+        insertBefore(): number {
+          return 0;
+        }
+      } as unknown as OpenTuiDashboardModule['TextRenderable'],
+    };
+
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+    assert.ok(view);
+
+    const dashboard = view as unknown as { handleKey(sequence: string): boolean };
+
+    dashboard.handleKey('q');
+    assert.ok(contents.includes('Press again to quit'));
+    assert.equal(timeoutDelay, 2000);
+
+    // Simulate timeout firing
+    if (typeof timeoutCallback === 'function') (timeoutCallback as () => void)();
+
+    assert.ok(contents.includes('Ctrl+C or q to quit'));
+    view?.done();
+  } finally {
+    global.setTimeout = origSetTimeout;
+    global.clearTimeout = origClearTimeout;
+  }
+});
+
+test('createOpenTuiDashboard other keys work normally when quit is not armed', async () => {
+  const stdout = fakeStdout(true);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    { path: '/tmp/feat-a-002.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  assert.ok(view);
+
+  const dashboard = view as unknown as { handleKey(sequence: string): boolean };
+
+  const ticketsBox = boxes.find((b) => b.title === 'Tickets [j/k]');
+  assert.ok(ticketsBox);
+  const contentBefore = ticketsBox.children.map((c) => c.content).join('\n');
+  assert.match(contentBefore, /> 001/);
+
+  const handled = dashboard.handleKey('j');
+  assert.equal(handled, true);
+
+  const contentAfter = ticketsBox.children.map((c) => c.content).join('\n');
+  assert.match(contentAfter, /> 002/);
+
+  view?.done();
+});

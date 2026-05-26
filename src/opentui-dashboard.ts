@@ -222,7 +222,10 @@ class OpenTuiDashboard implements LiveRunView {
   private actionText!: TextRenderable;
   private eventsText!: TextRenderable;
   private detailsText!: TextRenderable;
+  private footerText!: TextRenderable;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private quitTimeout: ReturnType<typeof setTimeout> | null = null;
+  private quitArmed = false;
   private frameCounter = 0;
 
   constructor(
@@ -253,6 +256,38 @@ class OpenTuiDashboard implements LiveRunView {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  private clearQuitTimeout(): void {
+    if (this.quitTimeout !== null) {
+      clearTimeout(this.quitTimeout);
+      this.quitTimeout = null;
+    }
+  }
+
+  private armQuit(): void {
+    if (this.destroyed) return;
+    this.quitArmed = true;
+    this.refresh();
+    this.clearQuitTimeout();
+    this.quitTimeout = setTimeout(() => {
+      this.disarmQuit();
+    }, 2000);
+  }
+
+  private disarmQuit(): void {
+    if (this.destroyed) return;
+    this.quitArmed = false;
+    this.clearQuitTimeout();
+    this.refresh();
+  }
+
+  private confirmQuit(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.stopTimer();
+    this.clearQuitTimeout();
+    this.renderer.destroy();
   }
 
   private checkRunComplete(snap: DashboardSnapshot): boolean {
@@ -364,6 +399,14 @@ class OpenTuiDashboard implements LiveRunView {
     eventsBox.add(this.eventsText);
     root.add(eventsBox);
 
+    const footerBox = new this.opentui.BoxRenderable(this.renderer, {
+      flexDirection: 'column',
+      height: 1,
+    });
+    this.footerText = new this.opentui.TextRenderable(this.renderer, { content: '' });
+    footerBox.add(this.footerText);
+    root.add(footerBox);
+
     this.renderer.root.add(root);
   }
 
@@ -374,6 +417,14 @@ class OpenTuiDashboard implements LiveRunView {
   handleKey(sequence: string): boolean {
     if (this.destroyed) return false;
     switch (sequence) {
+      case '\x03': // Ctrl+C
+      case 'q':
+        if (this.quitArmed) {
+          this.confirmQuit();
+        } else {
+          this.armQuit();
+        }
+        return true;
       case '\x1b[B': // Down arrow
       case 'j':
         this.state.selectNextTicket();
@@ -413,6 +464,7 @@ class OpenTuiDashboard implements LiveRunView {
     this.actionText.content = formatActionNeeded(snap);
     this.detailsText.content = formatDetails(snap, this.repoRoot);
     this.eventsText.content = formatEvents(snap);
+    this.footerText.content = this.quitArmed ? 'Press again to quit' : 'Ctrl+C or q to quit';
     this.maybeStopTimer(snap);
   }
 
@@ -425,6 +477,7 @@ class OpenTuiDashboard implements LiveRunView {
     if (this.destroyed) return;
     this.destroyed = true;
     this.stopTimer();
+    this.clearQuitTimeout();
     if (!this.runComplete) {
       this.renderer.destroy();
     }
@@ -434,6 +487,7 @@ class OpenTuiDashboard implements LiveRunView {
     if (!this.destroyed) {
       this.destroyed = true;
       this.stopTimer();
+      this.clearQuitTimeout();
     }
     if (!this.runComplete) {
       this.renderer.destroy();
