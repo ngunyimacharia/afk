@@ -169,6 +169,7 @@ export function buildLaunchPlan(
     prompt?: ReviewerPromptTemplate;
   },
   checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
+  featureDependencies?: Record<string, string[]>,
 ): LaunchPlan {
   const snapshots = Object.fromEntries(
     tickets.map((ticket) => [
@@ -187,5 +188,6 @@ export function buildLaunchPlan(
     checkouts: checkoutsByFeature,
     snapshots,
     gitContext: { commits: [] },
+    featureDependencies,
   };
 }

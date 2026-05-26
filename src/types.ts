@@ -139,6 +139,7 @@ export interface LaunchPlan {
   checkout: CheckoutContext;
   checkouts?: Record<string, CheckoutContext>;
   snapshots?: Record<string, AfkStateSnapshot>;
+  featureDependencies?: Record<string, string[]>;
 }
 
 export interface ReviewFindingSnapshot {

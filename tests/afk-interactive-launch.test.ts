@@ -9,6 +9,7 @@ import {
   orderSelectedTicketsByFeatureGraph,
   readRunOutcomeLines,
   runAfk,
+  validateSelectedFeatureDependencies,
   validateSelectedTicketDependencies,
 } from '../src/cli.js';
 import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/interactive-launch.js';
@@ -363,6 +364,103 @@ test('selected feature tickets are ordered by dependency graph waves', () => {
     orderSelectedTicketsByFeatureGraph(reversed, { feat: graph }).map((ticket) => ticket.label),
     ['feat/01-foundation', 'feat/02-middle', 'feat/03-verification'],
   );
+});
+
+test('feature dependency validation blocks incomplete unselected upstream', () => {
+  const graph = {
+    version: 1 as const,
+    generatedAt: new Date().toISOString(),
+    selectedFeatures: ['child'],
+    concurrency: 3,
+    featureWaves: [['parent'], ['child']],
+    features: {
+      parent: {
+        state: 'ready' as const,
+        dependsOnFeatures: [],
+        blockedByFeatures: [],
+        stackParent: null,
+        blockingIssues: ['01'],
+      },
+      child: {
+        state: 'blocked' as const,
+        dependsOnFeatures: ['parent'],
+        blockedByFeatures: ['parent'],
+        stackParent: 'parent',
+        blockingIssues: [],
+        blockedReason: 'Blocked by incomplete unselected upstream feature(s): parent',
+      },
+    },
+  };
+
+  const block = validateSelectedFeatureDependencies(graph, ['child']);
+  assert.ok(block);
+  assert.match(block, /Launch blocked: child has incomplete upstream work/);
+  assert.match(block, /parent/);
+});
+
+test('feature dependency validation passes for selected upstream', () => {
+  const graph = {
+    version: 1 as const,
+    generatedAt: new Date().toISOString(),
+    selectedFeatures: ['parent', 'child'],
+    concurrency: 3,
+    featureWaves: [['parent'], ['child']],
+    features: {
+      parent: {
+        state: 'ready' as const,
+        dependsOnFeatures: [],
+        blockedByFeatures: [],
+        stackParent: null,
+        blockingIssues: [],
+      },
+      child: {
+        state: 'ready' as const,
+        dependsOnFeatures: ['parent'],
+        blockedByFeatures: [],
+        stackParent: 'parent',
+        blockingIssues: [],
+      },
+    },
+  };
+
+  assert.equal(validateSelectedFeatureDependencies(graph, ['parent', 'child']), null);
+});
+
+test('feature dependency validation blocks fan-in', () => {
+  const graph = {
+    version: 1 as const,
+    generatedAt: new Date().toISOString(),
+    selectedFeatures: ['child'],
+    concurrency: 3,
+    featureWaves: [['parent1', 'parent2'], ['child']],
+    features: {
+      parent1: {
+        state: 'ready' as const,
+        dependsOnFeatures: [],
+        blockedByFeatures: [],
+        stackParent: null,
+        blockingIssues: [],
+      },
+      parent2: {
+        state: 'ready' as const,
+        dependsOnFeatures: [],
+        blockedByFeatures: [],
+        stackParent: null,
+        blockingIssues: [],
+      },
+      child: {
+        state: 'ready' as const,
+        dependsOnFeatures: ['parent1', 'parent2'],
+        blockedByFeatures: [],
+        stackParent: null,
+        blockingIssues: [],
+      },
+    },
+  };
+
+  const block = validateSelectedFeatureDependencies(graph, ['child']);
+  assert.ok(block);
+  assert.match(block, /Fan-in branch automation deferred/);
 });
 
 function writeMinimalAfkConfig(repoRoot: string): void {

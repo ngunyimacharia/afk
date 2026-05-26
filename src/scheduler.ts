@@ -35,6 +35,13 @@ export class Scheduler {
     const runningTickets = new Set<string>();
     const runningFeatures = new Set<string>();
     const completed = new Set(completedTickets.map((ticket) => ticketKey(ticket)));
+    const completedFeatures = new Set<string>();
+    for (const feature of new Set(plan.tickets.map((t) => t.feature))) {
+      const featureTickets = plan.tickets.filter((t) => t.feature === feature);
+      if (featureTickets.every((t) => completed.has(ticketKey(t)))) {
+        completedFeatures.add(feature);
+      }
+    }
     const failed = new Set<string>();
     const failures: string[] = [];
     const ticketResults: SchedulerTicketResult[] = completedTickets.map((ticket) => ({
@@ -52,7 +59,7 @@ export class Scheduler {
     const startNext = (): void => {
       while (running.size < this.concurrencyLimit) {
         const index = pending.findIndex((ticket) =>
-          isReady(ticket, plannedTickets, completed, failed, runningTickets, runningFeatures),
+          isReady(ticket, plannedTickets, completed, failed, runningTickets, runningFeatures, completedFeatures, plan.featureDependencies),
         );
         if (index === -1) {
           if (!running.size) resolveIdle?.();
@@ -82,6 +89,10 @@ export class Scheduler {
               if (result.launchBlock) launchBlocks.push(result.launchBlock);
             } else if (outcome === 'completed') {
               completed.add(ticketKey(ticket));
+              const featureTickets = plan.tickets.filter((t) => t.feature === ticket.feature);
+              if (featureTickets.every((t) => completed.has(ticketKey(t)))) {
+                completedFeatures.add(ticket.feature);
+              }
             } else {
               failed.add(ticketKey(ticket));
               failures.push(result.message);
@@ -142,9 +153,13 @@ function isReady(
   failed: Set<string>,
   running: Set<string>,
   runningFeatures: Set<string>,
+  completedFeatures: Set<string>,
+  featureDependencies?: Record<string, string[]>,
 ): boolean {
   if (running.has(ticketKey(ticket))) return false;
   if (runningFeatures.has(ticket.feature)) return false;
+  const deps = featureDependencies?.[ticket.feature] ?? [];
+  if (!deps.every((dep) => completedFeatures.has(dep))) return false;
   return (ticket.dependsOn ?? []).every((dependency) => {
     const key = `${ticket.feature}/${dependency}`;
     if (!plannedTickets.has(key)) return true;

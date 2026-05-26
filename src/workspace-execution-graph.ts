@@ -11,6 +11,7 @@ export interface WorkspaceExecutionFeature {
   blockedByFeatures: string[];
   stackParent: string | null;
   blockingIssues: string[];
+  blockedReason?: string;
 }
 
 export interface WorkspaceExecutionGraph {
@@ -73,24 +74,17 @@ export function refreshWorkspaceExecutionGraph(
       if (!selectedFeatures.includes(dep) && !isFeatureComplete(repoRoot, dep)) return true;
       return false;
     });
+    const blockedReason = blockedByFeatures.length
+      ? `Blocked by incomplete unselected upstream feature(s): ${blockedByFeatures.join(', ')}`
+      : undefined;
     features[feature] = {
       state: complete ? 'complete' : blockedByFeatures.length ? 'blocked' : 'ready',
       dependsOnFeatures: deps,
       blockedByFeatures,
       stackParent: deps.length === 1 ? deps[0] : null,
       blockingIssues,
+      blockedReason,
     };
-  }
-  for (const feature of selectedFeatures) {
-    for (const dependency of dependencies.get(feature) ?? []) {
-      if (selectedFeatures.includes(dependency)) continue;
-      const upstream = features[dependency];
-      if (upstream && upstream.state !== 'complete') {
-        throw new Error(
-          `${feature} remains blocked by incomplete unselected upstream feature ${dependency}; blocking issues: ${upstream.blockingIssues.join(', ') || 'unknown'}`,
-        );
-      }
-    }
   }
   const graph: WorkspaceExecutionGraph = {
     version: 1,

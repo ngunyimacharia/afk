@@ -29,7 +29,11 @@ import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
 import { TicketRepository } from './ticket-repository.js';
 import type { LaunchModel, TicketRecord } from './types.js';
-import { orderSelectedFeaturesByWaves, refreshWorkspaceExecutionGraph } from './workspace-execution-graph.js';
+import {
+  type WorkspaceExecutionGraph,
+  orderSelectedFeaturesByWaves,
+  refreshWorkspaceExecutionGraph,
+} from './workspace-execution-graph.js';
 import { WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
 
 function commandArg(): string | undefined {
@@ -217,15 +221,9 @@ export async function runAfk(
   if (orderingBlock) return { code: 1, message: orderingBlock };
   selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
   const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
+  const featureBlock = validateSelectedFeatureDependencies(workspaceGraph, selectedFeatures);
+  if (featureBlock) return { code: 1, message: featureBlock };
   const firstTicket = selectedTickets[0];
-  for (const feature of selectedFeatures) {
-    if ((workspaceGraph.features[feature]?.dependsOnFeatures.length ?? 0) > 1) {
-      return {
-        code: 1,
-        message: `Fan-in branch automation deferred for ${feature}: multiple Depends-On-Features entries are not supported for automatic stacked branch preparation.`,
-      };
-    }
-  }
   const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
   let checkouts: ReturnType<WorktreePreparationService['prepare']>[];
   try {
@@ -248,6 +246,9 @@ export async function runAfk(
   }
   const checkoutsByFeature = Object.fromEntries(checkoutFeatures.map((feature, index) => [feature, checkouts[index]]));
   const checkout = checkoutsByFeature[firstTicket.feature];
+  const featureDependencies = Object.fromEntries(
+    selectedFeatures.map((feature) => [feature, workspaceGraph.features[feature]?.dependsOnFeatures ?? []]),
+  );
   const plan = buildLaunchPlan(
     repoRoot,
     model,
@@ -255,6 +256,7 @@ export async function runAfk(
     checkout,
     { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
     checkoutsByFeature,
+    featureDependencies,
   );
   const permissionCoordinator = new PermissionCoordinator({
     ticketLabel: selectedTickets[0]?.label,
@@ -452,6 +454,22 @@ export function validateSelectedTicketDependencies(
     }
   }
 
+  return null;
+}
+
+export function validateSelectedFeatureDependencies(
+  workspaceGraph: WorkspaceExecutionGraph,
+  selectedFeatures: string[],
+): string | null {
+  for (const feature of selectedFeatures) {
+    const featureState = workspaceGraph.features[feature];
+    if (featureState?.state === 'blocked') {
+      return `Launch blocked: ${feature} has incomplete upstream work.\nReason: ${featureState.blockedReason}\nFix: complete the upstream feature or select it in the same launch.`;
+    }
+    if ((featureState?.dependsOnFeatures.length ?? 0) > 1) {
+      return `Fan-in branch automation deferred for ${feature}: multiple Depends-On-Features entries are not supported for automatic stacked branch preparation.`;
+    }
+  }
   return null;
 }
 

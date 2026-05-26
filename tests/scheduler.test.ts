@@ -439,3 +439,86 @@ test('passes feature checkout and matching snapshot to runner', async () => {
 
   assert.deepEqual(seen, ['feat-a/001:/tmp/tree-a:/tmp/tree-a', 'feat-b/001:/tmp/tree-b:/tmp/tree-b']);
 });
+
+test('waits for upstream feature completion before launching downstream feature tickets', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-feature-deps-'));
+  const started: string[] = [];
+  const scheduler = new Scheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        await new Promise((resolve) => setTimeout(resolve, ticket.feature === 'feat-a' ? 20 : 1));
+        return { scheduled: true, message: ticket.label };
+      },
+    } as never,
+    3,
+  );
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [
+      { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
+    featureDependencies: { 'feat-b': ['feat-a'] },
+  };
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/001', 'feat-b/001']);
+});
+
+test('allows independent features to run concurrently', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-independent-'));
+  const active = new Set<string>();
+  let peak = 0;
+  const scheduler = new Scheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        active.add(ticket.label);
+        peak = Math.max(peak, active.size);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active.delete(ticket.label);
+        return { scheduled: true, message: ticket.label };
+      },
+    } as never,
+    3,
+  );
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat-a',
+      defaultWorktreeName: 'feat-a',
+      effectiveWorktreeName: 'feat-a',
+      defaultBranchName: 'feat-a',
+      effectiveBranchName: 'feat-a',
+      worktreePath: '/tmp/worktree',
+    },
+    featureDependencies: {},
+  };
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.equal(peak, 2);
+});

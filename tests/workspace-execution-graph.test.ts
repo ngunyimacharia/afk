@@ -52,13 +52,49 @@ test('orders selected features by dependency waves', () => {
   assert.deepEqual(orderSelectedFeaturesByWaves(graph), ['parent', 'child']);
 });
 
-test('errors when selected downstream depends on incomplete unselected upstream', () => {
+test('marks selected downstream as blocked when upstream is incomplete and unselected', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
   writeFeature(repoRoot, 'parent', '# PRD\n', 'ready-for-agent');
-  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent\n---\n');
+  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent\n---\n', 'ready-for-agent');
 
-  assert.throws(
-    () => refreshWorkspaceExecutionGraph(repoRoot, ['child'], 3),
-    /incomplete unselected upstream feature parent/,
-  );
+  const graph = refreshWorkspaceExecutionGraph(repoRoot, ['child'], 3);
+  assert.equal(graph.features.child.state, 'blocked');
+  assert.deepEqual(graph.features.child.blockedByFeatures, ['parent']);
+  assert.match(graph.features.child.blockedReason ?? '', /incomplete unselected upstream feature\(s\): parent/);
+});
+
+test('linear stacked features are ready when upstream is selected', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
+  writeFeature(repoRoot, 'parent', '# PRD\n', 'ready-for-agent');
+  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent\n---\n', 'ready-for-agent');
+  const graph = refreshWorkspaceExecutionGraph(repoRoot, ['parent', 'child'], 3);
+
+  assert.equal(graph.features.parent.state, 'ready');
+  assert.equal(graph.features.child.state, 'ready');
+  assert.deepEqual(graph.featureWaves, [['parent'], ['child']]);
+  assert.equal(graph.features.child.stackParent, 'parent');
+});
+
+test('independent features have no cross-feature blocking', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
+  writeFeature(repoRoot, 'feat-a', '# PRD\n', 'ready-for-agent');
+  writeFeature(repoRoot, 'feat-b', '# PRD\n', 'ready-for-agent');
+  const graph = refreshWorkspaceExecutionGraph(repoRoot, ['feat-a', 'feat-b'], 3);
+
+  assert.equal(graph.features['feat-a'].state, 'ready');
+  assert.equal(graph.features['feat-b'].state, 'ready');
+  assert.deepEqual(graph.features['feat-a'].blockedByFeatures, []);
+  assert.deepEqual(graph.features['feat-b'].blockedByFeatures, []);
+  assert.deepEqual(graph.featureWaves, [['feat-a', 'feat-b']]);
+});
+
+test('fan-in features have null stackParent', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
+  writeFeature(repoRoot, 'parent1', '# PRD\n', 'ready-for-agent');
+  writeFeature(repoRoot, 'parent2', '# PRD\n', 'ready-for-agent');
+  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent1\n  - parent2\n---\n', 'ready-for-agent');
+  const graph = refreshWorkspaceExecutionGraph(repoRoot, ['parent1', 'parent2', 'child'], 3);
+
+  assert.equal(graph.features.child.stackParent, null);
+  assert.deepEqual(graph.features.child.dependsOnFeatures, ['parent1', 'parent2']);
 });
