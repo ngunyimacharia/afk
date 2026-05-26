@@ -123,7 +123,7 @@ function evaluateCopyCandidate(params: {
   };
 }
 
-function copyReadinessArtifacts(
+export function copyReadinessArtifacts(
   repoRoot: string,
   worktreePath: string,
   config?: AfkProjectConfig,
@@ -151,11 +151,11 @@ function copyReadinessArtifacts(
   return { dependencyCopies, envTestingCopy };
 }
 
-function runGit(repoRoot: string, args: string[]): string {
+export function runGit(repoRoot: string, args: string[]): string {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-function branchExists(repoRoot: string, branchName: string): boolean {
+export function branchExists(repoRoot: string, branchName: string): boolean {
   try {
     runGit(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
     return true;
@@ -164,7 +164,7 @@ function branchExists(repoRoot: string, branchName: string): boolean {
   }
 }
 
-function worktreeExists(repoRoot: string, worktreePath: string): boolean {
+export function worktreeExists(repoRoot: string, worktreePath: string): boolean {
   try {
     const output = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
     return output.split('\n').some((line) => line === `worktree ${worktreePath}`);
@@ -173,11 +173,11 @@ function worktreeExists(repoRoot: string, worktreePath: string): boolean {
   }
 }
 
-function staleWorktreePathMessage(worktreePath: string): string {
+export function staleWorktreePathMessage(worktreePath: string): string {
   return `Worktree path already exists but is not registered with git: ${worktreePath}. Resolve the stale repo-local path with a dedicated cleanup step before rerunning AFK.`;
 }
 
-function branchWorktreePath(repoRoot: string, branchName: string): string | null {
+export function branchWorktreePath(repoRoot: string, branchName: string): string | null {
   try {
     const output = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
     const lines = output.split('\n');
@@ -194,12 +194,12 @@ function branchWorktreePath(repoRoot: string, branchName: string): string | null
   }
 }
 
-function ensureBranch(repoRoot: string, branchName: string, baseRef = 'HEAD'): void {
+export function ensureBranch(repoRoot: string, branchName: string, baseRef = 'HEAD'): void {
   if (branchExists(repoRoot, branchName)) return;
   runGit(repoRoot, ['branch', '--no-track', branchName, baseRef]);
 }
 
-function ensureIgnoredWorktreeRoot(repoRoot: string): string {
+export function ensureIgnoredWorktreeRoot(repoRoot: string): string {
   const worktreeRoot = path.join(repoRoot, '.worktree');
   mkdirSync(worktreeRoot, { recursive: true });
   const gitignorePath = path.join(repoRoot, '.gitignore');
