@@ -27,8 +27,17 @@ test('parses Depends-On-Features from PRD frontmatter', () => {
 
 test('ignores self references in Depends-On-Features frontmatter', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
-  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - child\n  - parent\n---\n');
-  assert.deepEqual(parseFeatureDependencies(repoRoot, 'child'), ['parent']);
+  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - child\n---\n');
+  assert.deepEqual(parseFeatureDependencies(repoRoot, 'child'), []);
+});
+
+test('parseFeatureDependencies throws when PRD lists multiple Depends-On-Features', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
+  writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent1\n  - parent2\n---\n');
+  assert.throws(
+    () => parseFeatureDependencies(repoRoot, 'child'),
+    /Feature child: PRD frontmatter Depends-On-Features supports at most one entry\. Found 2\./,
+  );
 });
 
 test('writes workspace execution graph with feature waves', () => {
@@ -88,13 +97,13 @@ test('independent features have no cross-feature blocking', () => {
   assert.deepEqual(graph.featureWaves, [['feat-a', 'feat-b']]);
 });
 
-test('fan-in features have null stackParent', () => {
+test('surfaces >1 Depends-On-Features error through refreshWorkspaceExecutionGraph', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-workspace-'));
   writeFeature(repoRoot, 'parent1', '# PRD\n', 'ready-for-agent');
   writeFeature(repoRoot, 'parent2', '# PRD\n', 'ready-for-agent');
   writeFeature(repoRoot, 'child', '---\nDepends-On-Features:\n  - parent1\n  - parent2\n---\n', 'ready-for-agent');
-  const graph = refreshWorkspaceExecutionGraph(repoRoot, ['parent1', 'parent2', 'child'], 3);
-
-  assert.equal(graph.features.child.stackParent, null);
-  assert.deepEqual(graph.features.child.dependsOnFeatures, ['parent1', 'parent2']);
+  assert.throws(
+    () => refreshWorkspaceExecutionGraph(repoRoot, ['parent1', 'parent2', 'child'], 3),
+    /Feature child: PRD frontmatter Depends-On-Features supports at most one entry\. Found 2\./,
+  );
 });

@@ -426,43 +426,6 @@ test('feature dependency validation passes for selected upstream', () => {
   assert.equal(validateSelectedFeatureDependencies(graph, ['parent', 'child']), null);
 });
 
-test('feature dependency validation blocks fan-in', () => {
-  const graph = {
-    version: 1 as const,
-    generatedAt: new Date().toISOString(),
-    selectedFeatures: ['child'],
-    concurrency: 3,
-    featureWaves: [['parent1', 'parent2'], ['child']],
-    features: {
-      parent1: {
-        state: 'ready' as const,
-        dependsOnFeatures: [],
-        blockedByFeatures: [],
-        stackParent: null,
-        blockingIssues: [],
-      },
-      parent2: {
-        state: 'ready' as const,
-        dependsOnFeatures: [],
-        blockedByFeatures: [],
-        stackParent: null,
-        blockingIssues: [],
-      },
-      child: {
-        state: 'ready' as const,
-        dependsOnFeatures: ['parent1', 'parent2'],
-        blockedByFeatures: [],
-        stackParent: null,
-        blockingIssues: [],
-      },
-    },
-  };
-
-  const block = validateSelectedFeatureDependencies(graph, ['child']);
-  assert.ok(block);
-  assert.match(block, /Fan-in branch automation deferred/);
-});
-
 function writeMinimalAfkConfig(repoRoot: string): void {
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));
 }

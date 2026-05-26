@@ -33,6 +33,11 @@ export function parseFeatureDependencies(repoRoot: string, feature: string): str
   const frontmatter = (YAML.parse(content.slice(4, end)) ?? {}) as Record<string, unknown>;
   const value = frontmatter['Depends-On-Features'];
   if (Array.isArray(value)) {
+    if (value.length > 1) {
+      throw new Error(
+        `Feature ${feature}: PRD frontmatter Depends-On-Features supports at most one entry. Found ${value.length}.`,
+      );
+    }
     return value.map((entry) => String(entry).trim()).filter((dependency) => dependency && dependency !== feature);
   }
   if (typeof value === 'string' && value.trim()) {
