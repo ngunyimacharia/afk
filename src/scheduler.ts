@@ -43,28 +43,12 @@ export class Scheduler {
   ): Promise<SchedulerRunResult> {
     if (!plan.tickets.length) return { scheduled: false, message: 'No ticket available for launch', ticketResults: [] };
 
-    const completedTickets = plan.tickets.filter((ticket) => isComplete(ticket.status));
-    const pending = plan.tickets.filter((ticket) => !isComplete(ticket.status));
     const plannedTickets = new Set(plan.tickets.map((ticket) => ticketKey(ticket)));
     const plannedFeatures = new Set(plan.tickets.map((ticket) => ticket.feature));
     const running = new Set<Promise<void>>();
     const runningTickets = new Set<string>();
-    const completed = new Set(completedTickets.map((ticket) => ticketKey(ticket)));
-    const completedFeatures = new Set<string>();
-    for (const feature of new Set(plan.tickets.map((t) => t.feature))) {
-      const featureTickets = plan.tickets.filter((t) => t.feature === feature);
-      if (featureTickets.every((t) => completed.has(ticketKey(t)))) {
-        completedFeatures.add(feature);
-      }
-    }
     const failed = new Set<string>();
     const failures: string[] = [];
-    const ticketResults: SchedulerTicketResult[] = completedTickets.map((ticket) => ({
-      ticket,
-      outcome: 'completed',
-      message: `Skipped ${ticket.label}: ticket already done`,
-      runId: options.runId,
-    }));
     const launchBlocks: LaunchBlockEvidence[] = [];
     let resolveIdle: (() => void) | null = null;
     const idle = new Promise<void>((resolve) => {
@@ -92,7 +76,46 @@ export class Scheduler {
         waveTickets.set(wave, arr);
       }
       featureWaveTickets.set(feature, waveTickets);
+    }
 
+    const shouldResumeCompletedTicket = (ticket: TicketRecord): boolean => {
+      if (!isComplete(ticket.status) || !this.deps.featureMergeBackProvider) return false;
+      const ticketWave = featureWaves.get(ticket.feature)?.get(ticket.issueName) ?? 0;
+      const waveTicketKeys = featureWaveTickets.get(ticket.feature)?.get(ticketWave) ?? [];
+      if (waveTicketKeys.length === 0) return false;
+      const laterIncompleteTicketExists = plan.tickets.some(
+        (candidate) =>
+          candidate.feature === ticket.feature &&
+          !isComplete(candidate.status) &&
+          (featureWaves.get(candidate.feature)?.get(candidate.issueName) ?? 0) > ticketWave,
+      );
+      if (!laterIncompleteTicketExists) return false;
+      const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
+      return !this.deps.featureMergeBackProvider.isWaveMerged(ticket.feature, ticketWave, issueNames);
+    };
+
+    const completedTickets = plan.tickets.filter(
+      (ticket) => isComplete(ticket.status) && !shouldResumeCompletedTicket(ticket),
+    );
+    const pending = plan.tickets.filter((ticket) => !isComplete(ticket.status) || shouldResumeCompletedTicket(ticket));
+    const completed = new Set(completedTickets.map((ticket) => ticketKey(ticket)));
+    const completedFeatures = new Set<string>();
+    for (const feature of new Set(plan.tickets.map((t) => t.feature))) {
+      const featureTickets = plan.tickets.filter((t) => t.feature === feature);
+      if (featureTickets.every((t) => completed.has(ticketKey(t)))) {
+        completedFeatures.add(feature);
+      }
+    }
+    const ticketResults: SchedulerTicketResult[] = completedTickets.map((ticket) => ({
+      ticket,
+      outcome: 'completed',
+      message: `Skipped ${ticket.label}: ticket already done`,
+      runId: options.runId,
+    }));
+
+    for (const feature of plannedFeatures) {
+      const waveTickets = featureWaveTickets.get(feature);
+      if (!waveTickets) continue;
       let highestCompleted = -1;
       let highestMerged = -1;
       for (let wave = 0; ; wave++) {

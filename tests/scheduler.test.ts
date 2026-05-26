@@ -238,6 +238,59 @@ test('skips completed tickets and marks them completed in scheduler results', as
   assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/002')?.outcome, 'completed');
 });
 
+test('resumes completed dependency ticket when its wave is not merged and blocks later work', async () => {
+  const started: string[] = [];
+  const mergedWaves = new Set<string>();
+  const scheduler = createScheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        return { scheduled: true, message: ticket.label, outcome: 'completed' };
+      },
+    },
+    {
+      concurrencyLimit: 1,
+      featureMergeBackProvider: {
+        isWaveMerged: (_feature: string, wave: number, _issueNames: string[]) => mergedWaves.has(String(wave)),
+      },
+      onWaveComplete: async (_feature: string, wave: number, _issueNames: string[]) => {
+        mergedWaves.add(String(wave));
+      },
+    },
+  );
+
+  const plan = basePlan({
+    tickets: [
+      {
+        path: '/tmp/a-1.md',
+        feature: 'feat-a',
+        issueName: '001',
+        label: 'feat-a/001',
+        status: 'done',
+        executorAfk: true,
+      },
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        status: 'ready-for-agent',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
+    ],
+  });
+
+  const result = await scheduler.launch(plan as never);
+
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
+  assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/001')?.message, 'feat-a/001');
+  assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/002')?.outcome, 'completed');
+});
+
 test('does not launch dependent ticket when dependency blocks', async () => {
   const started: string[] = [];
   const scheduler = createScheduler({
