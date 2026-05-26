@@ -72,6 +72,17 @@ export function detectTestSuite(repoRoot: string): { detected: boolean; signals:
   return { detected: signals.length > 0, signals };
 }
 
+export function runReadinessCommands(input: {
+  cwd: string;
+  config?: AfkProjectConfig;
+  executor?: ReadinessCommandExecutor;
+}): { smoke: ReadinessCommandResult; staticStyleChecks: ReadinessCommandResult[] } {
+  const executor = input.executor ?? new SyncReadinessCommandExecutor();
+  const smoke = runSmokeCheck(input.cwd, executor, input.config);
+  const staticStyleChecks = runStaticStyleChecks(input.cwd, executor, input.config);
+  return { smoke, staticStyleChecks };
+}
+
 export function buildWorktreeReadiness(input: {
   repoRoot: string;
   worktreePath: string;
@@ -81,6 +92,7 @@ export function buildWorktreeReadiness(input: {
   dependencyCopyStatusKnown: boolean;
   config?: AfkProjectConfig;
   executor?: ReadinessCommandExecutor;
+  skipCommandChecks?: boolean;
 }): ReadinessCheckMetadata {
   const executor = input.executor ?? new SyncReadinessCommandExecutor();
   const testSuite = input.config
@@ -104,6 +116,14 @@ export function buildWorktreeReadiness(input: {
       smoke: skipped('smoke', reason),
       staticStyleChecks: [],
       blockReason: reason,
+    });
+  }
+  if (input.skipCommandChecks) {
+    return finalize({
+      ...preconditions,
+      testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      smoke: skipped('smoke', 'existing worktree'),
+      staticStyleChecks: [],
     });
   }
   if (input.envTestingDecision === 'missing-disabled-by-user') {

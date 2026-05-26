@@ -5,6 +5,7 @@ import type { AfkProjectConfig } from './project-config.js';
 import {
   buildWorktreeReadiness,
   detectTestSuite,
+  runReadinessCommands,
   type ReadinessCheckMetadata,
   type ReadinessCommandExecutor,
 } from './readiness-service.js';
@@ -226,6 +227,34 @@ export class WorktreePreparationService {
     if (!existingWorktreePath && !registeredWorktree && existsSync(worktreePath)) {
       throw new Error(staleWorktreePathMessage(worktreePath));
     }
+
+    const worktreeAlreadyExists = Boolean(existingWorktreePath) || registeredWorktree;
+
+    if (!worktreeAlreadyExists) {
+      const { smoke, staticStyleChecks } = runReadinessCommands({
+        cwd: input.repoRoot,
+        config: input.projectConfig,
+        executor: input.readinessExecutor,
+      });
+      const failed = [smoke, ...staticStyleChecks].find((item) => item.status === 'failed');
+      if (failed) {
+        const blockReason = `${failed.mode} readiness failed: ${failed.command}`;
+        const syntheticMetadata: ReadinessCheckMetadata = {
+          worktreePath: { status: 'blocked', path: worktreePath, reason: 'worktree path does not exist' },
+          branch: { status: 'blocked', expected: effectiveBranchName, reason: 'expected branch is not checked out' },
+          ticketPaths: { status: 'passed', missing: [] },
+          gitIndexLock: { status: 'passed', path: path.join(worktreePath, '.git', 'index.lock') },
+          dependencyCopyStatusKnown: { status: 'passed' },
+          testSuite: { detected: false, signals: [], envTesting: 'not-required' },
+          smoke,
+          staticStyleChecks,
+          terminalState: 'blocked',
+          blockReason,
+        };
+        throw new WorktreeReadinessBlockedError(blockReason, syntheticMetadata);
+      }
+    }
+
     if (!existingWorktreePath && !registeredWorktree && !worktreePath.includes('undefined')) {
       runGit(input.repoRoot, ['worktree', 'add', worktreePath, effectiveBranchName]);
     }
@@ -250,6 +279,7 @@ export class WorktreePreparationService {
       dependencyCopyStatusKnown: Boolean(readiness.dependencyCopies.length && readiness.envTestingCopy),
       config: input.projectConfig,
       executor: input.readinessExecutor,
+      skipCommandChecks: worktreeAlreadyExists,
     });
     if (readiness.checks.terminalState === 'blocked') {
       throw new WorktreeReadinessBlockedError(
