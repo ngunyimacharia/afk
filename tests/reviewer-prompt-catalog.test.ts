@@ -94,3 +94,19 @@ test('lightweight reviewer prompt matches the markdown prompt source', () => {
   const template = resolveReviewerPrompt({ repoRoot: '/tmp', override: LIGHTWEIGHT_REVIEWER_PROMPT_ID });
   assert.equal(template.content, source);
 });
+
+test('default reviewer prompt references static check results', () => {
+  const source = readFileSync(promptPath('reviewer-default.md'), 'utf8');
+  assert.match(source, /static check results/);
+  assert.match(source, /If all static checks passed, confirm this/);
+  assert.match(source, /If any static check failed/);
+  assert.match(source, /severity at least `major`/);
+});
+
+test('lightweight reviewer prompt references static check results', () => {
+  const source = readFileSync(promptPath('reviewer-lightweight.md'), 'utf8');
+  assert.match(source, /Static check results are inspected/);
+  assert.match(source, /If all passed, confirm this/);
+  assert.match(source, /If any failed/);
+  assert.match(source, /severity at least `major`/);
+});

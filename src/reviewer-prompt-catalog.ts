@@ -19,6 +19,7 @@ Review the completed ticket in read-only mode. Determine whether the implementat
 4. Focus on correctness, regressions, security, data loss, unmet requirements, missing tests, and maintainability risks for this ticket.
 5. Keep scope discipline. Do not require unrelated refactors or speculative improvements.
 6. Anchor every finding to specific evidence.
+7. Inspect the static check results section. If all static checks passed, confirm this in your summary. If any static check failed, treat each failure as review evidence and produce findings with severity at least \`major\`.
 
 ## Completion Criteria
 
@@ -71,6 +72,7 @@ Review the completed ticket in read-only mode using a lightweight, deterministic
    - Verification evidence exists (tests ran, build succeeded, or blockers were recorded).
    - No obvious blockers such as compilation errors, missing required files, or uncommitted source changes.
    - The implementation matches the ticket acceptance criteria at a surface level (files changed, behavior added/removed).
+   - Static check results are inspected. If all passed, confirm this in your summary. If any failed, treat each failure as review evidence and produce findings with severity at least \`major\`.
 5. Do NOT perform deep architectural review, style critique, speculative maintainability analysis, or unrelated refactor recommendations.
 6. Anchor every finding to specific evidence.
 
