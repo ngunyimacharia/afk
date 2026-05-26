@@ -342,9 +342,11 @@ export async function runAfk(
         });
       }
     }
-  } finally {
-    view.done();
+  } catch (error) {
+    view.cleanup();
+    throw error;
   }
+  await view.waitForQuit();
   return {
     code: 0,
     message: [

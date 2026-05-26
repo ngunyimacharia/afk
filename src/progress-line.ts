@@ -20,6 +20,7 @@ export interface ProgressLine {
   updateNotificationState(state: DashboardNotificationState): void;
   done(): void;
   cleanup(): void;
+  waitForQuit(): Promise<void>;
 }
 
 export interface ProgressLineOptions {
@@ -37,6 +38,9 @@ class NoopProgressLine implements ProgressLine {
   updateNotificationState(_state: DashboardNotificationState): void {}
   done(): void {}
   cleanup(): void {}
+  waitForQuit(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 class LogUpdateProgressLine implements ProgressLine {
@@ -107,6 +111,10 @@ class LogUpdateProgressLine implements ProgressLine {
     this.latestEvent = undefined;
     this.latestByTicket.clear();
     this.activePermissionKey = undefined;
+  }
+
+  waitForQuit(): Promise<void> {
+    return Promise.resolve();
   }
 
   updateNotificationState(state: DashboardNotificationState): void {

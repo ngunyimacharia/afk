@@ -17,6 +17,7 @@ function fakeProgressLine(): {
   updateNotificationState(state: DashboardNotificationState): void;
   done(): void;
   cleanup(): void;
+  waitForQuit(): Promise<void>;
 } {
   const events: AgentExecutionProgressEvent[] = [];
   const notificationStates: DashboardNotificationState[] = [];
@@ -34,6 +35,9 @@ function fakeProgressLine(): {
       _doneCalled = true;
     },
     cleanup() {},
+    waitForQuit() {
+      return Promise.resolve();
+    },
     get doneCalled() {
       return _doneCalled;
     },
@@ -1741,7 +1745,7 @@ test('createOpenTuiDashboard shows completion banner in header when all tickets 
   view?.done();
 });
 
-test('createOpenTuiDashboard done does not destroy renderer when run is complete', async () => {
+test('createOpenTuiDashboard done destroys renderer even when run is complete', async () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);
   let destroyCalled = false;
@@ -1809,7 +1813,7 @@ test('createOpenTuiDashboard done does not destroy renderer when run is complete
   view?.update({ ticketLabel: 'feat-a/001', message: 'run completed' });
   view?.done();
 
-  assert.equal(destroyCalled, false);
+  assert.equal(destroyCalled, true);
 });
 
 test('createOpenTuiDashboard done destroys renderer when run is incomplete', async () => {
@@ -2332,4 +2336,429 @@ test('createOpenTuiDashboard other keys work normally when quit is not armed', a
   assert.match(contentAfter, /> 002/);
 
   view?.done();
+});
+
+test('createOpenTuiDashboard cleanup destroys renderer even when run is complete', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  let destroyCalled = false;
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {
+          destroyCalled = true;
+        },
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+  assert.ok(view);
+
+  view?.update({ ticketLabel: 'feat-a/001', message: 'run completed' });
+  view?.cleanup();
+
+  assert.equal(destroyCalled, true);
+});
+
+test('createOpenTuiDashboard handleKey remains active after maybeStopTimer fires', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  const callbacks: Array<() => void> = [];
+
+  global.setInterval = ((callback: () => void, _delay: number) => {
+    callbacks.push(callback);
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof global.setInterval;
+  global.clearInterval = () => {};
+
+  try {
+    const stdout = fakeStdout(true);
+
+    const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+    const module: OpenTuiDashboardModule = {
+      createCliRenderer: async () =>
+        ({
+          root: { add: () => {} },
+          destroy: () => {},
+          addInputHandler: () => {},
+          removeInputHandler: () => {},
+        }) as unknown as CliRenderer,
+      BoxRenderable: class FakeBox {
+        title = '';
+        children: Array<{ content: string }> = [];
+        constructor(_ctx: unknown, options: { title?: string }) {
+          this.title = options.title ?? '';
+          boxes.push(this);
+        }
+        add(child: { content?: string }) {
+          this.children.push(child as { content: string });
+        }
+      } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+      TextRenderable: class FakeText {
+        _content = '';
+        get content(): string {
+          return this._content;
+        }
+        set content(value: string | { toString(): string }) {
+          if (
+            value &&
+            typeof value === 'object' &&
+            'chunks' in value &&
+            Array.isArray((value as Record<string, unknown>).chunks)
+          ) {
+            this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+              .map((c) => c.text)
+              .join('');
+          } else {
+            this._content = String(value);
+          }
+        }
+        constructor(_ctx: unknown, options: { content?: string }) {
+          this._content = options.content ?? '';
+        }
+        add() {
+          return 0;
+        }
+        remove() {}
+        clear() {}
+        destroy() {}
+        onLifecyclePass = () => {};
+        textNode = undefined as unknown as TextRenderable['textNode'];
+        chunks = [];
+        getTextChildren() {
+          return [];
+        }
+        insertBefore(): number {
+          return 0;
+        }
+      } as unknown as OpenTuiDashboardModule['TextRenderable'],
+    };
+
+    const tickets: TicketRecord[] = [
+      { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      { path: '/tmp/feat-a-002.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+    ];
+
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
+    assert.ok(view);
+
+    // Send terminal event to stop the timer via maybeStopTimer
+    view?.update({ ticketLabel: 'feat-a/001', message: 'run completed' });
+    view?.update({ ticketLabel: 'feat-a/002', message: 'run completed' });
+    callbacks[0]?.();
+
+    // handleKey should still work after timer stops
+    const dashboard = view as unknown as { handleKey(sequence: string): boolean };
+    const ticketsBox = boxes.find((b) => b.title === 'Tickets [j/k]');
+    assert.ok(ticketsBox);
+
+    const handled = dashboard.handleKey('j');
+    assert.equal(handled, true);
+
+    const contentAfter = ticketsBox.children.map((c) => c.content).join('\n');
+    assert.match(contentAfter, /> 002/);
+
+    view?.done();
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+  }
+});
+
+test('createOpenTuiDashboard waitForQuit resolves when confirmQuit is called', async () => {
+  const stdout = fakeStdout(true);
+  let destroyCalled = false;
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {
+          destroyCalled = true;
+        },
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  const dashboard = view as unknown as { handleKey(sequence: string): boolean; waitForQuit(): Promise<void> };
+
+  const quitPromise = dashboard.waitForQuit();
+  let resolved = false;
+  quitPromise.then(() => {
+    resolved = true;
+  });
+
+  // First press arms quit
+  dashboard.handleKey('q');
+  assert.equal(destroyCalled, false);
+  assert.equal(resolved, false);
+
+  // Second press confirms quit
+  dashboard.handleKey('q');
+  assert.equal(destroyCalled, true);
+
+  // Promise should resolve
+  await quitPromise;
+  assert.equal(resolved, true);
+});
+
+test('createOpenTuiDashboard waitForQuit resolves when done is called', async () => {
+  const stdout = fakeStdout(true);
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  const quitPromise = view.waitForQuit();
+  view.done();
+
+  await quitPromise;
+});
+
+test('createOpenTuiDashboard waitForQuit resolves when cleanup is called', async () => {
+  const stdout = fakeStdout(true);
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      add() {}
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  const quitPromise = view.waitForQuit();
+  view.cleanup();
+
+  await quitPromise;
+});
+
+test('DashboardProxy waitForQuit delegates to dashboard when present', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const { module } = makeFakeTextModule();
+
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, (opts) =>
+    createOpenTuiDashboard(opts, module),
+  );
+
+  await proxy.start();
+
+  const dashboard = (proxy as unknown as { dashboard: LiveRunView | null }).dashboard;
+  assert.ok(dashboard);
+
+  const quitPromise = proxy.waitForQuit();
+  let resolved = false;
+  quitPromise.then(() => {
+    resolved = true;
+  });
+
+  proxy.done();
+
+  await quitPromise;
+  assert.equal(resolved, true);
+});
+
+test('DashboardProxy waitForQuit resolves immediately for fallback', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const proxy = new DashboardProxy(stdout, {}, { stdout }, async () => null);
+
+  proxy.update({ ticketLabel: 'feat-a/001', message: 'starting' });
+  await proxy.start();
+
+  // Fallback is a progress line, waitForQuit should resolve immediately
+  const quitPromise = proxy.waitForQuit();
+  await quitPromise;
 });

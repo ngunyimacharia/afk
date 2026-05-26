@@ -7,6 +7,7 @@ export interface LiveRunView {
   update(event: AgentExecutionProgressEvent): void;
   done(): void;
   cleanup(): void;
+  waitForQuit(): Promise<void>;
 }
 
 export type LiveRunViewKind = 'text' | 'dashboard';

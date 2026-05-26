@@ -226,6 +226,8 @@ class OpenTuiDashboard implements LiveRunView {
   private timer: ReturnType<typeof setInterval> | null = null;
   private quitTimeout: ReturnType<typeof setTimeout> | null = null;
   private quitArmed = false;
+  private quitResolver: (() => void) | null = null;
+  private readonly quitPromise: Promise<void>;
   private frameCounter = 0;
 
   constructor(
@@ -236,6 +238,9 @@ class OpenTuiDashboard implements LiveRunView {
     private readonly repoRoot: string,
   ) {
     this.state = new RunDashboardState(runOptions, selectedTickets);
+    this.quitPromise = new Promise((resolve) => {
+      this.quitResolver = resolve;
+    });
     this.buildLayout();
     this.registerInputHandler();
     this.refresh();
@@ -288,6 +293,7 @@ class OpenTuiDashboard implements LiveRunView {
     this.stopTimer();
     this.clearQuitTimeout();
     this.renderer.destroy();
+    this.quitResolver?.();
   }
 
   private checkRunComplete(snap: DashboardSnapshot): boolean {
@@ -478,20 +484,21 @@ class OpenTuiDashboard implements LiveRunView {
     this.destroyed = true;
     this.stopTimer();
     this.clearQuitTimeout();
-    if (!this.runComplete) {
-      this.renderer.destroy();
-    }
+    this.renderer.destroy();
+    this.quitResolver?.();
   }
 
   cleanup(): void {
-    if (!this.destroyed) {
-      this.destroyed = true;
-      this.stopTimer();
-      this.clearQuitTimeout();
-    }
-    if (!this.runComplete) {
-      this.renderer.destroy();
-    }
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.stopTimer();
+    this.clearQuitTimeout();
+    this.renderer.destroy();
+    this.quitResolver?.();
+  }
+
+  waitForQuit(): Promise<void> {
+    return this.quitPromise;
   }
 }
 
@@ -611,5 +618,9 @@ export class DashboardProxy implements LiveRunView {
     this.dashboard?.cleanup();
     this.fallback.cleanup();
     this.buffer.length = 0;
+  }
+
+  waitForQuit(): Promise<void> {
+    return this.dashboard?.waitForQuit() ?? this.fallback.waitForQuit();
   }
 }
