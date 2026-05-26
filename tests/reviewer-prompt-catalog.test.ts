@@ -82,6 +82,13 @@ test('lightweight review prompt is explicit, deterministic, and not skip-review'
   assert.match(template.content ?? '', /"done":boolean/);
 });
 
+test('lightweight reviewer prompt instructs exact paths first and avoids broad searches', () => {
+  const source = readFileSync(promptPath('reviewer-lightweight.md'), 'utf8');
+  assert.match(source, /Use the exact runtime paths provided in the Review Target section first/);
+  assert.match(source, /Avoid broad searches, recursive greps, or workspace-wide scans/);
+  assert.match(source, /unless the exact paths are missing or inconsistent/);
+});
+
 test('lightweight reviewer prompt matches the markdown prompt source', () => {
   const source = readFileSync(promptPath('reviewer-lightweight.md'), 'utf8');
   const template = resolveReviewerPrompt({ repoRoot: '/tmp', override: LIGHTWEIGHT_REVIEWER_PROMPT_ID });

@@ -140,6 +140,35 @@ test('generated prompt includes scratch artifact completion checklist', () => {
   assert.match(prompt, /`status` field is updated to `done`/);
   assert.match(prompt, /scratch artifacts created are local-only under `\.scratch\//);
   assert.match(prompt, /Source code changes are committed using conventional commits/);
+  assert.match(prompt, /The PRD or feature spec is updated only if the ticket explicitly requires it/);
+});
+
+test('generated prompt with full afk instructions includes stop conditions and worktree guard', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
+    afkInstructions: readFileSync(promptPath('afk-prompt.md'), 'utf8'),
+  });
+  assert.match(prompt, /Stop once the ticket is satisfied/);
+  assert.match(prompt, /If the assigned worktree disappears or becomes invalid, stop and record the blocker/);
+  assert.match(prompt, /Do not continue execution in the repo root/);
+  assert.match(prompt, /Do not create fixup commits/);
+  assert.match(prompt, /## Scratch Artifact Completion Checklist/);
+  assert.match(prompt, /## Verification Budget/);
 });
 
 test('generated prompt includes verification budget guidance', () => {
