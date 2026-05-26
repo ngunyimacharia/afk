@@ -161,7 +161,8 @@ export type ReviewOutcomeClassification =
   | 'real-finding-handoff'
   | 'malformed-output-handoff'
   | 'empty-output-handoff'
-  | 'missing-findings-handoff';
+  | 'missing-findings-handoff'
+  | 'review-target-mismatch';
 
 export interface ReviewCycleHistoryEntry {
   cycle: number;

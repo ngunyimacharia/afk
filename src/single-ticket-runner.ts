@@ -7,6 +7,7 @@ import { classifyProviderFailure } from './provider-failure.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeStore } from './runtime-store.js';
 import type {
+  AfkStateSnapshot,
   AgentExecutionProgressCallback,
   AgentExecutionProgressEvent,
   AgentExecutionResult,
@@ -27,6 +28,7 @@ const REVIEWER_OUTPUT_MALFORMED_FAILURE_KIND = 'reviewer-output-malformed';
 const REVIEWER_EMPTY_OUTPUT_FAILURE_KIND = 'reviewer-empty-output';
 const LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND = 'launcher-context-mismatch';
 const TICKET_READ_FAILURE_KIND = 'ticket-read-failure';
+const REVIEW_TARGET_MISMATCH_FAILURE_KIND = 'review-target-mismatch';
 
 const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
   'The previous reviewer response was malformed and could not be parsed.',
@@ -245,8 +247,8 @@ export class SingleTicketRunner {
               plan,
               ticketIndex: 0,
               prompt: useReviewerRepairPrompt
-                ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent)
-                : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent),
+                ? this.buildReviewerRepairPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent, snapshot)
+                : this.buildReviewerPrompt(ticket.label, reviewerPromptText, sessionId, executionForReview, updatedTicketContent, snapshot),
               invocationMode: 'reviewer',
               sessionId,
               onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
@@ -326,6 +328,10 @@ export class SingleTicketRunner {
           record.logPath,
           this.buildReviewCycleEntry(reviewCycle + 1, decision),
         );
+
+        if (decision.targetMismatch) {
+          return this.handoffForReviewTargetMismatch(ticket.label, record, options, reviewCycle + 1, sessionId);
+        }
 
         if (decision.decision === 'approve') {
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
@@ -590,6 +596,48 @@ export class SingleTicketRunner {
     });
   }
 
+  private handoffForReviewTargetMismatch(
+    ticketLabel: string,
+    record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
+    options: { onProgress?: AgentExecutionProgressCallback },
+    cycle: number,
+    sessionId: string | null,
+  ): Promise<SingleTicketRunResult> {
+    const reason = 'Reviewer detected review target mismatch';
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      STATUS: 'blocked',
+      UNSAFE_REASON: reason,
+      FAILURE_KIND: REVIEW_TARGET_MISMATCH_FAILURE_KIND,
+    });
+    this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, {
+      cycle,
+      outcome: 'handoff-required',
+      reason,
+      malformed: false,
+      findings: [],
+      classification: 'review-target-mismatch',
+    });
+    this.runtimeStore.recordFinalReviewOutcome(
+      record.metadataPath,
+      record.logPath,
+      this.buildFinalOutcomeRecord({
+        cycle,
+        outcome: 'needs-human',
+        reason,
+        classification: 'review-target-mismatch',
+        malformed: false,
+        findings: [],
+      }),
+    );
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+      this.runtimeStore.markFailed(record, 'needs-human handoff required');
+      this.runtimeStore.appendLog(record.logPath, 'review target mismatch handoff: review-target-mismatch');
+      this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: 'review target mismatch handoff', sessionId });
+      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
+    });
+  }
+
   private handoffForLauncherContextMismatch(
     ticketLabel: string,
     record: { metadataPath: string; logPath: string; doneSentinelPath: string; failedSentinelPath: string },
@@ -730,6 +778,7 @@ export class SingleTicketRunner {
     sessionId: string | null,
     executionResult: { status: string; output?: string[] },
     updatedTicketContent: string,
+    snapshot?: AfkStateSnapshot,
   ): string {
     return [
       reviewerPromptText.trim(),
@@ -738,6 +787,7 @@ export class SingleTicketRunner {
       `Execution session: ${sessionId ?? 'unknown'}`,
       `Execution status: ${executionResult.status}`,
       '',
+      ...(snapshot ? this.buildReviewerTargetContext(snapshot) : []),
       'Updated ticket content:',
       '```markdown',
       updatedTicketContent.trimEnd(),
@@ -752,12 +802,34 @@ export class SingleTicketRunner {
     sessionId: string | null,
     executionResult: { status: string; output?: string[] },
     updatedTicketContent: string,
+    snapshot?: AfkStateSnapshot,
   ): string {
     return [
-      this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult, updatedTicketContent),
+      this.buildReviewerPrompt(ticketLabel, reviewerPromptText, sessionId, executionResult, updatedTicketContent, snapshot),
       '',
       REVIEWER_FORMAT_REPAIR_INSTRUCTIONS,
     ].join('\n');
+  }
+
+  private buildReviewerTargetContext(snapshot: AfkStateSnapshot): string[] {
+    return [
+      '## Review Target',
+      '',
+      'Before producing findings, validate that you are inspecting the intended checkout:',
+      `- Repo root: ${snapshot.repoRoot}`,
+      `- Worktree path: ${snapshot.worktreePath}`,
+      `- Branch: ${snapshot.branchName}`,
+      `- Implementation HEAD: ${snapshot.head}`,
+      `- Ticket path: ${snapshot.ticketPath}`,
+      ...(snapshot.featurePrdPath ? [`- PRD path: ${snapshot.featurePrdPath}`] : []),
+      `- Scratch feature path: ${snapshot.scratchFeaturePath}`,
+      '',
+      'Run `git rev-parse HEAD` in the worktree path and compare it to the expected implementation HEAD above.',
+      'If the HEAD does not match, or if you are not in the intended worktree, do not produce code findings.',
+      'Instead, return exactly: {"done":false,"summary":"Review target mismatch: [explain what is wrong]","targetMismatch":true,"findings":[]}',
+      'Do not request cosmetic fixup commits for stale or wrong-worktree findings.',
+      '',
+    ];
   }
 
   private buildFixupPrompt(
@@ -774,6 +846,7 @@ export class SingleTicketRunner {
       FIXUP_REMEDIATION_GUIDANCE,
       'Inspect the current repository state before editing, including git status, relevant diffs, and recent commits.',
       'Do not redo completed work. Make only incremental changes needed for these reviewer findings.',
+      'Do not create cosmetic fixup commits for stale or wrong-worktree findings.',
       `Reviewer summary: ${review.summary}`,
       'Reviewer findings:',
       ...review.findings.map((finding) => {
@@ -805,8 +878,9 @@ export class SingleTicketRunner {
         summary: finding.title,
         detail: finding.detail,
       })),
-      classification:
-        decision.decision === 'approve'
+      classification: decision.targetMismatch
+        ? 'review-target-mismatch'
+        : decision.decision === 'approve'
           ? decision.findings.length === 0
             ? 'clean-approval'
             : 'minor-risk-approval'

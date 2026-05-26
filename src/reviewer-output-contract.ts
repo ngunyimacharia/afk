@@ -18,6 +18,7 @@ export interface ParsedReviewerOutput {
   failureKind?: 'malformed-output';
   done: boolean;
   raw: string;
+  targetMismatch?: boolean;
 }
 
 export interface ReviewDecisionResult {
@@ -28,6 +29,7 @@ export interface ReviewDecisionResult {
   fallback: boolean;
   reason: string;
   findings: ReviewerFinding[];
+  targetMismatch?: boolean;
 }
 
 const SEVERITY_RANK: Record<ReviewerSeverity, number> = {
@@ -99,6 +101,7 @@ function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string):
   }
 
   const normalizedFindings = findings as ReviewerFinding[];
+  const targetMismatch = typeof parsed.targetMismatch === 'boolean' ? parsed.targetMismatch : false;
   return {
     summary,
     findings: normalizedFindings,
@@ -106,6 +109,7 @@ function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string):
     fallback: false,
     done,
     raw,
+    targetMismatch,
   };
 }
 
@@ -116,6 +120,20 @@ export function decideReviewOutcome(
   const cycle = normalizePositiveInteger(options.cycle, 1);
   const maxCycles = normalizePositiveInteger(options.maxCycles ?? 3, 3);
   const highestSeverity = review.highestSeverity;
+
+  // Target mismatch is an infrastructure failure, not a code defect. Hand off immediately.
+  if (review.targetMismatch) {
+    return {
+      decision: 'needs-human',
+      highestSeverity: 'blocker',
+      cycle,
+      maxCycles,
+      fallback: false,
+      reason: 'Reviewer detected review target mismatch',
+      findings: review.findings,
+      targetMismatch: true,
+    };
+  }
 
   // Approval only when reviewer explicitly says done:true AND there are no findings.
   // If reviewer says done:false with no findings, hand off instead of looping without actionable work.

@@ -29,6 +29,7 @@ export function buildPrompt(input: PromptInput): string {
     `Feature slug: ${input.checkout.featureSlug}`,
     `Branch: ${input.checkout.effectiveBranchName}`,
     `Worktree path: ${input.checkout.worktreePath}`,
+    ...(input.snapshot?.head ? [`Implementation HEAD: ${input.snapshot.head}`] : []),
     `Repo root, for shared scratch artifacts only: ${input.snapshot?.repoRoot ?? 'unknown'}`,
     'Access policy: source-code reads, searches, tests, and edits must use the Working checkout. Source mutation outside the Working checkout is forbidden.',
     'Root repo writes are allowed only under the listed shared .scratch artifact paths. Do not write root source files when the root differs from the Working checkout.',
