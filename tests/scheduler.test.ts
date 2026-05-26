@@ -34,6 +34,7 @@ function createScheduler(
   options?: {
     featureLockProvider?: FeatureLockProvider;
     featureMergeBackProvider?: FeatureMergeBackProvider;
+    onWaveComplete?: (feature: string, wave: number, issueNames: string[]) => Promise<void>;
     concurrencyLimit?: number;
   },
 ) {
@@ -42,6 +43,7 @@ function createScheduler(
     scratchWorktreeService: createMockScratchWorktreeService() as never,
     featureLockProvider: options?.featureLockProvider,
     featureMergeBackProvider: options?.featureMergeBackProvider ?? defaultMergeBackProvider,
+    onWaveComplete: options?.onWaveComplete,
     concurrencyLimit: options?.concurrencyLimit,
   });
 }
@@ -697,5 +699,59 @@ test('allows later waves to proceed when merge-back completes after wave ticket 
   const result = await scheduler.launch(plan as never);
   assert.equal(result.scheduled, true);
   assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
+  assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
+});
+
+test('calls onWaveComplete when a wave completes and waits before advancing', async () => {
+  const started: string[] = [];
+  const waveCompleteCalls: Array<{ feature: string; wave: number; issueNames: string[] }> = [];
+  const mergedWaves = new Set<string>();
+
+  const scheduler = createScheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        return { scheduled: true, message: ticket.label };
+      },
+    },
+    {
+      concurrencyLimit: 3,
+      featureMergeBackProvider: {
+        isWaveMerged: (_feature: string, wave: number, _issueNames: string[]) => mergedWaves.has(String(wave)),
+      },
+      onWaveComplete: async (feature: string, wave: number, issueNames: string[]) => {
+        waveCompleteCalls.push({ feature, wave, issueNames });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        mergedWaves.add(String(wave));
+      },
+    },
+  );
+
+  const plan = basePlan({
+    tickets: [
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    ],
+  });
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
+  assert.equal(waveCompleteCalls.length, 2);
+  assert.equal(waveCompleteCalls[0]?.feature, 'feat-a');
+  assert.equal(waveCompleteCalls[0]?.wave, 0);
+  assert.deepEqual(waveCompleteCalls[0]?.issueNames, ['001']);
+  assert.equal(waveCompleteCalls[1]?.feature, 'feat-a');
+  assert.equal(waveCompleteCalls[1]?.wave, 1);
+  assert.deepEqual(waveCompleteCalls[1]?.issueNames, ['002']);
   assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
 });

@@ -30,6 +30,7 @@ export interface SchedulerDependencies {
   scratchWorktreeService: ScratchWorktreeService;
   featureLockProvider?: FeatureLockProvider;
   featureMergeBackProvider?: FeatureMergeBackProvider;
+  onWaveComplete?: (feature: string, wave: number, issueNames: string[]) => Promise<void>;
   concurrencyLimit?: number;
 }
 
@@ -164,7 +165,7 @@ export class Scheduler {
             { ...plan, checkout, checkouts, tickets: [ticket] },
             { onProgress: options.onProgress, runId: options.runId },
           )
-          .then((result) => {
+          .then(async (result) => {
             const outcome = result.outcome ?? (result.scheduled ? 'completed' : 'not-scheduled');
             ticketResults.push({
               ticket,
@@ -192,6 +193,11 @@ export class Scheduler {
                   const currentCompleted = featureCompletedWave.get(ticket.feature) ?? -1;
                   if (ticketWave > currentCompleted) {
                     featureCompletedWave.set(ticket.feature, ticketWave);
+                  }
+                  // Trigger merge-back when a wave completes
+                  if (this.deps.onWaveComplete) {
+                    const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+                    await this.deps.onWaveComplete(ticket.feature, ticketWave, issueNames);
                   }
                   // Update merged wave if provider acknowledges merge-back
                   if (this.deps.featureMergeBackProvider) {

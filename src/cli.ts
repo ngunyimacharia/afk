@@ -31,6 +31,7 @@ import {
 } from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
+import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
 import { TicketRepository } from './ticket-repository.js';
@@ -280,13 +281,6 @@ export async function runAfk(
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     launchPreferences.budgets,
   );
-  const scheduler = new Scheduler({
-    runner,
-    scratchWorktreeService: new ScratchWorktreeService(),
-    concurrencyLimit: concurrency,
-    featureMergeBackProvider: new GitFeatureMergeBackProvider(repoRoot, checkoutsByFeature),
-    featureLockProvider: new GitFeatureLockProvider(checkoutsByFeature),
-  });
   const runId = randomUUID();
   const renderer: OpenTUIRenderer = {
     capabilities: { notifications: io.stdout.isTTY ?? false },
@@ -321,24 +315,75 @@ export async function runAfk(
       capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
     });
   }
+  const onProgress = (event: import('./types.js').AgentExecutionProgressEvent) => {
+    view.update(event);
+    const policyEvent = classifyProgressEvent(event);
+    if (policyEvent) {
+      const payload = notificationPolicy.maybeNotify(policyEvent);
+      notificationAdapter.maybeNotify(payload).then((state) => {
+        if (payload && progressLine) {
+          progressLine.updateNotificationState({
+            capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
+            lastDelivery: { state, payload },
+          });
+        }
+      });
+    }
+  };
+
+  const mergeBackCoordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
+    runtimeStore,
+  });
+
+  const gitMergeBackProvider = new GitFeatureMergeBackProvider(repoRoot, checkoutsByFeature);
+  const gitLockProvider = new GitFeatureLockProvider(checkoutsByFeature);
+
+  const scheduler = new Scheduler({
+    runner,
+    scratchWorktreeService: new ScratchWorktreeService(),
+    concurrencyLimit: concurrency,
+    featureMergeBackProvider: {
+      isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>
+        mergeBackCoordinator.isWaveMerged(feature, wave, issueNames) || gitMergeBackProvider.isWaveMerged(feature, wave, issueNames),
+    },
+    featureLockProvider: {
+      isLocked: (feature: string) => gitLockProvider.isLocked(feature) || mergeBackCoordinator.isLocked(feature),
+    },
+    onWaveComplete: async (feature: string, wave: number, issueNames: string[]) => {
+      const featureCheckout = checkoutsByFeature[feature];
+      if (!featureCheckout) return;
+      const tickets = issueNames.map((issueName) => {
+        const ticketRecord = plan.tickets.find((t) => t.feature === feature && t.issueName === issueName);
+        return {
+          feature,
+          issueName,
+          branchName: `afk/${feature}/${issueName}`,
+          worktreePath: featureCheckout.worktreePath,
+          dependsOn: ticketRecord?.dependsOn,
+          metadataPath: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`),
+          logPath: path.join(repoRoot, '.scratch', '.opencode-afk-logs', `${feature}-${issueName}.log`),
+        };
+      });
+      await mergeBackCoordinator.mergeWave({
+        repoRoot,
+        feature,
+        featureWorktreePath: featureCheckout.worktreePath,
+        featureBranchName: featureCheckout.effectiveBranchName,
+        wave,
+        tickets,
+        model: plan.model,
+        reviewerModel: plan.reviewerModel,
+        reviewerPrompt: plan.reviewerPrompt,
+        onProgress,
+      });
+    },
+  });
+
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
     schedulerResult = await scheduler.launch(plan, {
-      onProgress: (event) => {
-        view.update(event);
-        const policyEvent = classifyProgressEvent(event);
-        if (policyEvent) {
-          const payload = notificationPolicy.maybeNotify(policyEvent);
-          notificationAdapter.maybeNotify(payload).then((state) => {
-            if (payload && progressLine) {
-              progressLine.updateNotificationState({
-                capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
-                lastDelivery: { state, payload },
-              });
-            }
-          });
-        }
-      },
+      onProgress,
       runId,
     });
     const runOutcomeEvent = classifyRunOutcome({
