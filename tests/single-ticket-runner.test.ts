@@ -932,7 +932,12 @@ test('scheduler queues tickets by feature and starts the next queued ticket afte
   const scheduler = new Scheduler({
     runner,
     scratchWorktreeService: {
-      createScratchWorktree: (input: { repoRoot: string; featureSlug: string; issueName: string; baseRef?: string }) => ({
+      createScratchWorktree: (input: {
+        repoRoot: string;
+        featureSlug: string;
+        issueName: string;
+        baseRef?: string;
+      }) => ({
         featureSlug: input.featureSlug,
         defaultWorktreeName: `${input.featureSlug}-${input.issueName}`,
         effectiveWorktreeName: `${input.featureSlug}-${input.issueName}`,
@@ -981,7 +986,12 @@ test('scheduler forwards progress events from queued tickets', async () => {
   const scheduler = new Scheduler({
     runner,
     scratchWorktreeService: {
-      createScratchWorktree: (input: { repoRoot: string; featureSlug: string; issueName: string; baseRef?: string }) => ({
+      createScratchWorktree: (input: {
+        repoRoot: string;
+        featureSlug: string;
+        issueName: string;
+        baseRef?: string;
+      }) => ({
         featureSlug: input.featureSlug,
         defaultWorktreeName: `${input.featureSlug}-${input.issueName}`,
         effectiveWorktreeName: `${input.featureSlug}-${input.issueName}`,
@@ -2328,7 +2338,10 @@ test('budget handoff preserves implementation success when execution completed',
 test('runs static check commands after successful execution when afk.json defines them', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-checks-'));
   const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-worktree-'));
-  writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: ['echo pass', 'echo fail >&2; exit 1'] }));
+  writeFileSync(
+    path.join(repoRoot, 'afk.json'),
+    JSON.stringify({ testsEnabled: false, staticCheckCommands: ['echo pass', 'echo fail >&2; exit 1'] }),
+  );
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
@@ -2339,14 +2352,19 @@ test('runs static check commands after successful execution when afk.json define
       execute: async ({ prompt, invocationMode }) => {
         if (invocationMode === 'reviewer') {
           reviewerPrompt = prompt;
-          return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })] };
+          return {
+            status: 'completed',
+            sessionId: 'session-review',
+            removable: true,
+            output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+          };
         }
         return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
       },
     },
     {},
     {
-      run: (command, cwd) => {
+      run: (command, _cwd) => {
         if (command === 'echo pass') return { exitCode: 0, output: 'pass\n' };
         return { exitCode: 1, output: 'fail\n' };
       },
@@ -2378,7 +2396,7 @@ test('runs static check commands after successful execution when afk.json define
   assert.match(reviewerPrompt, /Static check results:/);
   assert.match(reviewerPrompt, /echo pass: exit code 0/);
   assert.match(reviewerPrompt, /echo fail >&2; exit 1: exit code 1/);
-  assert.match(reviewerPrompt, /  ```\n  fail\n  ```/);
+  assert.match(reviewerPrompt, / {2}```\n {2}fail\n {2}```/);
 });
 
 test('does not run static checks when afk.json is missing', async () => {
@@ -2395,7 +2413,12 @@ test('does not run static checks when afk.json is missing', async () => {
       execute: async ({ prompt, invocationMode }) => {
         if (invocationMode === 'reviewer') {
           reviewerPrompt = prompt;
-          return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })] };
+          return {
+            status: 'completed',
+            sessionId: 'session-review',
+            removable: true,
+            output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+          };
         }
         return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
       },
@@ -2447,7 +2470,12 @@ test('does not run static checks when staticCheckCommands is empty', async () =>
     {
       execute: async ({ invocationMode }) => {
         if (invocationMode === 'reviewer') {
-          return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })] };
+          return {
+            status: 'completed',
+            sessionId: 'session-review',
+            removable: true,
+            output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+          };
         }
         return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
       },
@@ -2488,7 +2516,10 @@ test('does not run static checks when staticCheckCommands is empty', async () =>
 test('includes static check results in reviewer repair prompt', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-repair-'));
   const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-static-repair-worktree-'));
-  writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: ['echo fail >&2; exit 1'] }));
+  writeFileSync(
+    path.join(repoRoot, 'afk.json'),
+    JSON.stringify({ testsEnabled: false, staticCheckCommands: ['echo fail >&2; exit 1'] }),
+  );
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nDo thing\n');
@@ -2504,7 +2535,12 @@ test('includes static check results in reviewer repair prompt', async () => {
             repairPrompt = prompt;
             return { status: 'completed', sessionId: 'session-review', removable: true, output: ['not json'] };
           }
-          return { status: 'completed', sessionId: 'session-review', removable: true, output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })] };
+          return {
+            status: 'completed',
+            sessionId: 'session-review',
+            removable: true,
+            output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+          };
         }
         return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
       },

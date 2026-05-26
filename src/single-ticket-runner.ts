@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import { loadAfkProjectConfig } from './project-config.js';
 import { validateSelectedTicketPath } from './path-validation.js';
+import { loadAfkProjectConfig } from './project-config.js';
 import { buildPrompt } from './prompt-builder.js';
 import { classifyProviderFailureFromSource, isDeterministicFailureKind } from './provider-failure.js';
-import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
-import type { ReadinessCommandResult, ReadinessCommandExecutor } from './readiness-service.js';
+import type { ReadinessCommandExecutor, ReadinessCommandResult } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
+import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeStore } from './runtime-store.js';
 import type {
   AfkStateSnapshot,
@@ -1069,7 +1069,9 @@ export class SingleTicketRunner {
       updatedTicketContent.trimEnd(),
       '```',
       ...(executionResult.output?.length ? ['', 'Execution output:', ...executionResult.output] : []),
-      ...(executionResult.staticCheckResults?.length ? ['', ...this.formatStaticCheckResults(executionResult.staticCheckResults)] : []),
+      ...(executionResult.staticCheckResults?.length
+        ? ['', ...this.formatStaticCheckResults(executionResult.staticCheckResults)]
+        : []),
     ].join('\n');
   }
 
@@ -1232,11 +1234,7 @@ export class SingleTicketRunner {
     });
   }
 
-  private runStaticChecks(
-    repoRoot: string,
-    worktreePath: string,
-    logPath: string,
-  ): ReadinessCommandResult[] {
+  private runStaticChecks(repoRoot: string, worktreePath: string, logPath: string): ReadinessCommandResult[] {
     const configResult = loadAfkProjectConfig(repoRoot);
     const commands = configResult.config?.staticCheckCommands ?? [];
     if (!commands.length) return [];

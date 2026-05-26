@@ -14,6 +14,7 @@ import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
 import { createLiveRunView } from './live-run-view.js';
+import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
@@ -31,7 +32,6 @@ import {
 } from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
-import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
 import { TicketRepository } from './ticket-repository.js';
@@ -345,7 +345,8 @@ export async function runAfk(
     concurrencyLimit: concurrency,
     featureMergeBackProvider: {
       isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>
-        mergeBackCoordinator.isWaveMerged(feature, wave, issueNames) || gitMergeBackProvider.isWaveMerged(feature, wave, issueNames),
+        mergeBackCoordinator.isWaveMerged(feature, wave, issueNames) ||
+        gitMergeBackProvider.isWaveMerged(feature, wave, issueNames),
     },
     featureLockProvider: {
       isLocked: (feature: string) => gitLockProvider.isLocked(feature) || mergeBackCoordinator.isLocked(feature),
@@ -361,7 +362,13 @@ export async function runAfk(
           branchName: `afk/${feature}/${issueName}`,
           worktreePath: featureCheckout.worktreePath,
           dependsOn: ticketRecord?.dependsOn,
-          metadataPath: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`),
+          metadataPath: path.join(
+            repoRoot,
+            '.scratch',
+            '.opencode-afk-logs',
+            'runtime-metadata',
+            `${feature}-${issueName}.json`,
+          ),
           logPath: path.join(repoRoot, '.scratch', '.opencode-afk-logs', `${feature}-${issueName}.log`),
         };
       });
@@ -719,7 +726,7 @@ class GitFeatureMergeBackProvider implements FeatureMergeBackProvider {
     private checkouts: Record<string, ReturnType<WorktreePreparationService['prepare']>>,
   ) {}
 
-  isWaveMerged(feature: string, wave: number, issueNames: string[]): boolean {
+  isWaveMerged(feature: string, _wave: number, issueNames: string[]): boolean {
     const featureCheckout = this.checkouts[feature];
     if (!featureCheckout) return false;
     for (const issueName of issueNames) {

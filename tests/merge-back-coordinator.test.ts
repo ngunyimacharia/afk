@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
@@ -43,7 +43,11 @@ function createScratchWorktree(
   return { branchName, worktreePath };
 }
 
-function setupTicketMetadata(store: RuntimeStore, feature: string, issueName: string): { metadataPath: string; logPath: string } {
+function setupTicketMetadata(
+  store: RuntimeStore,
+  feature: string,
+  issueName: string,
+): { metadataPath: string; logPath: string } {
   const record = store.createRecord({ featureSlug: feature, issueName, ticketPath: `/tmp/${feature}/${issueName}.md` });
   return { metadataPath: record.metadataPath, logPath: record.logPath };
 }
@@ -285,12 +289,12 @@ test('marks ticket failed when conflict resolution exceeds budget', async () => 
   assert.equal(result.failedTickets[0].issueName, '002');
   assert.ok(result.failedTickets[0].reason.includes('attempts'));
   assert.ok(result.failedTickets[0].conflictPaths);
-  assert.equal(result.failedTickets[0].conflictPaths!.length > 0, true);
+  assert.equal(result.failedTickets[0].conflictPaths?.length > 0, true);
 
   const metadata2 = store.readMetadata(meta2.metadataPath);
   assert.equal(metadata2.MERGE_STATUS, 'failed');
   assert.ok(metadata2.MERGE_CONFLICT_PATHS);
-  assert.equal(metadata2.MERGE_CONFLICT_PATHS!.length > 0, true);
+  assert.equal(metadata2.MERGE_CONFLICT_PATHS?.length > 0, true);
 });
 
 test('fails merge when readiness checks fail after conflict resolution', async () => {

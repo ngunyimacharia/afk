@@ -2,14 +2,20 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
-import type { AgentExecutionProgressCallback, AgentExecutionResult } from './types.js';
-import { CONFLICT_RESOLUTION_PROMPT_ID, resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
 import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { runReadinessCommands } from './readiness-service.js';
-import { runGit } from './worktree-preparation-service.js';
+import { CONFLICT_RESOLUTION_PROMPT_ID, resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
 import type { RuntimeStore } from './runtime-store.js';
-import type { CheckoutContext, LaunchModel, LaunchPlan, TicketRecord } from './types.js';
 import type { FeatureLockProvider, FeatureMergeBackProvider } from './scheduler.js';
+import type {
+  AgentExecutionProgressCallback,
+  AgentExecutionResult,
+  CheckoutContext,
+  LaunchModel,
+  LaunchPlan,
+  TicketRecord,
+} from './types.js';
+import { runGit } from './worktree-preparation-service.js';
 
 export interface MergeBackTicket {
   feature: string;
@@ -352,9 +358,7 @@ function buildConflictResolutionPrompt(
 ): string {
   const promptTemplate = resolveReviewerPrompt({ repoRoot: '', override: CONFLICT_RESOLUTION_PROMPT_ID });
   const conflictSection =
-    conflictPaths.length > 0
-      ? `\n## Conflicting Files\n\n${conflictPaths.map((p) => `- ${p}`).join('\n')}\n`
-      : '';
+    conflictPaths.length > 0 ? `\n## Conflicting Files\n\n${conflictPaths.map((p) => `- ${p}`).join('\n')}\n` : '';
   return `# Conflict Resolution Request
 
 Ticket: ${ticket.feature}/${ticket.issueName}
