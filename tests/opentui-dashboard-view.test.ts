@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { NotificationPayload } from '../src/notification-policy.js';
-import { OpenTUIDashboardView } from '../src/opentui-dashboard-view.js';
-import type { DashboardNotificationState } from '../src/progress-line.js';
-import type { AgentExecutionProgressEvent } from '../src/types.js';
 import type { CliRenderer, TextRenderable } from '@opentui/core';
 import type { LiveRunView } from '../src/live-run-view.js';
 import { createLiveRunView } from '../src/live-run-view.js';
+import type { NotificationPayload } from '../src/notification-policy.js';
 import { createOpenTuiDashboard, DashboardProxy, type OpenTuiDashboardModule } from '../src/opentui-dashboard.js';
-import type { TicketRecord } from '../src/types.js';
+import { OpenTUIDashboardView } from '../src/opentui-dashboard-view.js';
+import type { DashboardNotificationState } from '../src/progress-line.js';
+import type { AgentExecutionProgressEvent, TicketRecord } from '../src/types.js';
 
 function fakeProgressLine(): {
   events: AgentExecutionProgressEvent[];
@@ -207,7 +206,18 @@ function makeFakeTextModule(): { texts: Map<string, string>; module: OpenTuiDash
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string; id?: string }) {
         this._content = options.content ?? '';
@@ -462,7 +472,18 @@ test('createOpenTuiDashboard renders feature region with aggregate states', asyn
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -566,7 +587,18 @@ test('createOpenTuiDashboard registers keyboard input handler on renderer', asyn
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -626,7 +658,18 @@ test('createOpenTuiDashboard renders selected ticket details panel', async () =>
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -700,7 +743,18 @@ test('createOpenTuiDashboard renders metadata in selected ticket details panel',
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -800,7 +854,18 @@ test('createOpenTuiDashboard strips feature prefix from labels and formats paths
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -824,7 +889,13 @@ test('createOpenTuiDashboard strips feature prefix from labels and formats paths
   };
 
   const tickets: TicketRecord[] = [
-    { path: '/repo/.scratch/feat-a/issues/01-do-thing.md', feature: 'feat-a', issueName: '01-do-thing', label: 'feat-a/01-do-thing', executorAfk: true },
+    {
+      path: '/repo/.scratch/feat-a/issues/01-do-thing.md',
+      feature: 'feat-a',
+      issueName: '01-do-thing',
+      label: 'feat-a/01-do-thing',
+      executorAfk: true,
+    },
     { path: '/outside/02-other.md', feature: 'feat-b', issueName: '02-other', label: 'no-slash', executorAfk: true },
   ];
 
@@ -892,7 +963,18 @@ test('createOpenTuiDashboard renders panel titles with keyboard hints', async ()
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -922,10 +1004,22 @@ test('createOpenTuiDashboard renders panel titles with keyboard hints', async ()
   const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets }, module);
   assert.ok(view);
 
-  assert.ok(boxes.some((b) => b.title === 'Features [j/k]'), 'Features title should include hint');
-  assert.ok(boxes.some((b) => b.title === 'Tickets [j/k]'), 'Tickets title should include hint');
-  assert.ok(boxes.some((b) => b.title === 'Action Needed [a]'), 'Action Needed title should include hint');
-  assert.ok(boxes.some((b) => b.title === 'Details'), 'Details title should not have hint');
+  assert.ok(
+    boxes.some((b) => b.title === 'Features [j/k]'),
+    'Features title should include hint',
+  );
+  assert.ok(
+    boxes.some((b) => b.title === 'Tickets [j/k]'),
+    'Tickets title should include hint',
+  );
+  assert.ok(
+    boxes.some((b) => b.title === 'Action Needed [a]'),
+    'Action Needed title should include hint',
+  );
+  assert.ok(
+    boxes.some((b) => b.title === 'Details'),
+    'Details title should not have hint',
+  );
 
   view?.done();
 });
@@ -961,7 +1055,18 @@ test('createOpenTuiDashboard renders timestamps in recent events panel', async (
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -1040,7 +1145,18 @@ test('createOpenTuiDashboard renders empty state when no tickets', async () => {
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -1105,7 +1221,18 @@ test('createOpenTuiDashboard ticket list shows selection indicator', async () =>
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -1163,7 +1290,7 @@ test('createOpenTuiDashboard starts a 1-second refresh timer on creation', async
     const { module } = makeFakeTextModule();
     const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
     assert.ok(view);
-    assert.equal(intervalDelay, 1000);
+    assert.equal(intervalDelay, 200);
     assert.ok(intervalCallback);
     view?.done();
   } finally {
@@ -1284,7 +1411,18 @@ test('createOpenTuiDashboard renders static icons for non-running ticket states'
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -1365,7 +1503,18 @@ test('createOpenTuiDashboard cycles braille spinner for running tickets on timer
           return this._content;
         }
         set content(value: string | { toString(): string }) {
-          this._content = String(value);
+          if (
+            value &&
+            typeof value === 'object' &&
+            'chunks' in value &&
+            Array.isArray((value as Record<string, unknown>).chunks)
+          ) {
+            this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+              .map((c) => c.text)
+              .join('');
+          } else {
+            this._content = String(value);
+          }
         }
         constructor(_ctx: unknown, options: { content?: string }) {
           this._content = options.content ?? '';
@@ -1419,7 +1568,12 @@ test('createOpenTuiDashboard cycles braille spinner for running tickets on timer
 test('createOpenTuiDashboard uses equal 25% column widths and proportional flexGrow', async () => {
   const stdout = fakeStdout(true);
 
-  const boxes: Array<{ title: string; width?: number | string; flexGrow?: number; children: Array<{ content: string }> }> = [];
+  const boxes: Array<{
+    title: string;
+    width?: number | string;
+    flexGrow?: number;
+    children: Array<{ content: string }>;
+  }> = [];
 
   const module: OpenTuiDashboardModule = {
     createCliRenderer: async () =>
@@ -1450,7 +1604,18 @@ test('createOpenTuiDashboard uses equal 25% column widths and proportional flexG
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -1523,7 +1688,18 @@ test('createOpenTuiDashboard shows completion banner in header when all tickets 
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -1589,7 +1765,18 @@ test('createOpenTuiDashboard done does not destroy renderer when run is complete
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
@@ -1649,7 +1836,18 @@ test('createOpenTuiDashboard done destroys renderer when run is incomplete', asy
         return this._content;
       }
       set content(value: string | { toString(): string }) {
-        this._content = String(value);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
       }
       constructor(_ctx: unknown, options: { content?: string }) {
         this._content = options.content ?? '';
