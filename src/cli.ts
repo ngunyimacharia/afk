@@ -374,7 +374,7 @@ function formatTicketMetadataError(error: unknown): string {
   return [
     'Launch blocked by invalid ticket metadata.',
     reason,
-    'Fix: use opening YAML frontmatter with `status`, `Depends-On`, and PRD `Depends-On-Features` as needed.',
+    'Fix: use PRD opening YAML frontmatter with `Depends-On-Features` (max one entry) and issue frontmatter with `Depends-On` as needed.',
   ].join('\n');
 }
 
@@ -466,9 +466,6 @@ export function validateSelectedFeatureDependencies(
     const featureState = workspaceGraph.features[feature];
     if (featureState?.state === 'blocked') {
       return `Launch blocked: ${feature} has incomplete upstream work.\nReason: ${featureState.blockedReason}\nFix: complete the upstream feature or select it in the same launch.`;
-    }
-    if ((featureState?.dependsOnFeatures.length ?? 0) > 1) {
-      return `Fan-in branch automation deferred for ${feature}: multiple Depends-On-Features entries are not supported for automatic stacked branch preparation.`;
     }
   }
   return null;
