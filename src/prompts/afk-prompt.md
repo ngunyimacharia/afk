@@ -8,8 +8,9 @@ Implement the provided ticket autonomously. Do not ask questions or wait for app
 2. Implement the ticket completely. Add or update code, tests, and docs only as needed for the ticket.
 3. Do not create fixup commits, repair disabled tests, or retry known readiness failures unless the ticket or reviewer explicitly requires it.
 4. Run relevant verification. If relevant verification fails, fix it or record the blocker.
-5. Stop once the ticket is satisfied. Do not continue working after the code diff meets requirements, listed verification passes, the ticket file is updated, the AFK Summary is written, and changes are committed.
-6. If the assigned worktree disappears or becomes invalid, stop and record the blocker. Do not continue execution in the repo root or any other directory.
+5. Before handing off to reviewer, ensure relevant static checks pass and record concise evidence in `## AFK Summary`.
+6. Stop once the ticket is satisfied. Do not continue working after the code diff meets requirements, listed verification passes, the ticket file is updated, the AFK Summary is written, and changes are committed.
+7. If the assigned worktree disappears or becomes invalid, stop and record the blocker. Do not continue execution in the repo root or any other directory.
 
 ## Tests
 

@@ -2,10 +2,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
 import { validateSelectedTicketPath } from './path-validation.js';
-import { loadAfkProjectConfig } from './project-config.js';
 import { buildPrompt } from './prompt-builder.js';
 import { classifyProviderFailureFromSource, isDeterministicFailureKind } from './provider-failure.js';
-import type { ReadinessCommandExecutor, ReadinessCommandResult } from './readiness-service.js';
+import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeStore } from './runtime-store.js';
@@ -64,7 +63,7 @@ export class SingleTicketRunner {
     private readonly runtimeStore: RuntimeStore,
     private readonly provider: AgentExecutionProvider,
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
-    private readonly commandExecutor: ReadinessCommandExecutor = new SyncReadinessCommandExecutor(),
+    _commandExecutor: ReadinessCommandExecutor = new SyncReadinessCommandExecutor(),
   ) {}
 
   async launch(plan: LaunchPlan, options: SingleTicketLaunchOptions = {}): Promise<SingleTicketRunResult> {
@@ -220,11 +219,7 @@ export class SingleTicketRunner {
             this.runtimeStore.updateMetadata(record.metadataPath, {
               IMPLEMENTATION_STATUS: 'completed',
             });
-            const staticCheckResults = this.runStaticChecks(plan.repoRoot, plan.checkout.worktreePath, record.logPath);
-            latestExecutionResult = {
-              ...executionResult,
-              staticCheckResults,
-            };
+            latestExecutionResult = executionResult;
           } catch (error) {
             providerFailureCount += 1;
             const message = error instanceof Error ? error.message : 'provider execution failed';
@@ -1052,7 +1047,7 @@ export class SingleTicketRunner {
     ticketLabel: string,
     reviewerPromptText: string,
     sessionId: string | null,
-    executionResult: { status: string; output?: string[]; staticCheckResults?: ReadinessCommandResult[] },
+    executionResult: { status: string; output?: string[] },
     updatedTicketContent: string,
     snapshot?: AfkStateSnapshot,
   ): string {
@@ -1069,9 +1064,6 @@ export class SingleTicketRunner {
       updatedTicketContent.trimEnd(),
       '```',
       ...(executionResult.output?.length ? ['', 'Execution output:', ...executionResult.output] : []),
-      ...(executionResult.staticCheckResults?.length
-        ? ['', ...this.formatStaticCheckResults(executionResult.staticCheckResults)]
-        : []),
     ].join('\n');
   }
 
@@ -1079,7 +1071,7 @@ export class SingleTicketRunner {
     ticketLabel: string,
     reviewerPromptText: string,
     sessionId: string | null,
-    executionResult: { status: string; output?: string[]; staticCheckResults?: ReadinessCommandResult[] },
+    executionResult: { status: string; output?: string[] },
     updatedTicketContent: string,
     snapshot?: AfkStateSnapshot,
   ): string {
@@ -1232,41 +1224,6 @@ export class SingleTicketRunner {
         readinessSourcePath: snapshot.readiness?.sourcePath ?? null,
       },
     });
-  }
-
-  private runStaticChecks(repoRoot: string, worktreePath: string, logPath: string): ReadinessCommandResult[] {
-    const configResult = loadAfkProjectConfig(repoRoot);
-    const commands = configResult.config?.staticCheckCommands ?? [];
-    if (!commands.length) return [];
-    const results: ReadinessCommandResult[] = [];
-    for (const command of commands) {
-      const result = this.commandExecutor.run(command, worktreePath);
-      const outputSnippet = result.output.replace(/\s+$/g, '').slice(0, 1000);
-      this.runtimeStore.appendLog(logPath, `static check: ${command} exited with code ${result.exitCode}`);
-      results.push({
-        command,
-        mode: 'static-style',
-        status: result.exitCode === 0 ? 'passed' : 'failed',
-        exitCode: result.exitCode,
-        outputSnippet,
-      });
-    }
-    return results;
-  }
-
-  private formatStaticCheckResults(results: ReadinessCommandResult[]): string[] {
-    return [
-      'Static check results:',
-      ...results.map((r) => {
-        const lines = [`- ${r.command}: exit code ${r.exitCode}`];
-        if (r.outputSnippet) {
-          lines.push('  ```');
-          lines.push(...r.outputSnippet.split('\n').map((line) => `  ${line}`));
-          lines.push('  ```');
-        }
-        return lines.join('\n');
-      }),
-    ];
   }
 }
 

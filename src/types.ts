@@ -1,4 +1,4 @@
-import type { ReadinessCheckMetadata, ReadinessCommandResult } from './readiness-service.js';
+import type { ReadinessCheckMetadata } from './readiness-service.js';
 
 export interface TicketRecord {
   path: string;
@@ -266,7 +266,6 @@ export interface AgentExecutionResult {
   unsafeReason?: string | null;
   output?: string[];
   inspectionTargetIdentifier?: string | null;
-  staticCheckResults?: ReadinessCommandResult[];
 }
 
 export interface AgentExecutionProgressEvent {

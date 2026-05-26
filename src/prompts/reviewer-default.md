@@ -10,7 +10,7 @@ Review the completed ticket in read-only mode. Determine whether the implementat
 4. Focus on correctness, regressions, security, data loss, unmet requirements, missing tests, and maintainability risks for this ticket.
 5. Keep scope discipline. Do not require unrelated refactors or speculative improvements.
 6. Anchor every finding to specific evidence.
-7. Inspect the static check results section. If all static checks passed, confirm this in your summary. If any static check failed, treat each failure as review evidence and produce findings with severity at least `major`.
+7. Use verification evidence from the ticket and AFK Summary when assessing completion and risk.
 
 ## Completion Criteria
 
