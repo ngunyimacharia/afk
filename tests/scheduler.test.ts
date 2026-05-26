@@ -656,3 +656,46 @@ test('blocks later waves when previous wave is not merged back', async () => {
   assert.deepEqual(started, ['feat-a/001']);
   assert.equal(result.ticketResults.find((r) => r.ticket.label === 'feat-a/002')?.outcome, 'not-scheduled');
 });
+
+test('allows later waves to proceed when merge-back completes after wave ticket finishes', async () => {
+  const started: string[] = [];
+  let callCount = 0;
+  const mergeBackProvider: FeatureMergeBackProvider = {
+    isWaveMerged: () => {
+      callCount++;
+      // First call is during the completion handler (merge not yet done)
+      // Second call is during isReady re-check (merge now done)
+      return callCount >= 2;
+    },
+  };
+  const scheduler = createScheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        return { scheduled: true, message: ticket.label };
+      },
+    },
+    { featureMergeBackProvider: mergeBackProvider, concurrencyLimit: 1 },
+  );
+
+  const plan = basePlan({
+    tickets: [
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        executorAfk: true,
+        dependsOn: ['001'],
+      },
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+    ],
+  });
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
+  assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
+});

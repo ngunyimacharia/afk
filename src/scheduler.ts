@@ -129,7 +129,9 @@ export class Scheduler {
             completedFeatures,
             plannedFeatures,
             featureWaves,
+            featureWaveTickets,
             featureMergedWave,
+            this.deps.featureMergeBackProvider,
             this.deps.featureLockProvider,
             plan.featureDependencies,
           ),
@@ -290,7 +292,9 @@ function isReady(
   completedFeatures: Set<string>,
   plannedFeatures: Set<string>,
   featureWaves: Map<string, Map<string, number>>,
+  featureWaveTickets: Map<string, Map<number, string[]>>,
   featureMergedWave: Map<string, number>,
+  featureMergeBackProvider: FeatureMergeBackProvider | undefined,
   featureLockProvider: FeatureLockProvider | undefined,
   featureDependencies?: Record<string, string[]>,
 ): boolean {
@@ -302,7 +306,27 @@ function isReady(
   }
   // Wave boundary check: a ticket is ready only when all previous waves are fully merged back.
   const ticketWave = featureWaves.get(ticket.feature)?.get(ticket.issueName) ?? 0;
-  const highestMergedWave = featureMergedWave.get(ticket.feature) ?? -1;
+  let highestMergedWave = featureMergedWave.get(ticket.feature) ?? -1;
+  // Re-query merge state if the cached value might be stale (merge-back may have completed after wave finished)
+  if (ticketWave > highestMergedWave + 1 && featureMergeBackProvider) {
+    const waves = featureWaveTickets.get(ticket.feature);
+    if (waves) {
+      for (let wave = highestMergedWave + 1; wave < ticketWave; wave++) {
+        const waveTicketKeys = waves.get(wave) ?? [];
+        if (waveTicketKeys.every((key) => completed.has(key))) {
+          const issueNames = waveTicketKeys.map((key) => key.split('/')[1]!);
+          if (featureMergeBackProvider.isWaveMerged(ticket.feature, wave, issueNames)) {
+            highestMergedWave = wave;
+            featureMergedWave.set(ticket.feature, wave);
+          } else {
+            break;
+          }
+        } else {
+          break;
+        }
+      }
+    }
+  }
   if (ticketWave > highestMergedWave + 1) return false;
   return (ticket.dependsOn ?? []).every((dependency) => {
     const key = `${ticket.feature}/${dependency}`;
