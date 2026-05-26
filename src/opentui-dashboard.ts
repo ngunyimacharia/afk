@@ -77,6 +77,12 @@ function joinStyledTexts(items: StyledText[], separator: string): StyledText {
   return new StyledText(chunks);
 }
 
+function formatSingleLine(message: string, maxLength: number): string {
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 const TICKET_STATE_ICONS: Record<DashboardTicketRuntimeState, string> = {
@@ -164,7 +170,7 @@ function formatTickets(snap: DashboardSnapshot, frameCounter: number): StyledTex
 function formatActionNeeded(snap: DashboardSnapshot): StyledText {
   if (snap.actionNeeded.length === 0) return stringToStyledText('No action needed');
   const parts = snap.actionNeeded.map(
-    (a) => t`${dim(`[${a.kind}]`)} ${stripFeaturePrefix(a.ticketLabel)}: ${a.message.slice(0, 60)}`,
+    (a) => t`${dim(`[${a.kind}]`)} ${stripFeaturePrefix(a.ticketLabel)}: ${formatSingleLine(a.message, 60)}`,
   );
   return joinStyledTexts(parts, '\n');
 }
@@ -173,7 +179,7 @@ function formatEvents(snap: DashboardSnapshot): StyledText {
   if (snap.recentEvents.length === 0) return stringToStyledText('No events yet');
   const parts = snap.recentEvents.slice(-10).map((e) => {
     const time = e.timestamp ? formatTime(e.timestamp) : '--:--:--';
-    return t`${dim(time)} ${stripFeaturePrefix(e.ticketLabel)}: ${e.message.slice(0, 80)}`;
+    return t`${dim(time)} ${stripFeaturePrefix(e.ticketLabel)}: ${formatSingleLine(e.message, 80)}`;
   });
   return joinStyledTexts(parts, '\n');
 }

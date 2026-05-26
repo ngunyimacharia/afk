@@ -1118,6 +1118,100 @@ test('createOpenTuiDashboard renders timestamps in recent events panel', async (
   view?.done();
 });
 
+test('createOpenTuiDashboard flattens multiline event messages', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard(
+    {
+      stdout,
+      selectedTickets: tickets,
+      runOptions: { now: () => 1716000000000 },
+    },
+    module,
+  );
+  assert.ok(view);
+
+  view?.update({
+    ticketLabel: 'feat-a/001',
+    message: 'error: line one\nline two\nline three',
+    kind: 'failure',
+  });
+
+  const eventsBox = boxes.find((b) => b.title === 'Recent Events');
+  assert.ok(eventsBox, 'Recent Events box should exist');
+  const eventsContent = eventsBox.children.map((c) => c.content).join('\n');
+  assert.doesNotMatch(eventsContent, /line one\nline two/);
+  assert.match(eventsContent, /line one line two line three/);
+
+  view?.done();
+});
+
 test('createOpenTuiDashboard renders empty state when no tickets', async () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);
