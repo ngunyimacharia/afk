@@ -3,8 +3,18 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { buildLaunchPlan } from '../src/launch-context-builder.js';
 import { buildPrompt } from '../src/prompt-builder.js';
+
+function promptPath(name: string): string {
+  const here = fileURLToPath(new URL('.', import.meta.url));
+  const repoRoot =
+    path.basename(here) === 'tests' && path.basename(path.dirname(here)) === 'dist'
+      ? path.resolve(here, '../..')
+      : path.resolve(here, '..');
+  return path.join(repoRoot, 'src', 'prompts', name);
+}
 
 test('prompt consumes prepared checkout context', () => {
   const prompt = buildPrompt({
@@ -41,10 +51,16 @@ test('prompt consumes prepared checkout context', () => {
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
 });
 
-test('afk prompt includes budget and handoff guardrails', () => {
-  const source = readFileSync(new URL('../src/prompts/afk-prompt.md', import.meta.url), 'utf8');
+test('afk prompt includes budget, handoff guardrails, and worktree disappearance rule', () => {
+  const source = readFileSync(promptPath('afk-prompt.md'), 'utf8');
   assert.match(source, /Do not create fixup commits, repair disabled tests, or retry known readiness failures/);
   assert.match(source, /Append or update `## AFK Summary`/);
+  assert.match(source, /If the assigned worktree disappears or becomes invalid, stop and record the blocker/);
+  assert.match(source, /Do not continue execution in the repo root/);
+  assert.match(source, /Stop once the ticket is satisfied/);
+  assert.match(source, /do not rerun the same passing tests again/);
+  assert.match(source, /Scratch Artifact Completion Checklist/);
+  assert.match(source, /Verification Budget/);
 });
 
 test('default execution prompt requires reviewer notes subsection', () => {
@@ -99,6 +115,56 @@ test('custom afk instructions do not suppress reviewer-notes requirement', () =>
   assert.match(prompt, /tests run/);
   assert.match(prompt, /caveats or risks/);
   assert.match(prompt, /follow-ups useful to the reviewer/);
+});
+
+test('generated prompt includes scratch artifact completion checklist', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
+  });
+  assert.match(prompt, /## Scratch Artifact Completion Checklist/);
+  assert.match(prompt, /`status` field is updated to `done`/);
+  assert.match(prompt, /scratch artifacts created are local-only under `\.scratch\//);
+  assert.match(prompt, /Source code changes are committed using conventional commits/);
+});
+
+test('generated prompt includes verification budget guidance', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
+  });
+  assert.match(prompt, /## Verification Budget/);
+  assert.match(prompt, /do not rerun the same passing tests again/);
+  assert.match(prompt, /Record verification evidence in the `## AFK Summary`/);
+  assert.match(prompt, /Do not rerun already-passing verification suites/);
 });
 
 test('snapshot includes dependency/runtime/readiness facts and excludes unrelated scratch content', () => {
