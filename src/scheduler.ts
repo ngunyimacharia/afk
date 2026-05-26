@@ -31,6 +31,7 @@ export class Scheduler {
     const completedTickets = plan.tickets.filter((ticket) => isComplete(ticket.status));
     const pending = plan.tickets.filter((ticket) => !isComplete(ticket.status));
     const plannedTickets = new Set(plan.tickets.map((ticket) => ticketKey(ticket)));
+    const plannedFeatures = new Set(plan.tickets.map((ticket) => ticket.feature));
     const running = new Set<Promise<void>>();
     const runningTickets = new Set<string>();
     const runningFeatures = new Set<string>();
@@ -59,7 +60,7 @@ export class Scheduler {
     const startNext = (): void => {
       while (running.size < this.concurrencyLimit) {
         const index = pending.findIndex((ticket) =>
-          isReady(ticket, plannedTickets, completed, failed, runningTickets, runningFeatures, completedFeatures, plan.featureDependencies),
+          isReady(ticket, plannedTickets, completed, failed, runningTickets, runningFeatures, completedFeatures, plannedFeatures, plan.featureDependencies),
         );
         if (index === -1) {
           if (!running.size) resolveIdle?.();
@@ -154,12 +155,15 @@ function isReady(
   running: Set<string>,
   runningFeatures: Set<string>,
   completedFeatures: Set<string>,
+  plannedFeatures: Set<string>,
   featureDependencies?: Record<string, string[]>,
 ): boolean {
   if (running.has(ticketKey(ticket))) return false;
   if (runningFeatures.has(ticket.feature)) return false;
   const deps = featureDependencies?.[ticket.feature] ?? [];
-  if (!deps.every((dep) => completedFeatures.has(dep))) return false;
+  for (const dep of deps) {
+    if (plannedFeatures.has(dep) && !completedFeatures.has(dep)) return false;
+  }
   return (ticket.dependsOn ?? []).every((dependency) => {
     const key = `${ticket.feature}/${dependency}`;
     if (!plannedTickets.has(key)) return true;

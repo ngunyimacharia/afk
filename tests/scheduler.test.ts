@@ -522,3 +522,42 @@ test('allows independent features to run concurrently', async () => {
   assert.equal(result.scheduled, true);
   assert.equal(peak, 2);
 });
+
+test('does not block on unselected complete upstream features', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-unselected-complete-upstream-'));
+  const started: string[] = [];
+  const scheduler = new Scheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        return { scheduled: true, message: ticket.label };
+      },
+    } as never,
+    3,
+  );
+
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [
+      { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat-b',
+      defaultWorktreeName: 'feat-b',
+      effectiveWorktreeName: 'feat-b',
+      defaultBranchName: 'feat-b',
+      effectiveBranchName: 'feat-b',
+      worktreePath: '/tmp/worktree',
+    },
+    featureDependencies: { 'feat-b': ['feat-a'] },
+  };
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-b/001']);
+  assert.equal(result.ticketResults[0]?.outcome, 'completed');
+});
