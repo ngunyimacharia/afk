@@ -1979,10 +1979,11 @@ test('reviewer prompt includes exact target context when snapshot is available',
   assert.match(reviewerPrompt, /Repo root: /);
   assert.match(reviewerPrompt, /Worktree path: \/tmp\/worktree/);
   assert.match(reviewerPrompt, /Branch: feat/);
-  assert.match(reviewerPrompt, /Implementation HEAD: abc123def456/);
+  assert.doesNotMatch(reviewerPrompt, /Implementation HEAD:/);
   assert.match(reviewerPrompt, /Ticket path: /);
-  assert.match(reviewerPrompt, /Run `git rev-parse HEAD` in the worktree path/);
-  assert.match(reviewerPrompt, /do not produce code findings/i);
+  assert.doesNotMatch(reviewerPrompt, /git rev-parse HEAD/);
+  assert.match(reviewerPrompt, /worktree path or branch does not match/i);
+  assert.match(reviewerPrompt, /targetMismatch":true/);
   assert.match(reviewerPrompt, /Do not request cosmetic fixup commits for stale or wrong-worktree findings/);
 });
 
