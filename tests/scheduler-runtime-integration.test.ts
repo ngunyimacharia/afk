@@ -7,18 +7,35 @@ import { RuntimeStore } from '../src/runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
 import type { LaunchPlan } from '../src/types.js';
 
-test('starts ready tickets with one active ticket per feature', async () => {
+function createMockScratchWorktreeService() {
+  return {
+    createScratchWorktree: (input: { repoRoot: string; featureSlug: string; issueName: string; baseRef?: string }) => ({
+      featureSlug: input.featureSlug,
+      defaultWorktreeName: `${input.featureSlug}-${input.issueName}`,
+      effectiveWorktreeName: `${input.featureSlug}-${input.issueName}`,
+      defaultBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+      effectiveBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+      worktreePath: `/scratch/${input.featureSlug}-${input.issueName}`,
+    }),
+    removeScratchWorktree: () => {},
+  };
+}
+
+test('starts ready tickets concurrently across and within features', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-scheduler-runtime-'));
   const store = new RuntimeStore({ repoRoot });
   const started: string[] = [];
   const scheduler = new Scheduler({
-    launch: async (plan: LaunchPlan) => {
-      const ticket = plan.tickets[0];
-      assert.ok(ticket);
-      started.push(ticket.label);
-      return { scheduled: true, message: ticket.label };
-    },
-  } as never);
+    runner: {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        return { scheduled: true, message: ticket.label };
+      },
+    } as never,
+    scratchWorktreeService: createMockScratchWorktreeService() as never,
+  });
 
   const plan = {
     repoRoot,
@@ -43,6 +60,9 @@ test('starts ready tickets with one active ticket per feature', async () => {
 
   const result = await scheduler.launch(plan as never);
   assert.equal(result.scheduled, true);
-  assert.deepEqual(started, ['feat-a/001', 'feat-b/001', 'feat-a/002']);
+  // feat-a/001 and feat-a/002 can now run concurrently (no dependency between them)
+  assert.equal(started.includes('feat-a/001'), true);
+  assert.equal(started.includes('feat-a/002'), true);
+  assert.equal(started.includes('feat-b/001'), true);
   void store;
 });

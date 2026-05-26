@@ -23,6 +23,7 @@ import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
+import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
@@ -269,7 +270,11 @@ export async function runAfk(
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     launchPreferences.budgets,
   );
-  const scheduler = new Scheduler(runner, concurrency);
+  const scheduler = new Scheduler({
+    runner,
+    scratchWorktreeService: new ScratchWorktreeService(),
+    concurrencyLimit: concurrency,
+  });
   const runId = randomUUID();
   const renderer: OpenTUIRenderer = {
     capabilities: { notifications: io.stdout.isTTY ?? false },

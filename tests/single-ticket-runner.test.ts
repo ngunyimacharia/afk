@@ -929,7 +929,20 @@ test('scheduler queues tickets by feature and starts the next queued ticket afte
       return { status: 'completed', sessionId: ticket.label, removable: true };
     },
   });
-  const scheduler = new Scheduler(runner);
+  const scheduler = new Scheduler({
+    runner,
+    scratchWorktreeService: {
+      createScratchWorktree: (input: { repoRoot: string; featureSlug: string; issueName: string; baseRef?: string }) => ({
+        featureSlug: input.featureSlug,
+        defaultWorktreeName: `${input.featureSlug}-${input.issueName}`,
+        effectiveWorktreeName: `${input.featureSlug}-${input.issueName}`,
+        defaultBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+        effectiveBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+        worktreePath: `/scratch/${input.featureSlug}-${input.issueName}`,
+      }),
+      removeScratchWorktree: () => {},
+    } as never,
+  });
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
@@ -952,7 +965,10 @@ test('scheduler queues tickets by feature and starts the next queued ticket afte
   };
 
   await scheduler.launch(plan as never);
-  assert.deepEqual(started, ['feat-a/001', 'feat-b/001', 'feat-a/002']);
+  // feat-a/001 and feat-a/002 are now concurrent (no dependency), so order is non-deterministic
+  assert.equal(started.includes('feat-a/001'), true);
+  assert.equal(started.includes('feat-b/001'), true);
+  assert.equal(started.includes('feat-a/002'), true);
 });
 
 test('scheduler forwards progress events from queued tickets', async () => {
@@ -962,7 +978,21 @@ test('scheduler forwards progress events from queued tickets', async () => {
     store,
     new FakeAgentExecutionProvider({ status: 'completed', sessionId: 'session-queued', removable: true }),
   );
-  const scheduler = new Scheduler(runner, 1);
+  const scheduler = new Scheduler({
+    runner,
+    scratchWorktreeService: {
+      createScratchWorktree: (input: { repoRoot: string; featureSlug: string; issueName: string; baseRef?: string }) => ({
+        featureSlug: input.featureSlug,
+        defaultWorktreeName: `${input.featureSlug}-${input.issueName}`,
+        effectiveWorktreeName: `${input.featureSlug}-${input.issueName}`,
+        defaultBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+        effectiveBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+        worktreePath: `/scratch/${input.featureSlug}-${input.issueName}`,
+      }),
+      removeScratchWorktree: () => {},
+    } as never,
+    concurrencyLimit: 1,
+  });
   const plan = {
     repoRoot,
     model: { id: 'model-1' },

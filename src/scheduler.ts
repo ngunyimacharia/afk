@@ -1,5 +1,10 @@
+import type { ScratchWorktreeService } from './scratch-worktree-service.js';
 import type { SingleTicketRunner, SingleTicketRunResult } from './single-ticket-runner.js';
 import type { AgentExecutionProgressCallback, LaunchBlockEvidence, LaunchPlan, TicketRecord } from './types.js';
+
+export interface FeatureLockProvider {
+  isLocked(feature: string): boolean;
+}
 
 export interface SchedulerTicketResult {
   ticket: TicketRecord;
@@ -16,11 +21,15 @@ export interface SchedulerRunResult {
   launchBlocks?: LaunchBlockEvidence[];
 }
 
+export interface SchedulerDependencies {
+  runner: SingleTicketRunner;
+  scratchWorktreeService: ScratchWorktreeService;
+  featureLockProvider?: FeatureLockProvider;
+  concurrencyLimit?: number;
+}
+
 export class Scheduler {
-  constructor(
-    private readonly runner: SingleTicketRunner,
-    private readonly concurrencyLimit = 3,
-  ) {}
+  constructor(private readonly deps: SchedulerDependencies) {}
 
   async launch(
     plan: LaunchPlan,
@@ -34,7 +43,6 @@ export class Scheduler {
     const plannedFeatures = new Set(plan.tickets.map((ticket) => ticket.feature));
     const running = new Set<Promise<void>>();
     const runningTickets = new Set<string>();
-    const runningFeatures = new Set<string>();
     const completed = new Set(completedTickets.map((ticket) => ticketKey(ticket)));
     const completedFeatures = new Set<string>();
     for (const feature of new Set(plan.tickets.map((t) => t.feature))) {
@@ -57,8 +65,42 @@ export class Scheduler {
       resolveIdle = resolve;
     });
 
+    const scratchWorktrees = new Map<string, ReturnType<ScratchWorktreeService['createScratchWorktree']>>();
+
+    // Compute waves per feature using ALL planned tickets so dependency chains are correct.
+    const featureWaves = new Map<string, Map<string, number>>();
+    const featureWaveTickets = new Map<string, Map<number, string[]>>();
+    const featureCompletedWave = new Map<string, number>();
+
+    for (const feature of plannedFeatures) {
+      const featureTickets = plan.tickets.filter((t) => t.feature === feature);
+      const waves = computeWaves(featureTickets);
+      featureWaves.set(feature, waves);
+
+      const waveTickets = new Map<number, string[]>();
+      for (const ticket of featureTickets) {
+        const wave = waves.get(ticket.issueName) ?? 0;
+        const arr = waveTickets.get(wave) ?? [];
+        arr.push(ticketKey(ticket));
+        waveTickets.set(wave, arr);
+      }
+      featureWaveTickets.set(feature, waveTickets);
+
+      let highestCompleted = -1;
+      for (let wave = 0; ; wave++) {
+        const waveTicketKeys = waveTickets.get(wave);
+        if (!waveTicketKeys) break;
+        if (waveTicketKeys.every((key) => completed.has(key))) {
+          highestCompleted = wave;
+        } else {
+          break;
+        }
+      }
+      featureCompletedWave.set(feature, highestCompleted);
+    }
+
     const startNext = (): void => {
-      while (running.size < this.concurrencyLimit) {
+      while (running.size < (this.deps.concurrencyLimit ?? 3)) {
         const index = pending.findIndex((ticket) =>
           isReady(
             ticket,
@@ -66,9 +108,11 @@ export class Scheduler {
             completed,
             failed,
             runningTickets,
-            runningFeatures,
             completedFeatures,
             plannedFeatures,
+            featureWaves,
+            featureCompletedWave,
+            this.deps.featureLockProvider,
             plan.featureDependencies,
           ),
         );
@@ -80,11 +124,23 @@ export class Scheduler {
         const [ticket] = pending.splice(index, 1);
         if (!ticket) return;
         runningTickets.add(ticketKey(ticket));
-        runningFeatures.add(ticket.feature);
 
-        const checkout = plan.checkouts?.[ticket.feature] ?? plan.checkout;
-        const run = this.runner
-          .launch({ ...plan, checkout, tickets: [ticket] }, { onProgress: options.onProgress, runId: options.runId })
+        const scratchCheckout = this.deps.scratchWorktreeService.createScratchWorktree({
+          repoRoot: plan.repoRoot,
+          featureSlug: ticket.feature,
+          issueName: ticket.issueName,
+          baseRef: plan.checkouts?.[ticket.feature]?.effectiveBranchName ?? plan.checkout.effectiveBranchName,
+        });
+        scratchWorktrees.set(ticket.label, scratchCheckout);
+
+        const checkout = scratchCheckout;
+        const checkouts: LaunchPlan['checkouts'] = {
+          ...plan.checkouts,
+          ...Object.fromEntries(scratchWorktrees),
+        };
+
+        const run = this.deps.runner
+          .launch({ ...plan, checkout, checkouts, tickets: [ticket] }, { onProgress: options.onProgress, runId: options.runId })
           .then((result) => {
             const outcome = result.outcome ?? (result.scheduled ? 'completed' : 'not-scheduled');
             ticketResults.push({
@@ -104,6 +160,18 @@ export class Scheduler {
               if (featureTickets.every((t) => completed.has(ticketKey(t)))) {
                 completedFeatures.add(ticket.feature);
               }
+              // Update completed wave for this feature
+              const ticketWave = featureWaves.get(ticket.feature)?.get(ticket.issueName) ?? 0;
+              const waves = featureWaveTickets.get(ticket.feature);
+              if (waves) {
+                const waveTicketKeys = waves.get(ticketWave) ?? [];
+                if (waveTicketKeys.every((key) => completed.has(key))) {
+                  const currentCompleted = featureCompletedWave.get(ticket.feature) ?? -1;
+                  if (ticketWave > currentCompleted) {
+                    featureCompletedWave.set(ticket.feature, ticketWave);
+                  }
+                }
+              }
             } else {
               failed.add(ticketKey(ticket));
               failures.push(result.message);
@@ -117,7 +185,6 @@ export class Scheduler {
           })
           .finally(() => {
             runningTickets.delete(ticketKey(ticket));
-            runningFeatures.delete(ticket.feature);
             running.delete(run);
             startNext();
           });
@@ -157,23 +224,55 @@ function isComplete(status?: string): boolean {
   return normalized === 'done' || normalized === 'closed' || normalized === 'complete' || normalized === 'resolved';
 }
 
+function computeWaves(tickets: TicketRecord[]): Map<string, number> {
+  const byName = new Map(tickets.map((ticket) => [ticket.issueName, ticket] as const));
+  const waves = new Map<string, number>();
+
+  const compute = (issueName: string): number => {
+    if (waves.has(issueName)) return waves.get(issueName)!;
+    const ticket = byName.get(issueName);
+    if (!ticket) return 0;
+    const deps = (ticket.dependsOn ?? []).filter((dep) => byName.has(dep));
+    if (deps.length === 0) {
+      waves.set(issueName, 0);
+      return 0;
+    }
+    const maxDepWave = Math.max(...deps.map((dep) => compute(dep)));
+    const wave = maxDepWave + 1;
+    waves.set(issueName, wave);
+    return wave;
+  };
+
+  for (const [issueName] of byName) {
+    compute(issueName);
+  }
+
+  return waves;
+}
+
 function isReady(
   ticket: TicketRecord,
   plannedTickets: Set<string>,
   completed: Set<string>,
   failed: Set<string>,
   running: Set<string>,
-  runningFeatures: Set<string>,
   completedFeatures: Set<string>,
   plannedFeatures: Set<string>,
+  featureWaves: Map<string, Map<string, number>>,
+  featureCompletedWave: Map<string, number>,
+  featureLockProvider: FeatureLockProvider | undefined,
   featureDependencies?: Record<string, string[]>,
 ): boolean {
   if (running.has(ticketKey(ticket))) return false;
-  if (runningFeatures.has(ticket.feature)) return false;
+  if (featureLockProvider?.isLocked(ticket.feature)) return false;
   const deps = featureDependencies?.[ticket.feature] ?? [];
   for (const dep of deps) {
     if (plannedFeatures.has(dep) && !completedFeatures.has(dep)) return false;
   }
+  // Wave boundary check: a ticket is ready only when all previous waves are fully completed.
+  const ticketWave = featureWaves.get(ticket.feature)?.get(ticket.issueName) ?? 0;
+  const highestCompletedWave = featureCompletedWave.get(ticket.feature) ?? -1;
+  if (ticketWave > highestCompletedWave + 1) return false;
   return (ticket.dependsOn ?? []).every((dependency) => {
     const key = `${ticket.feature}/${dependency}`;
     if (!plannedTickets.has(key)) return true;
