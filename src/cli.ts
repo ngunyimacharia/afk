@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   type AgentExecutionProvider,
@@ -23,8 +23,13 @@ import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
+import {
+  type FeatureLockProvider,
+  type FeatureMergeBackProvider,
+  Scheduler,
+  type SchedulerTicketResult,
+} from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
-import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
@@ -35,7 +40,12 @@ import {
   refreshWorkspaceExecutionGraph,
   type WorkspaceExecutionGraph,
 } from './workspace-execution-graph.js';
-import { WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
+import {
+  branchExists,
+  runGit,
+  WorktreePreparationService,
+  WorktreeReadinessBlockedError,
+} from './worktree-preparation-service.js';
 
 function commandArg(): string | undefined {
   const knownCommands = new Set(['summary', 'cleanup', 'afk-summary', 'afk-cleanup', 'sync']);
@@ -274,6 +284,8 @@ export async function runAfk(
     runner,
     scratchWorktreeService: new ScratchWorktreeService(),
     concurrencyLimit: concurrency,
+    featureMergeBackProvider: new GitFeatureMergeBackProvider(repoRoot, checkoutsByFeature),
+    featureLockProvider: new GitFeatureLockProvider(checkoutsByFeature),
   });
   const runId = randomUUID();
   const renderer: OpenTUIRenderer = {
@@ -657,6 +669,54 @@ function validateApprovedTicketFile(ticketPath?: string): string | null {
     return 'ticket-file-unreadable';
   }
   return null;
+}
+
+class GitFeatureMergeBackProvider implements FeatureMergeBackProvider {
+  constructor(
+    private repoRoot: string,
+    private checkouts: Record<string, ReturnType<WorktreePreparationService['prepare']>>,
+  ) {}
+
+  isWaveMerged(feature: string, wave: number, issueNames: string[]): boolean {
+    const featureCheckout = this.checkouts[feature];
+    if (!featureCheckout) return false;
+    for (const issueName of issueNames) {
+      const ticketBranch = `afk/${feature}/${issueName}`;
+      if (!branchExists(this.repoRoot, ticketBranch)) continue;
+      try {
+        runGit(this.repoRoot, ['merge-base', '--is-ancestor', ticketBranch, featureCheckout.effectiveBranchName]);
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+class GitFeatureLockProvider implements FeatureLockProvider {
+  constructor(private checkouts: Record<string, ReturnType<WorktreePreparationService['prepare']>>) {}
+
+  isLocked(feature: string): boolean {
+    const checkout = this.checkouts[feature];
+    if (!checkout) return false;
+    const gitDir = resolveGitDir(checkout.worktreePath);
+    if (existsSync(path.join(gitDir, 'MERGE_HEAD'))) return true;
+    if (existsSync(path.join(gitDir, 'index.lock'))) return true;
+    return false;
+  }
+}
+
+function resolveGitDir(worktreePath: string): string {
+  const gitFile = path.join(worktreePath, '.git');
+  try {
+    const content = readFileSync(gitFile, 'utf8').trim();
+    if (content.startsWith('gitdir:')) {
+      return content.slice(7).trim();
+    }
+  } catch {
+    // .git is a directory
+  }
+  return gitFile;
 }
 
 function isTerminalTicketStatus(status?: string): boolean {
