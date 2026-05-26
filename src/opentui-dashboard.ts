@@ -1,7 +1,10 @@
+import path from 'node:path';
 import type { BoxRenderable, CliRenderer, TextRenderable } from '@opentui/core';
+import { bold, cyan, dim, StyledText, stringToStyledText, t } from '@opentui/core';
 import type { LiveRunView } from './live-run-view.js';
 import type { ProgressLine, ProgressLineOptions } from './progress-line.js';
 import { createProgressLine } from './progress-line.js';
+import { classifyPathAgainstRepoRoot } from './repo-boundary.js';
 import {
   type DashboardSnapshot,
   type DashboardTicketRuntimeState,
@@ -9,8 +12,6 @@ import {
   type RunDashboardStateOptions,
 } from './run-dashboard-state.js';
 import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
-import { classifyPathAgainstRepoRoot } from './repo-boundary.js';
-import path from 'node:path';
 
 export interface OpenTuiDashboardOptions {
   stdout: NodeJS.WriteStream;
@@ -36,6 +37,7 @@ export interface OpenTuiDashboardModule {
       flexGrow?: number;
       gap?: number;
       border?: boolean;
+      borderColor?: string;
       title?: string;
       titleAlignment?: string;
     },
@@ -62,6 +64,17 @@ function formatTime(timestamp: number): string {
   const minutes = d.getMinutes().toString().padStart(2, '0');
   const seconds = d.getSeconds().toString().padStart(2, '0');
   return `${hours}:${minutes}:${seconds}`;
+}
+
+function joinStyledTexts(items: StyledText[], separator: string): StyledText {
+  const chunks = [];
+  for (let i = 0; i < items.length; i++) {
+    if (i > 0) {
+      chunks.push(...stringToStyledText(separator).chunks);
+    }
+    chunks.push(...items[i].chunks);
+  }
+  return new StyledText(chunks);
 }
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸'];
@@ -98,96 +111,106 @@ function formatPath(targetPath: string, repoRoot: string): string {
   return path.basename(targetPath);
 }
 
-function formatHeader(snap: DashboardSnapshot, runComplete: boolean): string {
+function formatHeader(snap: DashboardSnapshot, runComplete: boolean): StyledText {
   const elapsed = formatElapsed(snap.elapsedMs);
-  const parts: string[] = [];
-  if (snap.runId) parts.push(`Run: ${snap.runId}`);
-  if (snap.modelId) parts.push(`Model: ${snap.modelId}`);
-  if (snap.harness) parts.push(`Harness: ${snap.harness}`);
-  if (snap.concurrency) parts.push(`Concurrency: ${snap.concurrency}`);
-  parts.push(`Elapsed: ${elapsed}`);
-  let header = parts.join(' | ');
+  const parts: StyledText[] = [];
+  if (snap.runId) parts.push(t`${dim('Run:')} ${bold(snap.runId)}`);
+  if (snap.modelId) parts.push(t`${dim('Model:')} ${snap.modelId}`);
+  if (snap.harness) parts.push(t`${dim('Harness:')} ${snap.harness}`);
+  if (snap.concurrency) parts.push(t`${dim('Concurrency:')} ${String(snap.concurrency)}`);
+  parts.push(t`${dim('Elapsed:')} ${bold(elapsed)}`);
+  const header = joinStyledTexts(parts, ' | ');
   if (runComplete) {
-    header += '\nAll tasks complete';
+    return joinStyledTexts([header, t`${bold('All tasks complete')}`], '\n');
   }
   return header;
 }
 
-function formatAggregate(snap: DashboardSnapshot): string {
-  return `Ready: ${snap.aggregate.ready} | Running: ${snap.aggregate.running} | Blocked: ${snap.aggregate.blocked} | Failed: ${snap.aggregate.failed} | Complete: ${snap.aggregate.complete} | Skipped: ${snap.aggregate.skipped}`;
+function formatAggregate(snap: DashboardSnapshot): StyledText {
+  const parts: StyledText[] = [];
+  parts.push(t`${dim('Ready:')} ${bold(String(snap.aggregate.ready))}`);
+  parts.push(t`${dim('Running:')} ${cyan(bold(String(snap.aggregate.running)))}`);
+  parts.push(t`${dim('Blocked:')} ${bold(String(snap.aggregate.blocked))}`);
+  parts.push(t`${dim('Failed:')} ${bold(String(snap.aggregate.failed))}`);
+  parts.push(t`${dim('Complete:')} ${bold(String(snap.aggregate.complete))}`);
+  parts.push(t`${dim('Skipped:')} ${bold(String(snap.aggregate.skipped))}`);
+  return joinStyledTexts(parts, ' | ');
 }
 
-function formatFeatures(snap: DashboardSnapshot): string {
-  if (snap.features.length === 0) return 'No features';
-  return snap.features
-    .map((f) => {
-      const icon = FEATURE_STATE_ICONS[f.aggregateState];
-      const count = f.tickets.length;
-      return `${icon} ${f.feature} (${count} ticket${count === 1 ? '' : 's'})`;
-    })
-    .join('\n');
+function formatFeatures(snap: DashboardSnapshot): StyledText {
+  if (snap.features.length === 0) return stringToStyledText('No features');
+  const parts = snap.features.map((f) => {
+    const icon =
+      f.aggregateState === 'running' ? cyan(FEATURE_STATE_ICONS.running) : FEATURE_STATE_ICONS[f.aggregateState];
+    const count = f.tickets.length;
+    return t`${icon} ${f.feature} ${dim(`(${count} ticket${count === 1 ? '' : 's'})`)}`;
+  });
+  return joinStyledTexts(parts, '\n');
 }
 
-function formatTickets(snap: DashboardSnapshot, frameCounter: number): string {
-  if (snap.tickets.length === 0) return 'No tickets';
-  return snap.tickets
-    .map((t) => {
-      const icon = t.runtimeState === 'running'
-        ? SPINNER_FRAMES[frameCounter % SPINNER_FRAMES.length]
-        : TICKET_STATE_ICONS[t.runtimeState];
-      const msg = t.latestMessage ? ` - ${t.latestMessage.slice(0, 40)}` : '';
-      const selected = snap.selectedTicket?.label === t.label ? '>' : ' ';
-      return `${selected} ${stripFeaturePrefix(t.label)} ${icon}${msg}`;
-    })
-    .join('\n');
+function formatTickets(snap: DashboardSnapshot, frameCounter: number): StyledText {
+  if (snap.tickets.length === 0) return stringToStyledText('No tickets');
+  const parts = snap.tickets.map((ticket) => {
+    const icon =
+      ticket.runtimeState === 'running'
+        ? cyan(SPINNER_FRAMES[frameCounter % SPINNER_FRAMES.length])
+        : TICKET_STATE_ICONS[ticket.runtimeState];
+    const msg = ticket.latestMessage ? ` - ${ticket.latestMessage.slice(0, 40)}` : '';
+    const selected = snap.selectedTicket?.label === ticket.label ? '>' : ' ';
+    return t`${selected} ${stripFeaturePrefix(ticket.label)} ${icon}${msg}`;
+  });
+  return joinStyledTexts(parts, '\n');
 }
 
-function formatActionNeeded(snap: DashboardSnapshot): string {
-  if (snap.actionNeeded.length === 0) return 'No action needed';
-  return snap.actionNeeded.map((a) => `[${a.kind}] ${stripFeaturePrefix(a.ticketLabel)}: ${a.message.slice(0, 60)}`).join('\n');
+function formatActionNeeded(snap: DashboardSnapshot): StyledText {
+  if (snap.actionNeeded.length === 0) return stringToStyledText('No action needed');
+  const parts = snap.actionNeeded.map(
+    (a) => t`${dim(`[${a.kind}]`)} ${stripFeaturePrefix(a.ticketLabel)}: ${a.message.slice(0, 60)}`,
+  );
+  return joinStyledTexts(parts, '\n');
 }
 
-function formatEvents(snap: DashboardSnapshot): string {
-  if (snap.recentEvents.length === 0) return 'No events yet';
-  return snap.recentEvents
-    .slice(-10)
-    .map((e) => {
-      const time = e.timestamp ? formatTime(e.timestamp) : '--:--:--';
-      return `${time} ${stripFeaturePrefix(e.ticketLabel)}: ${e.message.slice(0, 80)}`;
-    })
-    .join('\n');
+function formatEvents(snap: DashboardSnapshot): StyledText {
+  if (snap.recentEvents.length === 0) return stringToStyledText('No events yet');
+  const parts = snap.recentEvents.slice(-10).map((e) => {
+    const time = e.timestamp ? formatTime(e.timestamp) : '--:--:--';
+    return t`${dim(time)} ${stripFeaturePrefix(e.ticketLabel)}: ${e.message.slice(0, 80)}`;
+  });
+  return joinStyledTexts(parts, '\n');
 }
 
-function formatDetails(snap: DashboardSnapshot, repoRoot: string): string {
+function formatDetails(snap: DashboardSnapshot, repoRoot: string): StyledText {
   const details = snap.selectedTicketDetails;
   if (!details) {
-    if (snap.tickets.length === 0) return 'No tickets in run';
-    return 'Select a ticket to view details';
+    if (snap.tickets.length === 0) return stringToStyledText('No tickets in run');
+    return stringToStyledText('Select a ticket to view details');
   }
 
-  const lines: string[] = [];
-  lines.push(`${stripFeaturePrefix(details.label)} ${TICKET_STATE_ICONS[details.runtimeState]}`);
-  lines.push(`Path: ${formatPath(details.path, repoRoot)}`);
-  if (details.status) lines.push(`Status: ${details.status}`);
-  if (details.sessionId) lines.push(`Session: ${details.sessionId}`);
-  if (snap.modelId) lines.push(`Model: ${snap.modelId}`);
-  if (snap.harness) lines.push(`Harness: ${snap.harness}`);
-  if (details.dependencies.length > 0) lines.push(`Deps: ${details.dependencies.join(', ')}`);
-  if (details.failureKind) lines.push(`Failure: ${details.failureKind}`);
+  const lines: StyledText[] = [];
+  const stateIcon =
+    details.runtimeState === 'running' ? cyan(TICKET_STATE_ICONS.running) : TICKET_STATE_ICONS[details.runtimeState];
+  lines.push(t`${stripFeaturePrefix(details.label)} ${stateIcon}`);
+  lines.push(t`${dim('Path:')} ${formatPath(details.path, repoRoot)}`);
+  if (details.status) lines.push(t`${dim('Status:')} ${details.status}`);
+  if (details.sessionId) lines.push(t`${dim('Session:')} ${details.sessionId}`);
+  if (snap.modelId) lines.push(t`${dim('Model:')} ${snap.modelId}`);
+  if (snap.harness) lines.push(t`${dim('Harness:')} ${snap.harness}`);
+  if (details.dependencies.length > 0) lines.push(t`${dim('Deps:')} ${details.dependencies.join(', ')}`);
+  if (details.failureKind) lines.push(t`${dim('Failure:')} ${details.failureKind}`);
   if (details.reviewOutcome) {
     const review = details.reviewReason ? `${details.reviewOutcome} (${details.reviewReason})` : details.reviewOutcome;
-    lines.push(`Review: ${review}`);
+    lines.push(t`${dim('Review:')} ${review}`);
   }
-  if (details.actionNeededCount > 0) lines.push(`Action needed: ${details.actionNeededCount}`);
+  if (details.actionNeededCount > 0) lines.push(t`${dim('Action needed:')} ${String(details.actionNeededCount)}`);
 
   if (details.phaseHistory.length > 0) {
-    lines.push('Phases:');
+    lines.push(t`${dim('Phases:')}`);
     for (const phase of details.phaseHistory.slice(-5)) {
-      lines.push(`  ${phase.name} ${phase.durationMs}ms`);
+      lines.push(t`  ${phase.name} ${dim(`${phase.durationMs}ms`)}`);
     }
   }
 
-  return lines.join('\n');
+  return joinStyledTexts(lines, '\n');
 }
 
 class OpenTuiDashboard implements LiveRunView {
@@ -270,6 +293,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const headerBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
+      borderColor: '#888888',
       title: 'AFK Run Dashboard',
       titleAlignment: 'center',
       flexDirection: 'column',
@@ -286,6 +310,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const featuresBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
+      borderColor: '#888888',
       title: 'Features [j/k]',
       width: '25%',
       flexDirection: 'column',
@@ -296,6 +321,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const ticketsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
+      borderColor: '#888888',
       title: 'Tickets [j/k]',
       width: '25%',
       flexDirection: 'column',
@@ -306,6 +332,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const actionBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
+      borderColor: '#888888',
       title: 'Action Needed [a]',
       width: '25%',
       flexDirection: 'column',
@@ -316,6 +343,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const detailsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
+      borderColor: '#888888',
       title: 'Details',
       width: '25%',
       flexDirection: 'column',
@@ -328,6 +356,7 @@ class OpenTuiDashboard implements LiveRunView {
 
     const eventsBox = new this.opentui.BoxRenderable(this.renderer, {
       border: true,
+      borderColor: '#888888',
       title: 'Recent Events',
       flexGrow: 1,
       flexDirection: 'column',
@@ -379,7 +408,7 @@ class OpenTuiDashboard implements LiveRunView {
 
   private refresh(): void {
     const snap = this.state.snapshot();
-    this.headerText.content = [formatHeader(snap, this.runComplete), formatAggregate(snap)].join('\n');
+    this.headerText.content = joinStyledTexts([formatHeader(snap, this.runComplete), formatAggregate(snap)], '\n');
     this.featuresText.content = formatFeatures(snap);
     this.ticketsText.content = formatTickets(snap, this.frameCounter);
     this.actionText.content = formatActionNeeded(snap);
@@ -434,7 +463,13 @@ export async function createOpenTuiDashboard(
       exitOnCtrlC: false,
       testing: false,
     });
-    return new OpenTuiDashboard(renderer, options.selectedTickets ?? [], options.runOptions ?? {}, opentui, options.repoRoot ?? process.cwd());
+    return new OpenTuiDashboard(
+      renderer,
+      options.selectedTickets ?? [],
+      options.runOptions ?? {},
+      opentui,
+      options.repoRoot ?? process.cwd(),
+    );
   } catch {
     return null;
   }

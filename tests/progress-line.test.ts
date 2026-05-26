@@ -53,7 +53,8 @@ test('live run view factory creates text progress line for tty', () => {
   view.done();
 
   const output = writes.join('');
-  assert.match(output, /[|/\\-]: starting/);
+  assert.match(output, /[|/\\-]/);
+  assert.match(output, /: starting/);
 });
 
 test('live run view factory falls back to no-op for non-tty', () => {
@@ -88,8 +89,9 @@ test('progress line updates in place and finalizes once', () => {
   progressLine.done();
 
   const output = writes.join('');
-  assert.match(output, /[|/\\-]: starting/);
-  assert.match(output, /[|/\\-]: opencode session completed \[opencode: abc\]/);
+  assert.match(output, /[|/\\-]/);
+  assert.match(output, /: starting/);
+  assert.match(output, /: opencode session completed \[opencode: abc\]/);
   assert.doesNotMatch(output, /feat\/001/);
   assert.doesNotMatch(output, /AFK running/);
   assert.equal(output.includes('\x1B[2K') || output.includes('\r'), true);

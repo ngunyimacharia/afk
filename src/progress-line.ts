@@ -3,6 +3,10 @@ import type { NotificationPayload } from './notification-policy.js';
 import type { NotificationDeliveryState } from './opentui-notification-adapter.js';
 import type { AgentExecutionProgressEvent } from './types.js';
 
+const ANSI_DIM = '\x1b[2m';
+const ANSI_CYAN = '\x1b[36m';
+const ANSI_RESET = '\x1b[0m';
+
 export interface DashboardNotificationState {
   capability: 'supported' | 'unsupported';
   lastDelivery?: {
@@ -140,7 +144,8 @@ class LogUpdateProgressLine implements ProgressLine {
   private format(event: AgentExecutionProgressEvent): string {
     const active = this.latestByTicket.size;
     const spinner = LogUpdateProgressLine.spinnerFrames[this.spinnerFrame];
-    const prefix = active > 1 ? `${spinner} ${active} active` : spinner;
+    const cyanSpinner = `${ANSI_CYAN}${spinner}${ANSI_RESET}`;
+    const prefix = active > 1 ? `${cyanSpinner} ${ANSI_DIM}${active} active${ANSI_RESET}` : cyanSpinner;
     const session =
       event.sessionId && !event.message.includes(event.sessionId) ? ` [${this.providerName}: ${event.sessionId}]` : '';
     const notification = this.formatNotificationState();
