@@ -239,6 +239,9 @@ export interface RuntimeMetadataRecord {
   PROVIDER_FAILURE_EVIDENCE?: string | null;
   DETERMINISTIC_PROVIDER_FAILURE?: boolean;
   SNAPSHOT_GENERATED_AT?: string;
+  MERGE_STATUS?: 'merged' | 'conflict-resolved' | 'failed' | null;
+  MERGE_CONFLICT_PATHS?: string[] | null;
+  MERGE_RESOLUTION_OUTPUT?: string | null;
   SNAPSHOT_SAFE_FIELDS?: {
     ticketLabel: string;
     featureSlug: string;
