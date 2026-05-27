@@ -18,13 +18,16 @@ test('executes only approved cleanup targets', () => {
   mkdirSync(path.dirname(logPath), { recursive: true });
   writeFileSync(issuePath, 'x');
   writeFileSync(logPath, 'x');
-  const result = new CleanupExecutor().execute({
-    terminalTargets: [{ feature: 'feat', issueName: 'done', issuePath, logPath, reason: 'done' }],
-    pendingPostMergeCleanupTargets: [],
-    preservedIssues: [],
-    preservedArtifacts: [],
-    featureDirectoriesToDelete: [],
-  }, repoRoot);
+  const result = new CleanupExecutor().execute(
+    {
+      terminalTargets: [{ feature: 'feat', issueName: 'done', issuePath, logPath, reason: 'done' }],
+      pendingPostMergeCleanupTargets: [],
+      preservedIssues: [],
+      preservedArtifacts: [],
+      featureDirectoriesToDelete: [],
+    },
+    repoRoot,
+  );
   assert.equal(existsSync(issuePath), false);
   assert.equal(existsSync(logPath), false);
   assert.equal(result.deleted.length >= 2, true);

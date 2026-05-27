@@ -51,7 +51,8 @@ export class ActiveRunControlPlane {
   acquireOrAttach(runId: string, command = 'afk'): ActiveRunAcquireResult {
     mkdirSync(path.dirname(this.activeRunPath), { recursive: true });
     const existing = this.read();
-    if (existing && this.isHealthy(existing)) return { action: 'attached', record: existing, reason: 'healthy-active-run' };
+    if (existing && this.isHealthy(existing))
+      return { action: 'attached', record: existing, reason: 'healthy-active-run' };
 
     const nextRunId = existing ? existing.runId : runId;
     const nowIso = isoFromEpoch(this.now());

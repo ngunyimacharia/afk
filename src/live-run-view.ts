@@ -26,7 +26,16 @@ export interface LiveRunViewOptions {
 }
 
 export function createLiveRunView(options: LiveRunViewOptions): LiveRunView {
-  const { kind = 'text', stdout, isPromptActive, providerName, selectedTickets, runOptions, repoRoot, onPauseResume } = options;
+  const {
+    kind = 'text',
+    stdout,
+    isPromptActive,
+    providerName,
+    selectedTickets,
+    runOptions,
+    repoRoot,
+    onPauseResume,
+  } = options;
   if (kind === 'dashboard' && stdout.isTTY) {
     const proxy = new DashboardProxy(
       stdout,

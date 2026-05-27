@@ -149,7 +149,10 @@ function writePendingPostMergeCleanupItems(repoRoot: string, items: PendingPostM
 
 export function persistFailedPostMergeCleanupItem(repoRoot: string, item: PendingPostMergeCleanupItem): void {
   const pending = readPendingPostMergeCleanupItems(repoRoot);
-  const next = [...pending.filter((entry) => entry.feature !== item.feature || entry.issueName !== item.issueName), item];
+  const next = [
+    ...pending.filter((entry) => entry.feature !== item.feature || entry.issueName !== item.issueName),
+    item,
+  ];
   writePendingPostMergeCleanupItems(repoRoot, next);
 }
 
@@ -339,7 +342,10 @@ export class CleanupPlanner {
 }
 
 export class CleanupExecutor {
-  execute(plan: CleanupPlan, repoRoot: string): { deleted: string[]; postMergeCleanupResults: PendingPostMergeCleanupResult[] } {
+  execute(
+    plan: CleanupPlan,
+    repoRoot: string,
+  ): { deleted: string[]; postMergeCleanupResults: PendingPostMergeCleanupResult[] } {
     const deleted: string[] = [];
     const postMergeCleanupResults: PendingPostMergeCleanupResult[] = [];
     const remainingPending: PendingPostMergeCleanupItem[] = [];

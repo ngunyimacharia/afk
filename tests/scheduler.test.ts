@@ -959,7 +959,10 @@ test('resume continues scheduling after pause', async () => {
   const result = await launchPromise;
   assert.equal(started.includes('feat-a/001'), true);
   assert.equal(started.includes('feat-a/002'), true);
-  assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
+  assert.equal(
+    result.ticketResults.every((r) => r.outcome === 'completed'),
+    true,
+  );
 });
 
 test('isPaused reflects current pause state', () => {

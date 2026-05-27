@@ -524,7 +524,10 @@ class OpenTuiDashboard implements LiveRunView {
 
   private refresh(): void {
     const snap = this.state.snapshot();
-    this.headerText.content = joinStyledTexts([formatHeader(snap, this.runComplete, this.repoRoot), formatAggregate(snap)], '\n');
+    this.headerText.content = joinStyledTexts(
+      [formatHeader(snap, this.runComplete, this.repoRoot), formatAggregate(snap)],
+      '\n',
+    );
     this.featuresText.content = formatFeatures(snap);
     this.ticketsText.content = formatTickets(snap, this.frameCounter);
     this.actionText.content = formatActionNeeded(snap);
