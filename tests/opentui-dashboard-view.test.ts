@@ -2040,7 +2040,7 @@ test('createOpenTuiDashboard renders footer with default quit hint', async () =>
 
   const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
   assert.ok(view);
-  assert.ok(contents.includes('Ctrl+C or q to quit'));
+  assert.ok(contents.includes('p to pause | q to quit'));
   view?.done();
 });
 
@@ -2336,7 +2336,7 @@ test('createOpenTuiDashboard quit auto-disarms after timeout', async () => {
     // Simulate timeout firing
     if (typeof timeoutCallback === 'function') (timeoutCallback as () => void)();
 
-    assert.ok(contents.includes('Ctrl+C or q to quit'));
+    assert.ok(contents.includes('p to pause | q to quit'));
     view?.done();
   } finally {
     global.setTimeout = origSetTimeout;

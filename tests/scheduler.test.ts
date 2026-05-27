@@ -864,3 +864,85 @@ test('calls onWaveComplete when a wave completes and waits before advancing', as
     true,
   );
 });
+
+test('pause stops launching new tickets while allowing running tickets to finish', async () => {
+  const started: string[] = [];
+  const scheduler = createScheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { scheduled: true, message: ticket.label };
+      },
+    },
+    { concurrencyLimit: 1 },
+  );
+
+  const plan = basePlan({
+    tickets: [
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+    ],
+  });
+
+  const launchPromise = scheduler.launch(plan as never);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  scheduler.pause();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  // First ticket should have finished; pause should prevent second from starting
+  assert.equal(started.includes('feat-a/001'), true);
+  assert.equal(started.length, 1);
+  scheduler.resume();
+
+  const result = await launchPromise;
+  assert.equal(result.ticketResults.length, 2);
+  assert.equal(result.ticketResults.find((r) => r.ticket.label === 'feat-a/001')?.outcome, 'completed');
+  assert.equal(result.ticketResults.find((r) => r.ticket.label === 'feat-a/002')?.outcome, 'completed');
+});
+
+test('resume continues scheduling after pause', async () => {
+  const started: string[] = [];
+  const scheduler = createScheduler(
+    {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        started.push(ticket.label);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { scheduled: true, message: ticket.label };
+      },
+    },
+    { concurrencyLimit: 1 },
+  );
+
+  const plan = basePlan({
+    tickets: [
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+    ],
+  });
+
+  const launchPromise = scheduler.launch(plan as never);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  scheduler.pause();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  scheduler.resume();
+
+  const result = await launchPromise;
+  assert.equal(started.includes('feat-a/001'), true);
+  assert.equal(started.includes('feat-a/002'), true);
+  assert.equal(result.ticketResults.every((r) => r.outcome === 'completed'), true);
+});
+
+test('isPaused reflects current pause state', () => {
+  const scheduler = createScheduler({
+    launch: async () => ({ scheduled: true, message: '' }),
+  });
+  assert.equal(scheduler.isPaused(), false);
+  scheduler.pause();
+  assert.equal(scheduler.isPaused(), true);
+  scheduler.resume();
+  assert.equal(scheduler.isPaused(), false);
+});

@@ -81,3 +81,42 @@ test('transition and clear update lifecycle then release lock', () => {
   controlPlane.clear('run-1');
   assert.equal(controlPlane.read(), null);
 });
+
+test('enqueueCommand and readCommands append and poll commands', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-commands-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 20_000, pid: process.pid });
+  controlPlane.acquireOrAttach('run-1');
+
+  controlPlane.enqueueCommand('run-1', { type: 'pause', clientPid: 123 });
+  controlPlane.enqueueCommand('run-1', { type: 'resume', clientPid: 456 });
+
+  const firstRead = controlPlane.readCommands('run-1', 0);
+  assert.equal(firstRead.commands.length, 2);
+  assert.equal(firstRead.commands[0]?.type, 'pause');
+  assert.equal(firstRead.commands[1]?.type, 'resume');
+
+  const secondRead = controlPlane.readCommands('run-1', firstRead.nextOffset);
+  assert.equal(secondRead.commands.length, 0);
+});
+
+test('enqueueCommand ignores wrong runId', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-commands-wrong-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 20_000, pid: process.pid });
+  controlPlane.acquireOrAttach('run-1');
+
+  controlPlane.enqueueCommand('run-2', { type: 'pause', clientPid: 123 });
+
+  const result = controlPlane.readCommands('run-1', 0);
+  assert.equal(result.commands.length, 0);
+});
+
+test('clearCommands removes command file', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-commands-clear-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 20_000, pid: process.pid });
+  controlPlane.acquireOrAttach('run-1');
+  controlPlane.enqueueCommand('run-1', { type: 'pause', clientPid: 123 });
+
+  controlPlane.clearCommands('run-1');
+  const result = controlPlane.readCommands('run-1', 0);
+  assert.equal(result.commands.length, 0);
+});
