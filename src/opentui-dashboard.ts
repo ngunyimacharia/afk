@@ -118,9 +118,10 @@ function formatPath(targetPath: string, repoRoot: string): string {
   return path.basename(targetPath);
 }
 
-function formatHeader(snap: DashboardSnapshot, runComplete: boolean): StyledText {
+function formatHeader(snap: DashboardSnapshot, runComplete: boolean, repoRoot: string): StyledText {
   const elapsed = formatElapsed(snap.elapsedMs);
   const parts: StyledText[] = [];
+  parts.push(t`${dim('Repo:')} ${repoRoot}`);
   if (snap.runId) parts.push(t`${dim('Run:')} ${bold(snap.runId)}`);
   if (snap.modelId) parts.push(t`${dim('Model:')} ${snap.modelId}`);
   if (snap.harness) parts.push(t`${dim('Harness:')} ${snap.harness}`);
@@ -523,7 +524,7 @@ class OpenTuiDashboard implements LiveRunView {
 
   private refresh(): void {
     const snap = this.state.snapshot();
-    this.headerText.content = joinStyledTexts([formatHeader(snap, this.runComplete), formatAggregate(snap)], '\n');
+    this.headerText.content = joinStyledTexts([formatHeader(snap, this.runComplete, this.repoRoot), formatAggregate(snap)], '\n');
     this.featuresText.content = formatFeatures(snap);
     this.ticketsText.content = formatTickets(snap, this.frameCounter);
     this.actionText.content = formatActionNeeded(snap);
