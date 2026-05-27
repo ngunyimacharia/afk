@@ -134,6 +134,7 @@ export async function runAfk(
   }
   const activeProjectConfig = projectConfig.config;
   activeRunControlPlane.transition(runId, 'running');
+  let killPollInterval: ReturnType<typeof setInterval> | null = null;
   try {
     const repository = new TicketRepository(repoRoot);
     let allTickets: TicketRecord[];
@@ -398,12 +399,35 @@ export async function runAfk(
     },
   });
 
+  const killController = new AbortController();
+  let commandOffset = 0;
+  killPollInterval = setInterval(() => {
+    if (killController.signal.aborted) return;
+    if (view.killRequested()) {
+      killController.abort();
+      return;
+    }
+    const { commands, nextOffset } = eventStream.readCommandsFromOffset(commandOffset);
+    commandOffset = nextOffset;
+    if (commands.includes('kill')) {
+      killController.abort();
+    }
+  }, 500);
+
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
     schedulerResult = await scheduler.launch(plan, {
       onProgress,
       runId,
+      signal: killController.signal,
     });
+    if (killPollInterval) clearInterval(killPollInterval);
+    if (killController.signal.aborted) {
+      activeRunControlPlane.transition(runId, 'killing');
+      activeRunControlPlane.clear(runId);
+      view.done();
+      return { code: 0, message: 'Run killed' };
+    }
     const runOutcomeEvent = classifyRunOutcome({
       runId,
       ticketResults: schedulerResult.ticketResults.map((r) => ({
@@ -422,6 +446,7 @@ export async function runAfk(
       }
     }
   } catch (error) {
+    if (killPollInterval) clearInterval(killPollInterval);
     view.cleanup();
     throw error;
   }
@@ -448,6 +473,7 @@ export async function runAfk(
       ].join('\n'),
     };
   } finally {
+    if (killPollInterval) clearInterval(killPollInterval);
     activeRunControlPlane.clear(runId);
   }
 }
@@ -467,11 +493,21 @@ async function attachToActiveRun(
   const stream = new ActiveRunEventStream(repoRoot, runId);
   let offset = 0;
   let quit = false;
+  let killed = false;
   const quitPromise = view.waitForQuit().then(() => {
     quit = true;
   });
 
-  while (!quit) {
+  const killPollInterval = setInterval(() => {
+    if (view.killRequested()) {
+      killed = true;
+      stream.appendCommand('kill');
+      clearInterval(killPollInterval);
+      view.done();
+    }
+  }, 250);
+
+  while (!quit && !killed) {
     const active = controlPlane.read();
     const { events, nextOffset } = stream.readFromOffset(offset);
     offset = nextOffset;
@@ -482,8 +518,9 @@ async function attachToActiveRun(
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  clearInterval(killPollInterval);
   await quitPromise;
-  return { code: 0, message: `Attached to active run ${runId}` };
+  return { code: 0, message: killed ? `Kill dispatched for active run ${runId}` : `Attached to active run ${runId}` };
 }
 
 function formatTicketMetadataError(error: unknown): string {

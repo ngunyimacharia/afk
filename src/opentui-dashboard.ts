@@ -235,6 +235,9 @@ class OpenTuiDashboard implements LiveRunView {
   private quitResolver: (() => void) | null = null;
   private readonly quitPromise: Promise<void>;
   private frameCounter = 0;
+  private killTimeout: ReturnType<typeof setTimeout> | null = null;
+  private killArmed = false;
+  private killConfirmed = false;
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -298,8 +301,41 @@ class OpenTuiDashboard implements LiveRunView {
     this.destroyed = true;
     this.stopTimer();
     this.clearQuitTimeout();
+    this.clearKillTimeout();
     this.renderer.destroy();
     this.quitResolver?.();
+  }
+
+  private clearKillTimeout(): void {
+    if (this.killTimeout !== null) {
+      clearTimeout(this.killTimeout);
+      this.killTimeout = null;
+    }
+  }
+
+  private armKill(): void {
+    if (this.destroyed) return;
+    this.killArmed = true;
+    this.refresh();
+    this.clearKillTimeout();
+    this.killTimeout = setTimeout(() => {
+      this.disarmKill();
+    }, 2000);
+  }
+
+  private disarmKill(): void {
+    if (this.destroyed) return;
+    this.killArmed = false;
+    this.clearKillTimeout();
+    this.refresh();
+  }
+
+  private confirmKill(): void {
+    if (this.destroyed) return;
+    this.killConfirmed = true;
+    this.killArmed = false;
+    this.clearKillTimeout();
+    this.refresh();
   }
 
   private checkRunComplete(snap: DashboardSnapshot): boolean {
@@ -443,9 +479,15 @@ class OpenTuiDashboard implements LiveRunView {
         this.refresh();
         return true;
       case '\x1b[A': // Up arrow
-      case 'k':
         this.state.selectPreviousTicket();
         this.refresh();
+        return true;
+      case 'k':
+        if (this.killArmed) {
+          this.confirmKill();
+        } else {
+          this.armKill();
+        }
         return true;
       case 'a':
       case '\t': // Tab
@@ -476,7 +518,13 @@ class OpenTuiDashboard implements LiveRunView {
     this.actionText.content = formatActionNeeded(snap);
     this.detailsText.content = formatDetails(snap, this.repoRoot);
     this.eventsText.content = formatEvents(snap);
-    this.footerText.content = this.quitArmed ? 'Press again to quit' : 'Ctrl+C or q to quit';
+    if (this.killArmed) {
+      this.footerText.content = 'Press k again to kill';
+    } else if (this.quitArmed) {
+      this.footerText.content = 'Press again to quit';
+    } else {
+      this.footerText.content = 'Ctrl+C or q to quit | k to kill';
+    }
     this.maybeStopTimer(snap);
   }
 
@@ -505,6 +553,10 @@ class OpenTuiDashboard implements LiveRunView {
 
   waitForQuit(): Promise<void> {
     return this.quitPromise;
+  }
+
+  killRequested(): boolean {
+    return this.killConfirmed;
   }
 }
 
@@ -628,5 +680,9 @@ export class DashboardProxy implements LiveRunView {
 
   waitForQuit(): Promise<void> {
     return this.dashboard?.waitForQuit() ?? this.fallback.waitForQuit();
+  }
+
+  killRequested(): boolean {
+    return this.dashboard?.killRequested() ?? false;
   }
 }

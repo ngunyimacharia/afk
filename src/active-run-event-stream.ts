@@ -3,9 +3,10 @@ import path from 'node:path';
 import type { AgentExecutionProgressEvent } from './types.js';
 
 interface ActiveRunEventEnvelope {
-  type: 'progress' | 'run-state';
+  type: 'progress' | 'run-state' | 'command';
   event?: AgentExecutionProgressEvent;
   state?: string;
+  command?: string;
 }
 
 export class ActiveRunEventStream {
@@ -21,6 +22,10 @@ export class ActiveRunEventStream {
 
   appendRunState(state: string): void {
     this.append({ type: 'run-state', state });
+  }
+
+  appendCommand(command: string): void {
+    this.append({ type: 'command', command });
   }
 
   readFromOffset(offset = 0): { events: AgentExecutionProgressEvent[]; nextOffset: number } {
@@ -39,6 +44,24 @@ export class ActiveRunEventStream {
       }
     }
     return { events, nextOffset: content.length };
+  }
+
+  readCommandsFromOffset(offset = 0): { commands: string[]; nextOffset: number } {
+    if (!existsSync(this.eventsPath)) return { commands: [], nextOffset: offset };
+    const content = readFileSync(this.eventsPath, 'utf8');
+    const chunk = content.slice(Math.max(0, offset));
+    if (!chunk) return { commands: [], nextOffset: content.length };
+    const lines = chunk.split('\n').filter((line) => line.trim().length > 0);
+    const commands: string[] = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as ActiveRunEventEnvelope;
+        if (parsed.type === 'command' && parsed.command) commands.push(parsed.command);
+      } catch {
+        // ignore malformed lines from partial writes
+      }
+    }
+    return { commands, nextOffset: content.length };
   }
 
   private append(envelope: ActiveRunEventEnvelope): void {

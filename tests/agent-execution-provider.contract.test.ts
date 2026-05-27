@@ -459,6 +459,46 @@ test('AFK permission policy auto-approves all requests including bash', async ()
   );
 });
 
+test('opencode provider aborts when signal is triggered', async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async () => ({ sessionId: 'session-abort', output: [] }),
+  });
+
+  await assert.rejects(
+    provider.execute({
+      plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+      ticketIndex: 0,
+      prompt: 'run',
+      signal: controller.signal,
+    }),
+    /run killed/,
+  );
+});
+
+test('opencode provider forwards signal to executor', async () => {
+  let capturedSignal: AbortSignal | undefined;
+  const controller = new AbortController();
+
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedSignal = input.signal;
+      return { sessionId: 'session-signal', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+    signal: controller.signal,
+  });
+
+  assert.equal(capturedSignal, controller.signal);
+});
+
 test('shared permission coordinator serializes concurrent tickets FIFO', async () => {
   const promptOrder: string[] = [];
   const activeByPrompt: number[] = [];

@@ -39,7 +39,7 @@ export class Scheduler {
 
   async launch(
     plan: LaunchPlan,
-    options: { onProgress?: AgentExecutionProgressCallback; runId?: string } = {},
+    options: { onProgress?: AgentExecutionProgressCallback; runId?: string; signal?: AbortSignal } = {},
   ): Promise<SchedulerRunResult> {
     if (!plan.tickets.length) return { scheduled: false, message: 'No ticket available for launch', ticketResults: [] };
 
@@ -143,6 +143,10 @@ export class Scheduler {
 
     const startNext = (): void => {
       while (running.size < (this.deps.concurrencyLimit ?? 3)) {
+        if (options.signal?.aborted) {
+          if (!running.size) resolveIdle?.();
+          return;
+        }
         const index = pending.findIndex((ticket) =>
           isReady(
             ticket,
@@ -198,7 +202,7 @@ export class Scheduler {
         const run = this.deps.runner
           .launch(
             { ...plan, checkout, checkouts, snapshots, tickets: [ticket] },
-            { onProgress: options.onProgress, runId: options.runId },
+            { onProgress: options.onProgress, runId: options.runId, signal: options.signal },
           )
           .then(async (result) => {
             const outcome = result.outcome ?? (result.scheduled ? 'completed' : 'not-scheduled');

@@ -8,6 +8,7 @@ export interface LiveRunView {
   done(): void;
   cleanup(): void;
   waitForQuit(): Promise<void>;
+  killRequested(): boolean;
 }
 
 export type LiveRunViewKind = 'text' | 'dashboard';
