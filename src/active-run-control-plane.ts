@@ -1,7 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export type ActiveRunLifecycleState = 'starting' | 'running' | 'paused' | 'killing' | 'cleared';
+
+export interface RunControlCommand {
+  type: 'pause' | 'resume';
+  issuedAt: string;
+  clientPid: number;
+}
 
 export interface ActiveRunRecord {
   version: 1;
@@ -80,6 +86,48 @@ export class ActiveRunControlPlane {
     const cleared: ActiveRunRecord = { ...current, state: 'cleared', heartbeatAt: isoFromEpoch(this.now()) };
     writeFileSync(this.activeRunPath, `${JSON.stringify(cleared, null, 2)}\n`, 'utf8');
     rmSync(this.activeRunPath, { force: true });
+    this.clearCommands(runId);
+  }
+
+  private commandPath(runId: string): string {
+    return path.join(path.dirname(this.activeRunPath), 'active-run-commands', `${runId}.jsonl`);
+  }
+
+  enqueueCommand(runId: string, command: Omit<RunControlCommand, 'issuedAt'>): void {
+    const current = this.read();
+    if (!current || current.runId !== runId) return;
+    const commandPath = this.commandPath(runId);
+    mkdirSync(path.dirname(commandPath), { recursive: true });
+    const entry: RunControlCommand = { ...command, issuedAt: isoFromEpoch(this.now()) };
+    appendFileSync(commandPath, `${JSON.stringify(entry)}\n`, 'utf8');
+  }
+
+  readCommands(runId: string, afterOffset: number): { commands: RunControlCommand[]; nextOffset: number } {
+    const commandPath = this.commandPath(runId);
+    if (!existsSync(commandPath)) return { commands: [], nextOffset: afterOffset };
+    const raw = readFileSync(commandPath, 'utf8');
+    const lines = raw.split('\n');
+    const commands: RunControlCommand[] = [];
+    let nextOffset = afterOffset;
+    for (let i = afterOffset; i < lines.length; i++) {
+      const line = lines[i]?.trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line) as Partial<RunControlCommand>;
+        if (parsed && typeof parsed === 'object' && (parsed.type === 'pause' || parsed.type === 'resume')) {
+          commands.push(parsed as RunControlCommand);
+        }
+      } catch {
+        // skip malformed line
+      }
+      nextOffset = i + 1;
+    }
+    return { commands, nextOffset };
+  }
+
+  clearCommands(runId: string): void {
+    const commandPath = this.commandPath(runId);
+    rmSync(commandPath, { force: true });
   }
 
   read(): ActiveRunRecord | null {
