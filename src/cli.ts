@@ -302,6 +302,30 @@ export async function runAfk(
   const notificationPolicy = new NotificationPolicy();
   const notificationAdapter = new OpenTUINotificationAdapter(renderer);
   const eventStream = new ActiveRunEventStream(repoRoot, runId);
+  let currentRunState: 'running' | 'paused' = 'running';
+
+  const applyPause = () => {
+    if (currentRunState === 'paused') return;
+    currentRunState = 'paused';
+    scheduler.pause();
+    activeRunControlPlane.transition(runId, 'paused');
+    view.setRunState?.('paused');
+    const event: import('./types.js').AgentExecutionProgressEvent = { ticketLabel: '__run__', message: 'run paused' };
+    eventStream.appendProgress(event);
+    view.update(event);
+  };
+
+  const applyResume = () => {
+    if (currentRunState === 'running') return;
+    currentRunState = 'running';
+    scheduler.resume();
+    activeRunControlPlane.transition(runId, 'running');
+    view.setRunState?.('running');
+    const event: import('./types.js').AgentExecutionProgressEvent = { ticketLabel: '__run__', message: 'run resumed' };
+    eventStream.appendProgress(event);
+    view.update(event);
+  };
+
   const view = createLiveRunView({
     kind: io.stdout.isTTY ? 'dashboard' : 'text',
     stdout: io.stdout,
@@ -316,6 +340,13 @@ export async function runAfk(
       reviewerModelId: plan.reviewerModel?.id,
       reviewerHarness,
       concurrency,
+    },
+    onPauseResume: () => {
+      if (currentRunState === 'running') {
+        applyPause();
+      } else {
+        applyResume();
+      }
     },
   });
   const progressLine =
@@ -398,8 +429,20 @@ export async function runAfk(
     },
   });
 
+  let commandPollInterval: ReturnType<typeof setInterval> | null = null;
+  let lastCommandOffset = 0;
+
   let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
   try {
+    commandPollInterval = setInterval(() => {
+      const { commands, nextOffset } = activeRunControlPlane.readCommands(runId, lastCommandOffset);
+      lastCommandOffset = nextOffset;
+      for (const command of commands) {
+        if (command.type === 'pause') applyPause();
+        else if (command.type === 'resume') applyResume();
+      }
+    }, 250);
+
     schedulerResult = await scheduler.launch(plan, {
       onProgress,
       runId,
@@ -422,9 +465,11 @@ export async function runAfk(
       }
     }
   } catch (error) {
+    if (commandPollInterval) clearInterval(commandPollInterval);
     view.cleanup();
     throw error;
   }
+  if (commandPollInterval) clearInterval(commandPollInterval);
   await view.waitForQuit();
     return {
       code: 0,
@@ -463,10 +508,19 @@ async function attachToActiveRun(
     stdout: io.stdout,
     runOptions: { runId },
     repoRoot,
+    onPauseResume: () => {
+      const active = controlPlane.read();
+      const nextCommand = active?.state === 'paused'
+        ? ({ type: 'resume' as const, clientPid: process.pid })
+        : ({ type: 'pause' as const, clientPid: process.pid });
+      controlPlane.enqueueCommand(runId, nextCommand);
+    },
   });
   const stream = new ActiveRunEventStream(repoRoot, runId);
   let offset = 0;
   let quit = false;
+  let lastRunState = controlPlane.read()?.state ?? 'running';
+  view.setRunState?.(lastRunState === 'paused' ? 'paused' : 'running');
   const quitPromise = view.waitForQuit().then(() => {
     quit = true;
   });
@@ -476,6 +530,15 @@ async function attachToActiveRun(
     const { events, nextOffset } = stream.readFromOffset(offset);
     offset = nextOffset;
     for (const event of events) view.update(event);
+    if (active && active.state !== lastRunState) {
+      lastRunState = active.state;
+      view.setRunState?.(active.state === 'paused' ? 'paused' : 'running');
+      const event: import('./types.js').AgentExecutionProgressEvent = {
+        ticketLabel: '__run__',
+        message: active.state === 'paused' ? 'run paused' : 'run resumed',
+      };
+      view.update(event);
+    }
     if (!active || active.runId !== runId) {
       view.done();
       break;
