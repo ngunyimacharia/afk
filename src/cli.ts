@@ -136,6 +136,7 @@ export async function runAfk(
   }
   const activeProjectConfig = projectConfig.config;
   activeRunControlPlane.transition(runId, 'running');
+  const heartbeatTimer = setInterval(() => activeRunControlPlane.heartbeat(runId), 30_000);
   try {
     const repository = new TicketRepository(repoRoot);
     let allTickets: TicketRecord[];
@@ -448,6 +449,7 @@ export async function runAfk(
       ].join('\n'),
     };
   } finally {
+    clearInterval(heartbeatTimer);
     activeRunControlPlane.clear(runId);
   }
 }
