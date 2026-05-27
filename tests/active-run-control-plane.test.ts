@@ -36,7 +36,12 @@ test('acquireOrAttach attaches while active run is healthy', () => {
     })}\n`,
     'utf8',
   );
-  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 2_000, pid: process.pid, staleHeartbeatMs: 5_000 });
+  const controlPlane = new ActiveRunControlPlane({
+    repoRoot,
+    now: () => 2_000,
+    pid: process.pid,
+    staleHeartbeatMs: 5_000,
+  });
 
   const result = controlPlane.acquireOrAttach('run-new');
   assert.equal(result.action, 'attached');
@@ -60,7 +65,12 @@ test('acquireOrAttach reclaims stale lock with expired heartbeat', () => {
     })}\n`,
     'utf8',
   );
-  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 100_000, pid: process.pid, staleHeartbeatMs: 1_000 });
+  const controlPlane = new ActiveRunControlPlane({
+    repoRoot,
+    now: () => 100_000,
+    pid: process.pid,
+    staleHeartbeatMs: 1_000,
+  });
 
   const result = controlPlane.acquireOrAttach('run-new');
   assert.equal(result.action, 'started');

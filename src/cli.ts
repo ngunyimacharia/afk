@@ -186,17 +186,17 @@ export async function runAfk(
 
     try {
       const wizard = await runInteractiveLaunchWizard({
-      io,
-      repoRoot,
-      availableHarnesses,
-      discoverModels: async (selectedHarness) => {
-        if (harnessModelCache[selectedHarness]) return harnessModelCache[selectedHarness];
-        if (selectedHarness === 'Claude-Kimi') return discoverClaudeKimiModels();
-        return discoverOpenCodeModels();
-      },
-      tickets,
-      preferences: launchPreferences,
-    });
+        io,
+        repoRoot,
+        availableHarnesses,
+        discoverModels: async (selectedHarness) => {
+          if (harnessModelCache[selectedHarness]) return harnessModelCache[selectedHarness];
+          if (selectedHarness === 'Claude-Kimi') return discoverClaudeKimiModels();
+          return discoverOpenCodeModels();
+        },
+        tickets,
+        preferences: launchPreferences,
+      });
       if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
       harness = wizard.harness ?? 'OpenCode';
       reviewerHarness = wizard.reviewerHarness ?? harness;
@@ -219,233 +219,235 @@ export async function runAfk(
         message: `Model discovery failed. Configure the selected provider and retry.\nReason: ${reason}`,
       };
     }
-  if (!model) return { code: 0, message: 'Launch cancelled' };
-  if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
-  if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
-  const implementationExecutor = createExecutor(harness);
-  const reviewerExecutor = createExecutor(reviewerHarness);
-  const preflight = await preflightSelectedModels(
-    implementationExecutor,
-    model,
-    reviewerExecutor,
-    reviewerModel,
-    harness,
-    reviewerHarness,
-  );
-  if (preflight) return { code: 1, message: preflight };
-  const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
-  selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
-  const refresh = new FeatureExecutionRefreshService(repoRoot);
-  let featureGraphs: Record<string, FeatureExecutionGraph>;
-  try {
-    featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
-  } catch (error) {
-    return { code: 1, message: formatTicketMetadataError(error) };
-  }
-  const orderingBlock = validateSelectedTicketDependencies(selectedTickets, allTickets);
-  if (orderingBlock) return { code: 1, message: orderingBlock };
-  selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
-  const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
-  const featureBlock = validateSelectedFeatureDependencies(workspaceGraph, selectedFeatures);
-  if (featureBlock) return { code: 1, message: featureBlock };
-  const firstTicket = selectedTickets[0];
-  const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
-  let checkouts: ReturnType<WorktreePreparationService['prepare']>[];
-  try {
-    checkouts = checkoutFeatures.map((feature) => {
-      const stackParent = workspaceGraph.features[feature]?.stackParent;
-      return worktreePreparationService.prepare({
-        repoRoot,
-        featureSlug: feature,
-        baseRef: stackParent ? stackParent : undefined,
-        selectedTicketPaths: selectedTickets
-          .filter((ticket) => ticket.feature === feature)
-          .map((ticket) => ticket.path),
-        projectConfig: activeProjectConfig,
-      });
-    });
-  } catch (error) {
-    if (error instanceof WorktreeReadinessBlockedError)
-      return { code: 1, message: `Launch blocked by worktree readiness: ${error.message}` };
-    throw error;
-  }
-  const checkoutsByFeature = Object.fromEntries(checkoutFeatures.map((feature, index) => [feature, checkouts[index]]));
-  const checkout = checkoutsByFeature[firstTicket.feature];
-  const featureDependencies = Object.fromEntries(
-    selectedFeatures.map((feature) => [feature, workspaceGraph.features[feature]?.dependsOnFeatures ?? []]),
-  );
-  const plan = buildLaunchPlan(
-    repoRoot,
-    model,
-    selectedTickets,
-    checkout,
-    { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
-    checkoutsByFeature,
-    featureDependencies,
-  );
-  const permissionCoordinator = new PermissionCoordinator({
-    ticketLabel: selectedTickets[0]?.label,
-    autoApprove: true,
-  });
-  const executionProvider = createAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-  const reviewerProvider = createAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
-  const runner = new SingleTicketRunner(
-    runtimeStore,
-    new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
-    launchPreferences.budgets,
-  );
-  const renderer: OpenTUIRenderer = {
-    capabilities: { notifications: io.stdout.isTTY ?? false },
-    notify: io.stdout.isTTY
-      ? (title: string, message: string) => {
-          io.stdout.write(`\x1b]777;notify;${title};${message}\x07`);
-        }
-      : undefined,
-  };
-  const notificationPolicy = new NotificationPolicy();
-  const notificationAdapter = new OpenTUINotificationAdapter(renderer);
-  const view = createLiveRunView({
-    kind: io.stdout.isTTY ? 'dashboard' : 'text',
-    stdout: io.stdout,
-    isPromptActive: () => permissionCoordinator.promptActive,
-    providerName: providerNameFromHarness(harness),
-    selectedTickets: plan.tickets,
-    repoRoot,
-    runOptions: {
-      runId,
-      modelId: plan.model.id,
+    if (!model) return { code: 0, message: 'Launch cancelled' };
+    if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
+    if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
+    const implementationExecutor = createExecutor(harness);
+    const reviewerExecutor = createExecutor(reviewerHarness);
+    const preflight = await preflightSelectedModels(
+      implementationExecutor,
+      model,
+      reviewerExecutor,
+      reviewerModel,
       harness,
-      reviewerModelId: plan.reviewerModel?.id,
       reviewerHarness,
-      concurrency,
-    },
-  });
-  const progressLine =
-    'updateNotificationState' in view ? (view as unknown as { updateNotificationState(state: unknown): void }) : null;
-  if (progressLine) {
-    progressLine.updateNotificationState({
-      capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
+    );
+    if (preflight) return { code: 1, message: preflight };
+    const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
+    selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
+    const refresh = new FeatureExecutionRefreshService(repoRoot);
+    let featureGraphs: Record<string, FeatureExecutionGraph>;
+    try {
+      featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
+    } catch (error) {
+      return { code: 1, message: formatTicketMetadataError(error) };
+    }
+    const orderingBlock = validateSelectedTicketDependencies(selectedTickets, allTickets);
+    if (orderingBlock) return { code: 1, message: orderingBlock };
+    selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
+    const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
+    const featureBlock = validateSelectedFeatureDependencies(workspaceGraph, selectedFeatures);
+    if (featureBlock) return { code: 1, message: featureBlock };
+    const firstTicket = selectedTickets[0];
+    const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
+    let checkouts: ReturnType<WorktreePreparationService['prepare']>[];
+    try {
+      checkouts = checkoutFeatures.map((feature) => {
+        const stackParent = workspaceGraph.features[feature]?.stackParent;
+        return worktreePreparationService.prepare({
+          repoRoot,
+          featureSlug: feature,
+          baseRef: stackParent ? stackParent : undefined,
+          selectedTicketPaths: selectedTickets
+            .filter((ticket) => ticket.feature === feature)
+            .map((ticket) => ticket.path),
+          projectConfig: activeProjectConfig,
+        });
+      });
+    } catch (error) {
+      if (error instanceof WorktreeReadinessBlockedError)
+        return { code: 1, message: `Launch blocked by worktree readiness: ${error.message}` };
+      throw error;
+    }
+    const checkoutsByFeature = Object.fromEntries(
+      checkoutFeatures.map((feature, index) => [feature, checkouts[index]]),
+    );
+    const checkout = checkoutsByFeature[firstTicket.feature];
+    const featureDependencies = Object.fromEntries(
+      selectedFeatures.map((feature) => [feature, workspaceGraph.features[feature]?.dependsOnFeatures ?? []]),
+    );
+    const plan = buildLaunchPlan(
+      repoRoot,
+      model,
+      selectedTickets,
+      checkout,
+      { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
+      checkoutsByFeature,
+      featureDependencies,
+    );
+    const permissionCoordinator = new PermissionCoordinator({
+      ticketLabel: selectedTickets[0]?.label,
+      autoApprove: true,
     });
-  }
-  const onProgress = (event: import('./types.js').AgentExecutionProgressEvent) => {
-    view.update(event);
-    const policyEvent = classifyProgressEvent(event);
-    if (policyEvent) {
-      const payload = notificationPolicy.maybeNotify(policyEvent);
-      notificationAdapter.maybeNotify(payload).then((state) => {
+    const executionProvider = createAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
+    const reviewerProvider = createAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+    const runner = new SingleTicketRunner(
+      runtimeStore,
+      new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
+      launchPreferences.budgets,
+    );
+    const renderer: OpenTUIRenderer = {
+      capabilities: { notifications: io.stdout.isTTY ?? false },
+      notify: io.stdout.isTTY
+        ? (title: string, message: string) => {
+            io.stdout.write(`\x1b]777;notify;${title};${message}\x07`);
+          }
+        : undefined,
+    };
+    const notificationPolicy = new NotificationPolicy();
+    const notificationAdapter = new OpenTUINotificationAdapter(renderer);
+    const view = createLiveRunView({
+      kind: io.stdout.isTTY ? 'dashboard' : 'text',
+      stdout: io.stdout,
+      isPromptActive: () => permissionCoordinator.promptActive,
+      providerName: providerNameFromHarness(harness),
+      selectedTickets: plan.tickets,
+      repoRoot,
+      runOptions: {
+        runId,
+        modelId: plan.model.id,
+        harness,
+        reviewerModelId: plan.reviewerModel?.id,
+        reviewerHarness,
+        concurrency,
+      },
+    });
+    const progressLine =
+      'updateNotificationState' in view ? (view as unknown as { updateNotificationState(state: unknown): void }) : null;
+    if (progressLine) {
+      progressLine.updateNotificationState({
+        capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
+      });
+    }
+    const onProgress = (event: import('./types.js').AgentExecutionProgressEvent) => {
+      view.update(event);
+      const policyEvent = classifyProgressEvent(event);
+      if (policyEvent) {
+        const payload = notificationPolicy.maybeNotify(policyEvent);
+        notificationAdapter.maybeNotify(payload).then((state) => {
+          if (payload && progressLine) {
+            progressLine.updateNotificationState({
+              capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
+              lastDelivery: { state, payload },
+            });
+          }
+        });
+      }
+    };
+
+    const mergeBackCoordinator = new MergeBackCoordinator({
+      agentExecutionProvider: new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
+      runtimeStore,
+    });
+
+    const gitMergeBackProvider = new GitFeatureMergeBackProvider(repoRoot, checkoutsByFeature);
+    const gitLockProvider = new GitFeatureLockProvider(checkoutsByFeature);
+
+    const scheduler = new Scheduler({
+      runner,
+      scratchWorktreeService: new ScratchWorktreeService(),
+      concurrencyLimit: concurrency,
+      featureMergeBackProvider: {
+        isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>
+          mergeBackCoordinator.isWaveMerged(feature, wave, issueNames) ||
+          gitMergeBackProvider.isWaveMerged(feature, wave, issueNames),
+      },
+      featureLockProvider: {
+        isLocked: (feature: string) => gitLockProvider.isLocked(feature) || mergeBackCoordinator.isLocked(feature),
+      },
+      onWaveComplete: async (feature: string, wave: number, issueNames: string[]) => {
+        const featureCheckout = checkoutsByFeature[feature];
+        if (!featureCheckout) return;
+        const tickets = issueNames.map((issueName) => {
+          const ticketRecord = plan.tickets.find((t) => t.feature === feature && t.issueName === issueName);
+          return {
+            feature,
+            issueName,
+            branchName: `afk/${feature}/${issueName}`,
+            worktreePath: featureCheckout.worktreePath,
+            dependsOn: ticketRecord?.dependsOn,
+            metadataPath: path.join(
+              repoRoot,
+              '.scratch',
+              '.opencode-afk-logs',
+              'runtime-metadata',
+              `${feature}-${issueName}.json`,
+            ),
+            logPath: path.join(repoRoot, '.scratch', '.opencode-afk-logs', `${feature}-${issueName}.log`),
+          };
+        });
+        await mergeBackCoordinator.mergeWave({
+          repoRoot,
+          feature,
+          featureWorktreePath: featureCheckout.worktreePath,
+          featureBranchName: featureCheckout.effectiveBranchName,
+          wave,
+          tickets,
+          model: plan.model,
+          reviewerModel: plan.reviewerModel,
+          reviewerPrompt: plan.reviewerPrompt,
+          onProgress,
+        });
+      },
+    });
+
+    let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
+    try {
+      schedulerResult = await scheduler.launch(plan, {
+        onProgress,
+        runId,
+      });
+      const runOutcomeEvent = classifyRunOutcome({
+        runId,
+        ticketResults: schedulerResult.ticketResults.map((r) => ({
+          ticketLabel: r.ticket.label,
+          outcome: r.outcome,
+        })),
+      });
+      if (runOutcomeEvent) {
+        const payload = notificationPolicy.maybeNotify(runOutcomeEvent);
+        const state = await notificationAdapter.maybeNotify(payload);
         if (payload && progressLine) {
           progressLine.updateNotificationState({
             capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
             lastDelivery: { state, payload },
           });
         }
-      });
-    }
-  };
-
-  const mergeBackCoordinator = new MergeBackCoordinator({
-    agentExecutionProvider: new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
-    runtimeStore,
-  });
-
-  const gitMergeBackProvider = new GitFeatureMergeBackProvider(repoRoot, checkoutsByFeature);
-  const gitLockProvider = new GitFeatureLockProvider(checkoutsByFeature);
-
-  const scheduler = new Scheduler({
-    runner,
-    scratchWorktreeService: new ScratchWorktreeService(),
-    concurrencyLimit: concurrency,
-    featureMergeBackProvider: {
-      isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>
-        mergeBackCoordinator.isWaveMerged(feature, wave, issueNames) ||
-        gitMergeBackProvider.isWaveMerged(feature, wave, issueNames),
-    },
-    featureLockProvider: {
-      isLocked: (feature: string) => gitLockProvider.isLocked(feature) || mergeBackCoordinator.isLocked(feature),
-    },
-    onWaveComplete: async (feature: string, wave: number, issueNames: string[]) => {
-      const featureCheckout = checkoutsByFeature[feature];
-      if (!featureCheckout) return;
-      const tickets = issueNames.map((issueName) => {
-        const ticketRecord = plan.tickets.find((t) => t.feature === feature && t.issueName === issueName);
-        return {
-          feature,
-          issueName,
-          branchName: `afk/${feature}/${issueName}`,
-          worktreePath: featureCheckout.worktreePath,
-          dependsOn: ticketRecord?.dependsOn,
-          metadataPath: path.join(
-            repoRoot,
-            '.scratch',
-            '.opencode-afk-logs',
-            'runtime-metadata',
-            `${feature}-${issueName}.json`,
-          ),
-          logPath: path.join(repoRoot, '.scratch', '.opencode-afk-logs', `${feature}-${issueName}.log`),
-        };
-      });
-      await mergeBackCoordinator.mergeWave({
-        repoRoot,
-        feature,
-        featureWorktreePath: featureCheckout.worktreePath,
-        featureBranchName: featureCheckout.effectiveBranchName,
-        wave,
-        tickets,
-        model: plan.model,
-        reviewerModel: plan.reviewerModel,
-        reviewerPrompt: plan.reviewerPrompt,
-        onProgress,
-      });
-    },
-  });
-
-  let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
-  try {
-    schedulerResult = await scheduler.launch(plan, {
-      onProgress,
-      runId,
-    });
-    const runOutcomeEvent = classifyRunOutcome({
-      runId,
-      ticketResults: schedulerResult.ticketResults.map((r) => ({
-        ticketLabel: r.ticket.label,
-        outcome: r.outcome,
-      })),
-    });
-    if (runOutcomeEvent) {
-      const payload = notificationPolicy.maybeNotify(runOutcomeEvent);
-      const state = await notificationAdapter.maybeNotify(payload);
-      if (payload && progressLine) {
-        progressLine.updateNotificationState({
-          capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
-          lastDelivery: { state, payload },
-        });
       }
+    } catch (error) {
+      view.cleanup();
+      throw error;
     }
-  } catch (error) {
-    view.cleanup();
-    throw error;
-  }
-  await view.waitForQuit();
+    await view.waitForQuit();
     return {
       code: 0,
       message: [
-      `Selected model: ${plan.model.id}`,
-      `Selected harness: ${harness}`,
-      `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
-      `Selected reviewer harness: ${reviewerHarness}`,
-      `Reviewer prompt: ${plan.reviewerPrompt?.id ?? 'unknown'}`,
-      `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
-      `Selected features (${selectedFeatures.length}): ${selectedFeatures.join(', ')}`,
-      `Concurrency: ${concurrency}`,
-      `Repo root: ${path.resolve(plan.repoRoot)}`,
-      `Worktree: ${plan.checkout.effectiveWorktreeName}`,
-      `Branch: ${plan.checkout.effectiveBranchName}`,
-      ...readRunOutcomeLines(runtimeStore, repoRoot, plan.tickets, {
-        runId,
-        ticketResults: schedulerResult.ticketResults,
-      }),
-      ...formatManualPermissionReviewLines(permissionCoordinator.history),
+        `Selected model: ${plan.model.id}`,
+        `Selected harness: ${harness}`,
+        `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
+        `Selected reviewer harness: ${reviewerHarness}`,
+        `Reviewer prompt: ${plan.reviewerPrompt?.id ?? 'unknown'}`,
+        `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
+        `Selected features (${selectedFeatures.length}): ${selectedFeatures.join(', ')}`,
+        `Concurrency: ${concurrency}`,
+        `Repo root: ${path.resolve(plan.repoRoot)}`,
+        `Worktree: ${plan.checkout.effectiveWorktreeName}`,
+        `Branch: ${plan.checkout.effectiveBranchName}`,
+        ...readRunOutcomeLines(runtimeStore, repoRoot, plan.tickets, {
+          runId,
+          ticketResults: schedulerResult.ticketResults,
+        }),
+        ...formatManualPermissionReviewLines(permissionCoordinator.history),
       ].join('\n'),
     };
   } finally {
