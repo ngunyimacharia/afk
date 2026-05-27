@@ -426,6 +426,65 @@ test('feature dependency validation passes for selected upstream', () => {
   assert.equal(validateSelectedFeatureDependencies(graph, ['parent', 'child']), null);
 });
 
+test('attaches to active run when healthy active-run.json exists', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-attach-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId: 'existing-run',
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}\n`,
+    'utf8',
+  );
+
+  const result = await runAfk(repoRoot, {
+    io: { stdin: { isTTY: true } as never, stdout: { isTTY: true } as never },
+    env: { ...process.env, CI: '' },
+  });
+
+  assert.equal(result.code, 0);
+  assert.match(result.message, /Attached to active run/);
+  assert.match(result.message, /existing-run/);
+});
+
+test('does not attach to stale active run with expired heartbeat', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stale-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId: 'stale-run',
+      pid: process.pid,
+      startedAt: new Date(100_000).toISOString(),
+      heartbeatAt: new Date(100_001).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}\n`,
+    'utf8',
+  );
+
+  const result = await runAfk(repoRoot, {
+    io: { stdin: { isTTY: true } as never, stdout: { isTTY: true } as never },
+    env: { ...process.env, CI: '' },
+  });
+
+  assert.equal(result.code, 0);
+  assert.doesNotMatch(result.message, /Attached to active run/);
+  assert.match(result.message, /No pending AFK tickets found/);
+});
+
 function writeMinimalAfkConfig(repoRoot: string): void {
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));
 }
