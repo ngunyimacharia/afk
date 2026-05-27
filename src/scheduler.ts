@@ -35,7 +35,26 @@ export interface SchedulerDependencies {
 }
 
 export class Scheduler {
+  private paused = false;
+  private resumeResolver: (() => void) | null = null;
+  private startNextRef?: () => void;
+
   constructor(private readonly deps: SchedulerDependencies) {}
+
+  pause(): void {
+    this.paused = true;
+  }
+
+  resume(): void {
+    this.paused = false;
+    this.resumeResolver?.();
+    this.resumeResolver = null;
+    this.startNextRef?.();
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
 
   async launch(
     plan: LaunchPlan,
@@ -142,6 +161,17 @@ export class Scheduler {
     }
 
     const startNext = (): void => {
+      this.startNextRef = startNext;
+
+      if (this.paused) {
+        if (!running.size) {
+          // Block until resumed; resume() will call startNextRef again.
+          return;
+        }
+        // Running tickets exist; they'll call startNext from finally when done.
+        return;
+      }
+
       while (running.size < (this.deps.concurrencyLimit ?? 3)) {
         const index = pending.findIndex((ticket) =>
           isReady(
