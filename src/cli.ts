@@ -155,6 +155,7 @@ export async function runAfk(
     let concurrency = 3;
     let harness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
     let reviewerHarness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
+    let mergeBackToBase = false;
 
     const harnessModelCache: Record<string, LaunchModel[]> = {};
     const availableHarnesses: string[] = [];
@@ -205,12 +206,14 @@ export async function runAfk(
       reviewerPrompt = wizard.reviewerPrompt;
       selectedTickets = wizard.tickets ?? [];
       concurrency = wizard.concurrency ?? concurrency;
+      mergeBackToBase = wizard.mergeBackToBase ?? false;
       runtimeStore.writeLaunchPreferences({
         harness: wizard.harness,
         modelId: model?.id,
         reviewerHarness: wizard.reviewerHarness,
         reviewerModelId: reviewerModel?.id,
         concurrency,
+        mergeBackToBase,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown model discovery error';
@@ -402,6 +405,7 @@ export async function runAfk(
     });
 
     let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
+    let baseBranchMergeResult: { success: boolean; lines: string[] } | null = null;
     try {
       schedulerResult = await scheduler.launch(plan, {
         onProgress,
@@ -424,6 +428,81 @@ export async function runAfk(
           });
         }
       }
+
+      baseBranchMergeResult = null;
+      if (mergeBackToBase && schedulerResult.scheduled) {
+        try {
+          const baseBranch = runGit(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
+          const featuresToMerge = orderSelectedFeaturesByWaves(workspaceGraph).filter((feature) => {
+            const featureTickets = plan.tickets.filter((t) => t.feature === feature);
+            return featureTickets.every((t) => {
+              const result = schedulerResult.ticketResults.find(
+                (r) => r.ticket.feature === t.feature && r.ticket.issueName === t.issueName,
+              );
+              return result && (result.outcome === 'completed' || isTerminalTicketStatus(t.status));
+            });
+          });
+
+          if (featuresToMerge.length > 0) {
+            const merged: string[] = [];
+            const failed: Array<{ feature: string; reason: string }> = [];
+            for (const feature of featuresToMerge) {
+              const checkout = checkoutsByFeature[feature];
+              if (!checkout) continue;
+              onProgress({
+                ticketLabel: `${feature}/base-merge`,
+                message: `Merging ${checkout.effectiveBranchName} into ${baseBranch}...`,
+                kind: 'message',
+              });
+              const result = await mergeBackCoordinator.mergeFeatureBranchToBase({
+                repoRoot,
+                baseBranch,
+                featureBranch: checkout.effectiveBranchName,
+                feature,
+                model: plan.model,
+                reviewerModel: plan.reviewerModel,
+                reviewerPrompt: plan.reviewerPrompt,
+                onProgress,
+              });
+              if (result.success) {
+                merged.push(feature);
+                onProgress({
+                  ticketLabel: `${feature}/base-merge`,
+                  message: `Merged ${checkout.effectiveBranchName} into ${baseBranch}`,
+                  kind: 'message',
+                });
+              } else {
+                failed.push({ feature, reason: result.reason });
+                onProgress({
+                  ticketLabel: `${feature}/base-merge`,
+                  message: `Merge failed: ${result.reason}`,
+                  kind: 'failure',
+                });
+                break;
+              }
+            }
+            baseBranchMergeResult = {
+              success: failed.length === 0,
+              lines: [
+                `Base branch merge-back (${baseBranch}):`,
+                ...merged.map((f) => `  - ${f}: merged`),
+                ...failed.map((f) => `  - ${f.feature}: failed (${f.reason})`),
+              ],
+            };
+          } else {
+            baseBranchMergeResult = {
+              success: true,
+              lines: ['Base branch merge-back: no features eligible for merge-back'],
+            };
+          }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          baseBranchMergeResult = {
+            success: false,
+            lines: [`Base branch merge-back failed: ${reason}`],
+          };
+        }
+      }
     } catch (error) {
       view.cleanup();
       throw error;
@@ -443,6 +522,7 @@ export async function runAfk(
         `Repo root: ${path.resolve(plan.repoRoot)}`,
         `Worktree: ${plan.checkout.effectiveWorktreeName}`,
         `Branch: ${plan.checkout.effectiveBranchName}`,
+        ...(baseBranchMergeResult ? ['', ...baseBranchMergeResult.lines] : []),
         ...readRunOutcomeLines(runtimeStore, repoRoot, plan.tickets, {
           runId,
           ticketResults: schedulerResult.ticketResults,

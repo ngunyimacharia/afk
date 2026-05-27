@@ -80,6 +80,7 @@ export class RuntimeStore {
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)
         preferences.concurrency = value.concurrency;
+      if (typeof value.mergeBackToBase === 'boolean') preferences.mergeBackToBase = value.mergeBackToBase;
       const budgets = value.budgets;
       if (budgets && typeof budgets === 'object' && !Array.isArray(budgets)) {
         const budgetRecord = budgets as Record<string, unknown>;

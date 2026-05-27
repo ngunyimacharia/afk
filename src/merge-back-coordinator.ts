@@ -107,6 +107,124 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
     }
   }
 
+  async mergeFeatureBranchToBase(input: {
+    repoRoot: string;
+    baseBranch: string;
+    featureBranch: string;
+    feature: string;
+    model: LaunchModel;
+    reviewerModel?: LaunchModel;
+    reviewerPrompt?: { id: string; label: string; path: string; content?: string };
+    onProgress?: AgentExecutionProgressCallback;
+  }): Promise<{ success: boolean; reason: string; conflictPaths?: string[] }> {
+    const { repoRoot, baseBranch, featureBranch, feature } = input;
+
+    const status = runGit(repoRoot, ['status', '--porcelain']);
+    const hasChanges = status.trim().length > 0;
+    let stashed = false;
+    if (hasChanges) {
+      try {
+        runGit(repoRoot, ['stash', 'push', '-m', 'AFK auto-merge-back stash']);
+        stashed = true;
+      } catch {
+        return { success: false, reason: 'Base branch has uncommitted changes and stash failed' };
+      }
+    }
+
+    try {
+      const currentBranch = runGit(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
+      if (currentBranch !== baseBranch) {
+        try {
+          runGit(repoRoot, ['checkout', baseBranch]);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : `Failed to checkout ${baseBranch}`;
+          return { success: false, reason };
+        }
+      }
+
+      const mergeResult = tryMerge(repoRoot, featureBranch);
+
+      if (mergeResult.success) {
+        return { success: true, reason: '' };
+      }
+
+      const conflictPaths = getConflictPaths(repoRoot);
+      const budget = this.deps.conflictResolutionBudget ?? 3;
+
+      for (let attempt = 1; attempt <= budget; attempt++) {
+        const ticket: MergeBackTicket = {
+          feature,
+          issueName: 'base-merge',
+          branchName: featureBranch,
+          worktreePath: repoRoot,
+          metadataPath: '',
+          logPath: '',
+        };
+        const prompt = buildConflictResolutionPrompt(ticket, conflictPaths, attempt, budget);
+        const agentResult = await this.invokeReviewerAgentForBaseMerge(input, prompt);
+
+        if (agentResult.status === 'completed') {
+          const remainingConflicts = getConflictPaths(repoRoot);
+          const markersRemain = hasConflictMarkers(repoRoot);
+
+          if (remainingConflicts.length === 0 && !markersRemain) {
+            const readiness = runReadinessCommands({
+              cwd: repoRoot,
+              executor: this.deps.readinessExecutor,
+            });
+            const failed = [...readiness.staticStyleChecks, readiness.smoke].find((r) => r.status === 'failed');
+            if (!failed) {
+              if (isMergeInProgress(repoRoot)) {
+                commitMerge(repoRoot, `Merge ${featureBranch} into ${baseBranch}`);
+              }
+              return { success: true, reason: '' };
+            }
+
+            if (attempt === budget) {
+              abortMerge(repoRoot);
+              return {
+                success: false,
+                reason: `Readiness checks failed after conflict resolution: ${failed.command}`,
+                conflictPaths,
+              };
+            }
+            continue;
+          }
+
+          if (attempt === budget) {
+            abortMerge(repoRoot);
+            return {
+              success: false,
+              reason: `Conflicts remain after ${budget} resolution attempts`,
+              conflictPaths: remainingConflicts,
+            };
+          }
+          continue;
+        }
+
+        if (attempt === budget) {
+          abortMerge(repoRoot);
+          return {
+            success: false,
+            reason: `Reviewer agent failed to resolve conflicts after ${budget} attempts`,
+            conflictPaths,
+          };
+        }
+      }
+
+      abortMerge(repoRoot);
+      return { success: false, reason: 'Unexpected merge failure', conflictPaths };
+    } finally {
+      if (stashed) {
+        try {
+          runGit(repoRoot, ['stash', 'pop']);
+        } catch {
+          // Best effort
+        }
+      }
+    }
+  }
+
   private async mergeSingleTicket(
     input: MergeWaveInput,
     ticket: MergeBackTicket,
@@ -269,6 +387,53 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
     prompt: string,
   ): Promise<AgentExecutionResult> {
     const plan = buildAgentPlan(input, ticket);
+    return this.deps.agentExecutionProvider.execute({
+      plan,
+      ticketIndex: 0,
+      prompt,
+      invocationMode: 'reviewer',
+      onProgress: input.onProgress,
+    });
+  }
+
+  private async invokeReviewerAgentForBaseMerge(
+    input: {
+      repoRoot: string;
+      feature: string;
+      model: LaunchModel;
+      reviewerModel?: LaunchModel;
+      reviewerPrompt?: { id: string; label: string; path: string; content?: string };
+      onProgress?: AgentExecutionProgressCallback;
+    },
+    prompt: string,
+  ): Promise<AgentExecutionResult> {
+    const ticketRecord: TicketRecord = {
+      path: '',
+      feature: input.feature,
+      issueName: 'base-merge',
+      label: `${input.feature}/base-merge`,
+      executorAfk: true,
+    };
+
+    const checkout: CheckoutContext = {
+      featureSlug: input.feature,
+      defaultWorktreeName: input.feature,
+      effectiveWorktreeName: input.feature,
+      defaultBranchName: input.feature,
+      effectiveBranchName: input.feature,
+      worktreePath: input.repoRoot,
+    };
+
+    const plan: LaunchPlan = {
+      repoRoot: input.repoRoot,
+      model: input.model,
+      reviewerModel: input.reviewerModel,
+      reviewerPrompt: input.reviewerPrompt ?? resolveReviewerPrompt({ repoRoot: input.repoRoot }),
+      tickets: [ticketRecord],
+      gitContext: { commits: [] },
+      checkout,
+    };
+
     return this.deps.agentExecutionProvider.execute({
       plan,
       ticketIndex: 0,

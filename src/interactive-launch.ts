@@ -16,6 +16,7 @@ export interface LaunchWizardResult {
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
   concurrency?: number;
+  mergeBackToBase?: boolean;
 }
 
 export function isInteractiveLaunchAllowed(io: PromptIO, env: NodeJS.ProcessEnv): { ok: boolean; reason?: string } {
@@ -96,6 +97,8 @@ export async function runInteractiveLaunchWizard(input: {
   if (!selectedTickets) return { cancelled: true };
   const concurrency = await promptConcurrency(input.io, input.preferences?.concurrency ?? 3);
   if (!concurrency) return { cancelled: true };
+  const mergeBackToBase = await promptMergeBackToBase(input.io, input.preferences?.mergeBackToBase);
+  if (mergeBackToBase === null) return { cancelled: true };
 
   return {
     cancelled: false,
@@ -106,6 +109,7 @@ export async function runInteractiveLaunchWizard(input: {
     reviewerPrompt,
     tickets: selectedTickets,
     concurrency,
+    mergeBackToBase,
   };
 }
 
@@ -221,4 +225,32 @@ async function promptConcurrency(io: PromptIO, initial: number): Promise<number 
     if (Number.isInteger(result.value) && result.value > 0) return result.value;
     io.stdout.write('Validation error: enter a positive integer.\n');
   }
+}
+
+async function promptMergeBackToBase(_io: PromptIO, initial?: boolean): Promise<boolean | null> {
+  const choices = [
+    { title: 'Merge back to base branch on completion', value: 'true' },
+    { title: 'Leave feature branches for manual inspection', value: 'false' },
+  ];
+  const result = await prompts(
+    {
+      type: 'autocomplete',
+      name: 'value',
+      message: 'After tickets complete, how should feature branches be handled?',
+      choices,
+      initial: initial === true ? 0 : initial === false ? 1 : undefined,
+      suggest: async (input: string, choices: PromptSuggestChoice[]) => {
+        const query = input.trim().toLowerCase();
+        if (!query) return choices;
+        return choices.filter((choice) =>
+          String(choice?.title ?? '')
+            .toLowerCase()
+            .includes(query),
+        );
+      },
+    },
+    { onCancel: () => true },
+  );
+  if (typeof result.value !== 'string') return null;
+  return result.value === 'true';
 }

@@ -31,6 +31,7 @@ export interface LaunchPreferences {
   reviewerModelId?: string;
   concurrency?: number;
   budgets?: Partial<BudgetPolicy>;
+  mergeBackToBase?: boolean;
 }
 
 export interface BudgetPolicy {
