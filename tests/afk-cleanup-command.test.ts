@@ -62,9 +62,39 @@ test('afk-cleanup --dry-run prints plan without deleting files', async () => {
   process.argv = originalArgs;
 
   assert.match(result.message, /AFK Cleanup Plan/);
+  assert.match(result.message, /Pending failed post-merge cleanup retries/);
   assert.match(result.message, /Dry run only\. No files were deleted\./);
   assert.doesNotMatch(result.message, /Executed:/);
   assert.equal(existsSync(ticketPath), true);
   assert.equal(existsSync(sentinelPath), true);
   assert.equal(existsSync(workspaceExecutionPath), true);
+});
+
+test('afk-cleanup shows pending post-merge cleanup retries from persisted state', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(
+    path.join(logsDir, 'pending-post-merge-cleanup.json'),
+    `${JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '001',
+        branchName: 'afk/feat/001',
+        worktreePath: '/tmp/issue-worktree',
+        featureWorktreePath: '/tmp/feature-worktree',
+        featureBranchName: 'feat',
+        mergedIssueTip: 'abc123',
+        failedAt: new Date().toISOString(),
+        warning: 'issue worktree is unavailable',
+      },
+    ])}\n`,
+  );
+  const originalArgs = [...process.argv];
+  process.argv[2] = 'afk-cleanup';
+  process.argv[3] = '--dry-run';
+  const result = await runAfk(repoRoot);
+  process.argv = originalArgs;
+  assert.match(result.message, /feat\/001/);
+  assert.match(result.message, /pending retry|unavailable/);
 });

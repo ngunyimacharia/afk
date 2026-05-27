@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
+import { persistFailedPostMergeCleanupItem } from './cleanup.js';
 import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { runReadinessCommands } from './readiness-service.js';
 import { CONFLICT_RESOLUTION_PROMPT_ID, resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
@@ -56,9 +57,13 @@ export interface MergeWaveResult {
 }
 
 export interface MergeBackCleanupResult {
+  feature: string;
   issueName: string;
   branchName: string;
   worktreePath: string;
+  featureWorktreePath: string;
+  featureBranchName: string;
+  mergedIssueTip: string;
   success: boolean;
   deletedBranch: boolean;
   deletedWorktree: boolean;
@@ -113,6 +118,20 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             mergedIssueTip: resolveBranchTip(input.featureWorktreePath, ticket.branchName),
           });
           cleanupResults.push(cleanupResult);
+          if (!cleanupResult.success) {
+            persistFailedPostMergeCleanupItem(input.repoRoot, {
+              feature: cleanupResult.feature,
+              issueName: cleanupResult.issueName,
+              branchName: cleanupResult.branchName,
+              worktreePath: cleanupResult.worktreePath,
+              featureWorktreePath: cleanupResult.featureWorktreePath,
+              featureBranchName: cleanupResult.featureBranchName,
+              mergedIssueTip: cleanupResult.mergedIssueTip,
+              warning: cleanupResult.warning,
+              error: cleanupResult.error,
+              failedAt: new Date().toISOString(),
+            });
+          }
           this.deps.runtimeStore.appendLog(
             ticket.logPath,
             JSON.stringify({
@@ -376,9 +395,13 @@ function cleanupMergedIssueResources(input: MergeBackCleanupInput): MergeBackCle
   );
   if (!reachability.ok) {
     return {
+      feature: ticket.feature,
       issueName: ticket.issueName,
       branchName: ticket.branchName,
       worktreePath: ticket.worktreePath,
+      featureWorktreePath,
+      featureBranchName,
+      mergedIssueTip,
       success: false,
       deletedBranch: false,
       deletedWorktree: false,
@@ -389,9 +412,13 @@ function cleanupMergedIssueResources(input: MergeBackCleanupInput): MergeBackCle
   const cleanWorktree = checkWorktreeClean(repoRoot, ticket.worktreePath);
   if (!cleanWorktree.ok) {
     return {
+      feature: ticket.feature,
       issueName: ticket.issueName,
       branchName: ticket.branchName,
       worktreePath: ticket.worktreePath,
+      featureWorktreePath,
+      featureBranchName,
+      mergedIssueTip,
       success: false,
       deletedBranch: false,
       deletedWorktree: false,
@@ -418,9 +445,13 @@ function cleanupMergedIssueResources(input: MergeBackCleanupInput): MergeBackCle
   }
 
   return {
+    feature: ticket.feature,
     issueName: ticket.issueName,
     branchName: ticket.branchName,
     worktreePath: ticket.worktreePath,
+    featureWorktreePath,
+    featureBranchName,
+    mergedIssueTip,
     success: deletedWorktree && deletedBranch,
     deletedBranch,
     deletedWorktree,

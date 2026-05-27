@@ -489,6 +489,10 @@ test('reports post-merge cleanup failure without failing merge pipeline', async 
   assert.equal(result.cleanupResults[0].deletedWorktree, false);
   assert.equal(typeof result.cleanupResults[0].warning, 'string');
   assert.equal(result.cleanupResults[0].warning?.includes('unavailable'), true);
+  const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
+  const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as Array<{ issueName: string }>;
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0]?.issueName, '001');
 });
 
 test('skips deletion when merge proof guard fails', async () => {
