@@ -154,6 +154,41 @@ test('extracts session output when messages are nested under payload keys', () =
   assert.deepEqual(output, ['Nested response line']);
 });
 
+test('deduplicates lines keeping last occurrence so assistant response is not shadowed by prompt examples', () => {
+  const output = extractSessionOutputLines([
+    {
+      role: 'user',
+      parts: [
+        {
+          type: 'text',
+          text: [
+            'Clean pass example:',
+            '{"done":true,"summary":"Reviewed implementation and tests.","findings":[]}',
+            'If ticket is incomplete, output:',
+            '{"done":false,"summary":"Ticket incomplete","findings":[]}',
+          ].join('\n'),
+        },
+      ],
+    },
+    {
+      role: 'assistant',
+      parts: [
+        {
+          type: 'text',
+          text: '{"done":true,"summary":"Reviewed implementation and tests.","findings":[]}',
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(output, [
+    'Clean pass example:',
+    'If ticket is incomplete, output:',
+    '{"done":false,"summary":"Ticket incomplete","findings":[]}',
+    '{"done":true,"summary":"Reviewed implementation and tests.","findings":[]}',
+  ]);
+});
+
 test('formats session-level opencode progress events from real event stream shape', () => {
   assert.equal(
     formatOpenCodeEvent(

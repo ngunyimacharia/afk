@@ -823,11 +823,14 @@ function splitNonEmptyLines(value: string): string[] {
 
 function uniqueNonEmpty(lines: string[]): string[] {
   const seen = new Set<string>();
-  return lines.filter((line) => {
-    if (!line || seen.has(line)) return false;
+  const result: string[] = [];
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line || seen.has(line)) continue;
     seen.add(line);
-    return true;
-  });
+    result.unshift(line);
+  }
+  return result;
 }
 
 function unwrap<T>(value: T): unknown {
