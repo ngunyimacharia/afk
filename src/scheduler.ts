@@ -270,7 +270,21 @@ export class Scheduler {
     startNext();
     await idle;
     for (const ticket of pending) {
-      const message = `Not scheduled because dependencies did not complete: ${ticket.label}`;
+      const message = `Not scheduled because dependencies did not complete: ${ticket.label} - ${notReadyReason(
+        ticket,
+        plannedTickets,
+        completed,
+        failed,
+        runningTickets,
+        completedFeatures,
+        plannedFeatures,
+        featureWaves,
+        featureWaveTickets,
+        featureMergedWave,
+        this.deps.featureMergeBackProvider,
+        this.deps.featureLockProvider,
+        plan.featureDependencies,
+      )}`;
       ticketResults.push({
         ticket,
         outcome: 'not-scheduled',
@@ -379,4 +393,63 @@ function isReady(
     if (!plannedTickets.has(key)) return true;
     return completed.has(key) && !failed.has(key);
   });
+}
+
+function notReadyReason(
+  ticket: TicketRecord,
+  plannedTickets: Set<string>,
+  completed: Set<string>,
+  failed: Set<string>,
+  running: Set<string>,
+  completedFeatures: Set<string>,
+  plannedFeatures: Set<string>,
+  featureWaves: Map<string, Map<string, number>>,
+  featureWaveTickets: Map<string, Map<number, string[]>>,
+  featureMergedWave: Map<string, number>,
+  featureMergeBackProvider: FeatureMergeBackProvider | undefined,
+  featureLockProvider: FeatureLockProvider | undefined,
+  featureDependencies?: Record<string, string[]>,
+): string {
+  if (running.has(ticketKey(ticket))) return 'ticket is already running';
+  if (featureLockProvider?.isLocked(ticket.feature)) return `feature is locked: ${ticket.feature}`;
+
+  const blockedFeatures = (featureDependencies?.[ticket.feature] ?? []).filter(
+    (dep) => plannedFeatures.has(dep) && !completedFeatures.has(dep),
+  );
+  if (blockedFeatures.length) return `feature waits on incomplete feature dependencies: ${blockedFeatures.join(', ')}`;
+
+  const ticketWave = featureWaves.get(ticket.feature)?.get(ticket.issueName) ?? 0;
+  let highestMergedWave = featureMergedWave.get(ticket.feature) ?? -1;
+  if (ticketWave > highestMergedWave + 1 && featureMergeBackProvider) {
+    const waves = featureWaveTickets.get(ticket.feature);
+    if (waves) {
+      for (let wave = highestMergedWave + 1; wave < ticketWave; wave++) {
+        const waveTicketKeys = waves.get(wave) ?? [];
+        if (waveTicketKeys.every((key) => completed.has(key))) {
+          const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
+          if (featureMergeBackProvider.isWaveMerged(ticket.feature, wave, issueNames)) {
+            highestMergedWave = wave;
+            featureMergedWave.set(ticket.feature, wave);
+          } else {
+            return `wave ${wave} for feature ${ticket.feature} is complete but not merged back`;
+          }
+        } else {
+          const incomplete = waveTicketKeys.filter((key) => !completed.has(key)).map(issueNameFromTicketKey);
+          return `waiting for earlier wave ${wave} tickets to complete: ${incomplete.join(', ')}`;
+        }
+      }
+    }
+  }
+  if (ticketWave > highestMergedWave + 1) {
+    return `waiting for previous wave merge-back (ticket wave ${ticketWave}, merged wave ${highestMergedWave})`;
+  }
+
+  const blockedDeps = (ticket.dependsOn ?? []).filter((dependency) => {
+    const key = `${ticket.feature}/${dependency}`;
+    if (!plannedTickets.has(key)) return false;
+    return !completed.has(key) || failed.has(key);
+  });
+  if (blockedDeps.length) return `waiting on ticket dependencies: ${blockedDeps.join(', ')}`;
+
+  return 'blocked by scheduler readiness constraints';
 }
