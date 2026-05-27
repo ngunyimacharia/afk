@@ -1839,6 +1839,86 @@ test('createOpenTuiDashboard shows completion banner in header when all tickets 
   view?.done();
 });
 
+test('createOpenTuiDashboard renders repo root in header', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    { path: '/tmp/feat-a-001.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets, repoRoot: '/my/repo' }, module);
+  assert.ok(view);
+
+  const headerBox = boxes.find((b) => b.title === 'AFK Run Dashboard');
+  assert.ok(headerBox, 'Header box should exist');
+  const headerContent = headerBox.children.map((c) => c.content).join('\n');
+  assert.match(headerContent, /Repo: \/my\/repo/);
+
+  view?.done();
+});
+
 test('createOpenTuiDashboard done destroys renderer even when run is complete', async () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);
