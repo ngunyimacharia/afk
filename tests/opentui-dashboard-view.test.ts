@@ -18,6 +18,7 @@ function fakeProgressLine(): {
   done(): void;
   cleanup(): void;
   waitForQuit(): Promise<void>;
+  killRequested(): boolean;
 } {
   const events: AgentExecutionProgressEvent[] = [];
   const notificationStates: DashboardNotificationState[] = [];
@@ -37,6 +38,9 @@ function fakeProgressLine(): {
     cleanup() {},
     waitForQuit() {
       return Promise.resolve();
+    },
+    killRequested() {
+      return false;
     },
     get doneCalled() {
       return _doneCalled;
@@ -2040,7 +2044,7 @@ test('createOpenTuiDashboard renders footer with default quit hint', async () =>
 
   const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
   assert.ok(view);
-  assert.ok(contents.includes('p to pause | q to quit'));
+  assert.ok(contents.includes('p to pause | q to quit | k to kill'));
   view?.done();
 });
 
@@ -2336,7 +2340,7 @@ test('createOpenTuiDashboard quit auto-disarms after timeout', async () => {
     // Simulate timeout firing
     if (typeof timeoutCallback === 'function') (timeoutCallback as () => void)();
 
-    assert.ok(contents.includes('p to pause | q to quit'));
+    assert.ok(contents.includes('p to pause | q to quit | k to kill'));
     view?.done();
   } finally {
     global.setTimeout = origSetTimeout;
@@ -2855,4 +2859,87 @@ test('DashboardProxy waitForQuit resolves immediately for fallback', async () =>
   // Fallback is a progress line, waitForQuit should resolve immediately
   const quitPromise = proxy.waitForQuit();
   await quitPromise;
+});
+
+test('first k press arms kill and updates footer', async () => {
+  const stdout = fakeStdout(true);
+  const { module } = makeFakeTextModule();
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  const handled = (view as unknown as { handleKey(sequence: string): boolean }).handleKey('k');
+  assert.equal(handled, true);
+  assert.equal((view as unknown as { killRequested(): boolean }).killRequested(), false);
+
+  view?.done();
+});
+
+test('second k press within timeout confirms kill', async () => {
+  const stdout = fakeStdout(true);
+  const { module } = makeFakeTextModule();
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+  assert.ok(view);
+
+  (view as unknown as { handleKey(sequence: string): boolean }).handleKey('k');
+  const handled = (view as unknown as { handleKey(sequence: string): boolean }).handleKey('k');
+  assert.equal(handled, true);
+  assert.equal((view as unknown as { killRequested(): boolean }).killRequested(), true);
+
+  view?.done();
+});
+
+test('missing second k press disarms automatically after timeout', async () => {
+  const origSetTimeout = global.setTimeout;
+  const timeouts: Array<{ callback: () => void; delay: number }> = [];
+
+  global.setTimeout = ((callback: () => void, delay: number) => {
+    timeouts.push({ callback, delay });
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as unknown as typeof global.setTimeout;
+
+  try {
+    const stdout = fakeStdout(true);
+    const { module } = makeFakeTextModule();
+
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: sampleTickets }, module);
+    assert.ok(view);
+
+    (view as unknown as { handleKey(sequence: string): boolean }).handleKey('k');
+    assert.equal(timeouts.length, 1);
+    assert.equal(timeouts[0]?.delay, 2000);
+
+    // Simulate timeout firing
+    timeouts[0]?.callback();
+
+    assert.equal((view as unknown as { killRequested(): boolean }).killRequested(), false);
+
+    view?.done();
+  } finally {
+    global.setTimeout = origSetTimeout;
+  }
+});
+
+test('DashboardProxy killRequested delegates to dashboard', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const { module } = makeFakeTextModule();
+
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, (opts) =>
+    createOpenTuiDashboard(opts, module),
+  );
+
+  await proxy.start();
+  assert.equal(proxy.killRequested(), false);
+
+  const dashboard = (proxy as unknown as { dashboard: LiveRunView | null }).dashboard;
+  assert.ok(dashboard);
+
+  (dashboard as unknown as { handleKey(sequence: string): boolean }).handleKey('k');
+  (dashboard as unknown as { handleKey(sequence: string): boolean }).handleKey('k');
+
+  assert.equal(proxy.killRequested(), true);
+
+  proxy.done();
 });

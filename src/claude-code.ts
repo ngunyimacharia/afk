@@ -60,6 +60,7 @@ export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
     maxStaleRecoveries?: number;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
+    signal?: AbortSignal;
   }): Promise<{
     sessionId?: string | null;
     output: string[];
@@ -98,6 +99,11 @@ export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
     });
 
     while (true) {
+      if (input.signal?.aborted) {
+        onProgress({ message: 'run killed', sessionId });
+        break;
+      }
+
       const isRecovery = staleRecoveries > 0;
       const shouldResume = isResumingFromPreviousRun || isRecovery;
 
@@ -153,10 +159,16 @@ export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
             }
           }
         },
+        input.signal,
       );
 
       if (consumeResult.completed) {
         onProgress({ message: 'claude prompt completed', sessionId });
+        break;
+      }
+
+      if (consumeResult.staleMessage === 'run killed') {
+        onProgress({ message: 'run killed', sessionId });
         break;
       }
 
@@ -195,6 +207,7 @@ async function consumeClaudeCodeQuery(
   staleProgressTimeoutMs: number,
   activeToolStaleTimeoutMs: number,
   onMessage: (msg: SDKMessage) => void,
+  signal?: AbortSignal,
 ): Promise<{ completed: boolean; staleMessage?: string }> {
   let lastMeaningfulProgressAt = Date.now();
   let activeTool: { message: string; lastSeenAt: number } | null = null;
@@ -204,6 +217,11 @@ async function consumeClaudeCodeQuery(
 
   try {
     while (true) {
+      if (signal?.aborted) {
+        await queryHandle.interrupt();
+        return { completed: false, staleMessage: 'run killed' };
+      }
+
       const currentActiveTool = activeTool;
       const timeoutMs = currentActiveTool ? activeToolStaleTimeoutMs : staleProgressTimeoutMs;
       const lastProgressAt = currentActiveTool ? currentActiveTool.lastSeenAt : lastMeaningfulProgressAt;
@@ -222,9 +240,20 @@ async function consumeClaudeCodeQuery(
       const result = await Promise.race([
         nextPromise,
         new Promise<'tick'>((resolve) => setTimeout(() => resolve('tick'), Math.min(remaining, 1_000))),
+        new Promise<'aborted'>((resolve) => {
+          if (signal?.aborted) {
+            resolve('aborted');
+            return;
+          }
+          signal?.addEventListener('abort', () => resolve('aborted'), { once: true });
+        }),
       ]);
 
       if (result === 'tick') continue;
+      if (result === 'aborted') {
+        await queryHandle.interrupt();
+        return { completed: false, staleMessage: 'run killed' };
+      }
 
       if (result.done) {
         return { completed: true };

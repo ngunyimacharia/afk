@@ -21,6 +21,7 @@ export interface ProgressLine {
   done(): void;
   cleanup(): void;
   waitForQuit(): Promise<void>;
+  killRequested(): boolean;
 }
 
 export interface ProgressLineOptions {
@@ -40,6 +41,9 @@ class NoopProgressLine implements ProgressLine {
   cleanup(): void {}
   waitForQuit(): Promise<void> {
     return Promise.resolve();
+  }
+  killRequested(): boolean {
+    return false;
   }
 }
 
@@ -115,6 +119,10 @@ class LogUpdateProgressLine implements ProgressLine {
 
   waitForQuit(): Promise<void> {
     return Promise.resolve();
+  }
+
+  killRequested(): boolean {
+    return false;
   }
 
   updateNotificationState(state: DashboardNotificationState): void {

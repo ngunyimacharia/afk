@@ -56,6 +56,7 @@ export interface SingleTicketRunResult {
 export interface SingleTicketLaunchOptions {
   onProgress?: AgentExecutionProgressCallback;
   runId?: string;
+  signal?: AbortSignal;
 }
 
 export class SingleTicketRunner {
@@ -152,6 +153,15 @@ export class SingleTicketRunner {
 
     try {
       while (true) {
+        if (options.signal?.aborted) {
+          this.runtimeStore.appendLog(record.logPath, 'run killed');
+          this.emitProgress(record.metadataPath, options.onProgress, {
+            ticketLabel: ticket.label,
+            message: 'run killed',
+            sessionId,
+          });
+          return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
+        }
         const ticketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
         if (ticketBudget) return this.handoffForBudget(ticket.label, record, options, ticketBudget, sessionId);
         if (executeBeforeReview && fixupCycles >= budgets.fixupCycleLimit && reviewCycle > 0) {
@@ -184,6 +194,7 @@ export class SingleTicketRunner {
                   invocationMode: 'execution',
                   sessionId,
                   onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+                  signal: options.signal,
                 }),
               reviewCycle + 1,
             );
@@ -221,6 +232,15 @@ export class SingleTicketRunner {
             });
             latestExecutionResult = executionResult;
           } catch (error) {
+            if (options.signal?.aborted) {
+              this.runtimeStore.appendLog(record.logPath, 'run killed');
+              this.emitProgress(record.metadataPath, options.onProgress, {
+                ticketLabel: ticket.label,
+                message: 'run killed',
+                sessionId,
+              });
+              return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
+            }
             providerFailureCount += 1;
             const message = error instanceof Error ? error.message : 'provider execution failed';
             const source = 'agent-thrown' as const;
@@ -333,6 +353,7 @@ export class SingleTicketRunner {
               invocationMode: 'reviewer',
               sessionId,
               onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+              signal: options.signal,
             }),
           reviewCycle + 1,
         );
@@ -595,6 +616,14 @@ export class SingleTicketRunner {
         executeBeforeReview = true;
       }
     } catch (error) {
+      if (options.signal?.aborted) {
+        this.runtimeStore.appendLog(record.logPath, 'run killed');
+        this.emitProgress(record.metadataPath, options.onProgress, {
+          ticketLabel: ticket.label,
+          message: 'run killed',
+        });
+        return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
+      }
       const message = error instanceof Error ? error.message : 'provider execution failed';
       const source = 'agent-thrown' as const;
       const classification = classifyProviderFailureFromSource(message, source);

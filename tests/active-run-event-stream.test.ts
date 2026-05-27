@@ -19,3 +19,22 @@ test('active run event stream appends and replays progress events', () => {
   assert.equal(second.events.length, 0);
   assert.equal(second.nextOffset, first.nextOffset);
 });
+
+test('active run event stream appends and replays commands', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-stream-cmd-');
+  const stream = new ActiveRunEventStream(repoRoot, 'run-1');
+
+  stream.appendProgress({ ticketLabel: 'feature/01', kind: 'message', message: 'started' });
+  stream.appendCommand('kill');
+  stream.appendProgress({ ticketLabel: 'feature/01', kind: 'message', message: 'done' });
+
+  const events = stream.readFromOffset(0);
+  assert.equal(events.events.length, 2);
+
+  const commands = stream.readCommandsFromOffset(0);
+  assert.equal(commands.commands.length, 1);
+  assert.equal(commands.commands[0], 'kill');
+
+  const noMoreCommands = stream.readCommandsFromOffset(commands.nextOffset);
+  assert.equal(noMoreCommands.commands.length, 0);
+});
