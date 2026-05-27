@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import {
   type AgentExecutionProvider,
   ClaudeKimiAgentExecutionProvider,
@@ -124,55 +125,66 @@ export async function runAfk(
   const interactivity = isInteractiveLaunchAllowed(io, env);
   if (!interactivity.ok)
     return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
-  const activeProjectConfig = projectConfig.config;
-  const repository = new TicketRepository(repoRoot);
-  let allTickets: TicketRecord[];
-  try {
-    allTickets = repository.discoverTickets();
-  } catch (error) {
-    return { code: 1, message: formatTicketMetadataError(error) };
-  }
-  const tickets = allTickets.filter((ticket) => repository.isEligible(ticket));
-  if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
-  const worktreePreparationService = new WorktreePreparationService();
-  let model: LaunchModel | undefined;
-  let reviewerModel: LaunchModel | undefined;
-  let reviewerPrompt: { id: string; label: string; path: string } | undefined;
-  let selectedTickets: TicketRecord[] = [];
-  let concurrency = 3;
-  let harness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
-  let reviewerHarness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
-
-  const harnessModelCache: Record<string, LaunchModel[]> = {};
-  const availableHarnesses: string[] = [];
-  try {
-    const opencodeModels = await discoverOpenCodeModels();
-    if (opencodeModels.length > 0) {
-      availableHarnesses.push('OpenCode');
-      harnessModelCache.OpenCode = opencodeModels;
-    }
-  } catch {
-    // OpenCode not available
-  }
-  try {
-    const claudeKimiModels = await discoverClaudeKimiModels();
-    if (claudeKimiModels.length > 0) {
-      availableHarnesses.push('Claude-Kimi');
-      harnessModelCache['Claude-Kimi'] = claudeKimiModels;
-    }
-  } catch {
-    // Claude Kimi not available
-  }
-
-  if (availableHarnesses.length === 0) {
+  const runId = randomUUID();
+  const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
+  const activeRun = activeRunControlPlane.acquireOrAttach(runId);
+  if (activeRun.action === 'attached') {
     return {
       code: 0,
-      message: 'No harnesses available. Install and configure OpenCode or Claude.',
+      message: `Attached to active run ${activeRun.record.runId} (${activeRun.record.state}) pid=${activeRun.record.pid}`,
     };
   }
-
+  const activeProjectConfig = projectConfig.config;
+  activeRunControlPlane.transition(runId, 'running');
   try {
-    const wizard = await runInteractiveLaunchWizard({
+    const repository = new TicketRepository(repoRoot);
+    let allTickets: TicketRecord[];
+    try {
+      allTickets = repository.discoverTickets();
+    } catch (error) {
+      return { code: 1, message: formatTicketMetadataError(error) };
+    }
+    const tickets = allTickets.filter((ticket) => repository.isEligible(ticket));
+    if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
+    const worktreePreparationService = new WorktreePreparationService();
+    let model: LaunchModel | undefined;
+    let reviewerModel: LaunchModel | undefined;
+    let reviewerPrompt: { id: string; label: string; path: string } | undefined;
+    let selectedTickets: TicketRecord[] = [];
+    let concurrency = 3;
+    let harness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
+    let reviewerHarness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
+
+    const harnessModelCache: Record<string, LaunchModel[]> = {};
+    const availableHarnesses: string[] = [];
+    try {
+      const opencodeModels = await discoverOpenCodeModels();
+      if (opencodeModels.length > 0) {
+        availableHarnesses.push('OpenCode');
+        harnessModelCache.OpenCode = opencodeModels;
+      }
+    } catch {
+      // OpenCode not available
+    }
+    try {
+      const claudeKimiModels = await discoverClaudeKimiModels();
+      if (claudeKimiModels.length > 0) {
+        availableHarnesses.push('Claude-Kimi');
+        harnessModelCache['Claude-Kimi'] = claudeKimiModels;
+      }
+    } catch {
+      // Claude Kimi not available
+    }
+
+    if (availableHarnesses.length === 0) {
+      return {
+        code: 0,
+        message: 'No harnesses available. Install and configure OpenCode or Claude.',
+      };
+    }
+
+    try {
+      const wizard = await runInteractiveLaunchWizard({
       io,
       repoRoot,
       availableHarnesses,
@@ -184,28 +196,28 @@ export async function runAfk(
       tickets,
       preferences: launchPreferences,
     });
-    if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
-    harness = wizard.harness ?? 'OpenCode';
-    reviewerHarness = wizard.reviewerHarness ?? harness;
-    model = wizard.model;
-    reviewerModel = wizard.reviewerModel;
-    reviewerPrompt = wizard.reviewerPrompt;
-    selectedTickets = wizard.tickets ?? [];
-    concurrency = wizard.concurrency ?? concurrency;
-    runtimeStore.writeLaunchPreferences({
-      harness: wizard.harness,
-      modelId: model?.id,
-      reviewerHarness: wizard.reviewerHarness,
-      reviewerModelId: reviewerModel?.id,
-      concurrency,
-    });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown model discovery error';
-    return {
-      code: 0,
-      message: `Model discovery failed. Configure the selected provider and retry.\nReason: ${reason}`,
-    };
-  }
+      if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
+      harness = wizard.harness ?? 'OpenCode';
+      reviewerHarness = wizard.reviewerHarness ?? harness;
+      model = wizard.model;
+      reviewerModel = wizard.reviewerModel;
+      reviewerPrompt = wizard.reviewerPrompt;
+      selectedTickets = wizard.tickets ?? [];
+      concurrency = wizard.concurrency ?? concurrency;
+      runtimeStore.writeLaunchPreferences({
+        harness: wizard.harness,
+        modelId: model?.id,
+        reviewerHarness: wizard.reviewerHarness,
+        reviewerModelId: reviewerModel?.id,
+        concurrency,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown model discovery error';
+      return {
+        code: 0,
+        message: `Model discovery failed. Configure the selected provider and retry.\nReason: ${reason}`,
+      };
+    }
   if (!model) return { code: 0, message: 'Launch cancelled' };
   if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
   if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
@@ -281,7 +293,6 @@ export async function runAfk(
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     launchPreferences.budgets,
   );
-  const runId = randomUUID();
   const renderer: OpenTUIRenderer = {
     capabilities: { notifications: io.stdout.isTTY ?? false },
     notify: io.stdout.isTTY
@@ -415,9 +426,9 @@ export async function runAfk(
     throw error;
   }
   await view.waitForQuit();
-  return {
-    code: 0,
-    message: [
+    return {
+      code: 0,
+      message: [
       `Selected model: ${plan.model.id}`,
       `Selected harness: ${harness}`,
       `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
@@ -434,8 +445,11 @@ export async function runAfk(
         ticketResults: schedulerResult.ticketResults,
       }),
       ...formatManualPermissionReviewLines(permissionCoordinator.history),
-    ].join('\n'),
-  };
+      ].join('\n'),
+    };
+  } finally {
+    activeRunControlPlane.clear(runId);
+  }
 }
 
 function formatTicketMetadataError(error: unknown): string {
