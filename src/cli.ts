@@ -126,7 +126,7 @@ export async function runAfk(
   const interactivity = isInteractiveLaunchAllowed(io, env);
   if (!interactivity.ok)
     return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
-  let runId = randomUUID();
+  let runId: string = randomUUID();
   const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
   const activeRun = activeRunControlPlane.acquireOrAttach(runId);
   if (activeRun.action === 'attached') {
