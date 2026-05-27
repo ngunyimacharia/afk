@@ -292,7 +292,7 @@ test('events for unknown tickets are ignored', () => {
 });
 
 test('snapshot is deterministic and read-only', () => {
-  const state = new RunDashboardState({}, makeTickets());
+  const state = new RunDashboardState({ now: () => 1_000, startTime: 0 }, makeTickets());
   state.ingest({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
   state.ingest({
     ticketLabel: 'feat-a/001',

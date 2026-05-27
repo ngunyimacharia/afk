@@ -476,7 +476,7 @@ test('does not attach to stale active run with expired heartbeat', async () => {
   );
 
   const result = await runAfk(repoRoot, {
-    io: { stdin: { isTTY: true } as never, stdout: { isTTY: true } as never },
+    io: { stdin: { isTTY: true } as never, stdout: { isTTY: true, write: () => {} } as never },
     env: { ...process.env, CI: '' },
   });
 
