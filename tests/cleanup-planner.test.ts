@@ -81,3 +81,27 @@ test('preserves implementation-complete review-unavailable via runtime metadata'
   assert.equal(plan.terminalTargets.length, 0);
   assert.ok(plan.preservedIssues[0]?.endsWith('unavailable.md'));
 });
+
+test('includes pending failed post-merge cleanup items in plan', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(
+    path.join(logsDir, 'pending-post-merge-cleanup.json'),
+    `${JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '001',
+        branchName: 'afk/feat/001',
+        worktreePath: '/tmp/worktree',
+        featureWorktreePath: '/tmp/feature-worktree',
+        featureBranchName: 'feat',
+        mergedIssueTip: 'abc123',
+        failedAt: new Date().toISOString(),
+      },
+    ])}\n`,
+  );
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.pendingPostMergeCleanupTargets.length, 1);
+  assert.equal(plan.pendingPostMergeCleanupTargets[0]?.issueName, '001');
+});

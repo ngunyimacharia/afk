@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import type { RuntimeMetadataRecord } from './types.js';
+import { runGit } from './worktree-preparation-service.js';
 
 const TERMINAL_STATUSES = new Set(['done', 'closed', 'complete', 'resolved']);
 
@@ -23,10 +24,30 @@ export interface CleanupTarget {
 
 export interface CleanupPlan {
   terminalTargets: CleanupTarget[];
+  pendingPostMergeCleanupTargets: PendingPostMergeCleanupItem[];
   preservedIssues: string[];
   preservedArtifacts: string[];
   featureDirectoriesToDelete: string[];
   workspaceExecutionPath?: string;
+}
+
+export interface PendingPostMergeCleanupItem {
+  feature: string;
+  issueName: string;
+  branchName: string;
+  worktreePath: string;
+  featureWorktreePath: string;
+  featureBranchName: string;
+  mergedIssueTip: string;
+  warning?: string;
+  error?: string;
+  failedAt: string;
+}
+
+export interface PendingPostMergeCleanupResult extends PendingPostMergeCleanupItem {
+  success: boolean;
+  deletedBranch: boolean;
+  deletedWorktree: boolean;
 }
 
 function _readTerminalStatuses(): Set<string> {
@@ -75,6 +96,130 @@ function ticketMetadataPath(repoRoot: string, feature: string, issueName: string
   return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`);
 }
 
+function pendingPostMergeCleanupPath(repoRoot: string): string {
+  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
+}
+
+function parsePendingPostMergeCleanup(value: unknown): PendingPostMergeCleanupItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => item as Record<string, unknown>)
+    .filter(
+      (item) =>
+        typeof item.feature === 'string' &&
+        typeof item.issueName === 'string' &&
+        typeof item.branchName === 'string' &&
+        typeof item.worktreePath === 'string' &&
+        typeof item.featureWorktreePath === 'string' &&
+        typeof item.featureBranchName === 'string' &&
+        typeof item.mergedIssueTip === 'string' &&
+        typeof item.failedAt === 'string',
+    )
+    .map((item) => ({
+      feature: item.feature as string,
+      issueName: item.issueName as string,
+      branchName: item.branchName as string,
+      worktreePath: item.worktreePath as string,
+      featureWorktreePath: item.featureWorktreePath as string,
+      featureBranchName: item.featureBranchName as string,
+      mergedIssueTip: item.mergedIssueTip as string,
+      failedAt: item.failedAt as string,
+      warning: typeof item.warning === 'string' ? item.warning : undefined,
+      error: typeof item.error === 'string' ? item.error : undefined,
+    }));
+}
+
+export function readPendingPostMergeCleanupItems(repoRoot: string): PendingPostMergeCleanupItem[] {
+  const pendingPath = pendingPostMergeCleanupPath(repoRoot);
+  if (!fileExists(pendingPath)) return [];
+  try {
+    const payload = JSON.parse(readFileSync(pendingPath, 'utf8')) as unknown;
+    return parsePendingPostMergeCleanup(payload);
+  } catch {
+    return [];
+  }
+}
+
+function writePendingPostMergeCleanupItems(repoRoot: string, items: PendingPostMergeCleanupItem[]): void {
+  const pendingPath = pendingPostMergeCleanupPath(repoRoot);
+  mkdirSync(path.dirname(pendingPath), { recursive: true });
+  writeFileSync(pendingPath, `${JSON.stringify(items, null, 2)}\n`, 'utf8');
+}
+
+export function persistFailedPostMergeCleanupItem(repoRoot: string, item: PendingPostMergeCleanupItem): void {
+  const pending = readPendingPostMergeCleanupItems(repoRoot);
+  const next = [...pending.filter((entry) => entry.feature !== item.feature || entry.issueName !== item.issueName), item];
+  writePendingPostMergeCleanupItems(repoRoot, next);
+}
+
+function checkBranchReachability(
+  worktreePath: string,
+  featureBranchName: string,
+  issueTip: string,
+): { ok: true } | { ok: false; reason: string } {
+  try {
+    runGit(worktreePath, ['merge-base', '--is-ancestor', issueTip, featureBranchName]);
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: 'merge proof failed: branch tip is not reachable from feature HEAD' };
+  }
+}
+
+function checkWorktreeClean(repoRoot: string, worktreePath: string): { ok: true } | { ok: false; reason: string } {
+  if (!exists(worktreePath)) return { ok: false, reason: `issue worktree is unavailable: ${worktreePath}` };
+  try {
+    const status = runGit(worktreePath, ['status', '--porcelain']);
+    if (status.trim().length === 0) return { ok: true };
+    return { ok: false, reason: `issue worktree has uncommitted changes: ${worktreePath}` };
+  } catch {
+    try {
+      const listing = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
+      const registered = listing.split('\n').some((line) => line.trim() === `worktree ${path.resolve(worktreePath)}`);
+      return registered
+        ? { ok: false, reason: `issue worktree has uncommitted changes: ${worktreePath}` }
+        : { ok: false, reason: `issue worktree is unavailable: ${worktreePath}` };
+    } catch {
+      return { ok: false, reason: `issue worktree is unavailable: ${worktreePath}` };
+    }
+  }
+}
+
+function retryPostMergeCleanup(repoRoot: string, item: PendingPostMergeCleanupItem): PendingPostMergeCleanupResult {
+  const reachability = checkBranchReachability(item.featureWorktreePath, item.featureBranchName, item.mergedIssueTip);
+  if (!reachability.ok) {
+    return { ...item, success: false, deletedBranch: false, deletedWorktree: false, warning: reachability.reason };
+  }
+  const cleanWorktree = checkWorktreeClean(repoRoot, item.worktreePath);
+  if (!cleanWorktree.ok) {
+    return { ...item, success: false, deletedBranch: false, deletedWorktree: false, warning: cleanWorktree.reason };
+  }
+
+  let deletedWorktree = false;
+  let deletedBranch = false;
+  const errors: string[] = [];
+  try {
+    runGit(repoRoot, ['worktree', 'remove', '-f', item.worktreePath]);
+    deletedWorktree = true;
+  } catch (error) {
+    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    runGit(repoRoot, ['branch', '-D', item.branchName]);
+    deletedBranch = true;
+  } catch (error) {
+    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return {
+    ...item,
+    success: deletedWorktree && deletedBranch,
+    deletedBranch,
+    deletedWorktree,
+    error: errors.length > 0 ? errors.join(' | ') : undefined,
+    warning: undefined,
+  };
+}
+
 function ticketSentinelPath(
   repoRoot: string,
   feature: string,
@@ -109,7 +254,13 @@ export class CleanupPlanner {
   buildPlan(): CleanupPlan {
     const scratchRoot = path.join(this.input.repoRoot, '.scratch');
     if (!exists(scratchRoot)) {
-      return { terminalTargets: [], preservedIssues: [], preservedArtifacts: [], featureDirectoriesToDelete: [] };
+      return {
+        terminalTargets: [],
+        pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
+        preservedIssues: [],
+        preservedArtifacts: [],
+        featureDirectoriesToDelete: [],
+      };
     }
     const features = readdirSync(scratchRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
     const terminalTargets: CleanupTarget[] = [];
@@ -176,13 +327,38 @@ export class CleanupPlanner {
     const workspaceExecutionPath = fileExists(path.join(scratchRoot, 'execution.json'))
       ? path.join(scratchRoot, 'execution.json')
       : undefined;
-    return { terminalTargets, preservedIssues, preservedArtifacts, featureDirectoriesToDelete, workspaceExecutionPath };
+    return {
+      terminalTargets,
+      pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
+      preservedIssues,
+      preservedArtifacts,
+      featureDirectoriesToDelete,
+      workspaceExecutionPath,
+    };
   }
 }
 
 export class CleanupExecutor {
-  execute(plan: CleanupPlan): { deleted: string[] } {
+  execute(plan: CleanupPlan, repoRoot: string): { deleted: string[]; postMergeCleanupResults: PendingPostMergeCleanupResult[] } {
     const deleted: string[] = [];
+    const postMergeCleanupResults: PendingPostMergeCleanupResult[] = [];
+    const remainingPending: PendingPostMergeCleanupItem[] = [];
+
+    for (const pending of plan.pendingPostMergeCleanupTargets) {
+      const retry = retryPostMergeCleanup(repoRoot, pending);
+      postMergeCleanupResults.push(retry);
+      if (!retry.success) {
+        remainingPending.push({
+          ...pending,
+          warning: retry.warning,
+          error: retry.error,
+          failedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    writePendingPostMergeCleanupItems(repoRoot, remainingPending);
+
     for (const target of plan.terminalTargets) {
       for (const filePath of [
         target.issuePath,
@@ -210,6 +386,6 @@ export class CleanupExecutor {
         deleted.push(plan.workspaceExecutionPath);
       } catch {}
     }
-    return { deleted };
+    return { deleted, postMergeCleanupResults };
   }
 }

@@ -97,6 +97,14 @@ export async function runAfk(
       'Matching logs / metadata to delete',
       ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
       '',
+      'Pending failed post-merge cleanup retries',
+      ...(plan.pendingPostMergeCleanupTargets.length
+        ? plan.pendingPostMergeCleanupTargets.map(
+            (item) =>
+              `- ${item.feature}/${item.issueName} branch=${item.branchName} worktree=${item.worktreePath} (${item.warning ?? item.error ?? 'pending retry'})`,
+          )
+        : ['- none']),
+      '',
       'Preserved tickets',
       ...(plan.preservedIssues.length ? plan.preservedIssues.map((issuePath) => `- ${issuePath}`) : ['- none']),
       '',
@@ -112,10 +120,20 @@ export async function runAfk(
     ].join('\n');
     if (isDryRun) return { code: 0, message: dryRun };
     const executor = new CleanupExecutor();
-    const result = executor.execute(plan);
+    const result = executor.execute(plan, repoRoot);
+    const retryResults = [
+      'Post-merge cleanup retry results',
+      ...(result.postMergeCleanupResults.length
+        ? result.postMergeCleanupResults.map((item) =>
+            item.success
+              ? `- ${item.feature}/${item.issueName}: success`
+              : `- ${item.feature}/${item.issueName}: failed (${item.warning ?? item.error ?? 'unknown error'})`,
+          )
+        : ['- none']),
+    ].join('\n');
     return {
       code: 0,
-      message: `${dryRun}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
+      message: `${dryRun}\n\n${retryResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
     };
   }
   if (command === 'sync') return runSync();
