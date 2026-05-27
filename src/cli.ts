@@ -126,12 +126,27 @@ export async function runAfk(
   const interactivity = isInteractiveLaunchAllowed(io, env);
   if (!interactivity.ok)
     return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
-  const runId = randomUUID();
+  let runId = randomUUID();
   const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
   const activeRun = activeRunControlPlane.acquireOrAttach(runId);
   if (activeRun.action === 'attached') {
     return attachToActiveRun(repoRoot, io, activeRun.record.runId, activeRunControlPlane);
   }
+
+  // Use the runId from the control plane record (recovered runs reuse the old runId)
+  runId = activeRun.record.runId;
+
+  const isRecoveredRun = activeRun.action === 'recovered';
+  if (isRecoveredRun) {
+    const recoveryEvent: import('./types.js').AgentExecutionProgressEvent = {
+      ticketLabel: '__run__',
+      message: activeRun.recoveryMessage,
+    };
+    const recoveryStream = new ActiveRunEventStream(repoRoot, runId);
+    recoveryStream.appendProgress(recoveryEvent);
+    io.stdout.write(`${activeRun.recoveryMessage}\n`);
+  }
+
   const activeProjectConfig = projectConfig.config;
   activeRunControlPlane.transition(runId, 'running');
   let killPollInterval: ReturnType<typeof setInterval> | null = null;
@@ -357,6 +372,15 @@ export async function runAfk(
       capability: renderer.capabilities.notifications ? 'supported' : 'unsupported',
     });
   }
+
+  // Rehydrate view with events from recovered run so TUI shows prior state
+  if (isRecoveredRun) {
+    const recoveredEvents = new ActiveRunEventStream(repoRoot, runId).readAllEvents();
+    for (const event of recoveredEvents) {
+      view.update(event);
+    }
+  }
+
   const onProgress = (event: import('./types.js').AgentExecutionProgressEvent) => {
     eventStream.appendProgress(event);
     view.update(event);

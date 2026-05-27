@@ -27,8 +27,9 @@ export interface ActiveRunControlPlaneInput {
 }
 
 export type ActiveRunAcquireResult =
-  | { action: 'started'; record: ActiveRunRecord; staleReclaimed: boolean }
-  | { action: 'attached'; record: ActiveRunRecord; reason: 'healthy-active-run' };
+  | { action: 'started'; record: ActiveRunRecord }
+  | { action: 'attached'; record: ActiveRunRecord; reason: 'healthy-active-run' }
+  | { action: 'recovered'; record: ActiveRunRecord; previousRecord: ActiveRunRecord; recoveryMessage: string };
 
 function isoFromEpoch(epochMs: number): string {
   return new Date(epochMs).toISOString();
@@ -52,18 +53,26 @@ export class ActiveRunControlPlane {
     const existing = this.read();
     if (existing && this.isHealthy(existing)) return { action: 'attached', record: existing, reason: 'healthy-active-run' };
 
+    const nextRunId = existing ? existing.runId : runId;
     const nowIso = isoFromEpoch(this.now());
     const next: ActiveRunRecord = {
       version: 1,
-      runId,
+      runId: nextRunId,
       pid: this.pid,
-      startedAt: nowIso,
+      startedAt: existing ? existing.startedAt : nowIso,
       heartbeatAt: nowIso,
       state: 'starting',
       command,
     };
     writeFileSync(this.activeRunPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-    return { action: 'started', record: next, staleReclaimed: Boolean(existing) };
+
+    if (existing) {
+      this.clearCommands(existing.runId);
+      const recoveryMessage = `Recovered stale run ${existing.runId} (previous PID ${existing.pid} dead, state was ${existing.state})`;
+      return { action: 'recovered', record: next, previousRecord: existing, recoveryMessage };
+    }
+
+    return { action: 'started', record: next };
   }
 
   transition(runId: string, state: ActiveRunLifecycleState): void {

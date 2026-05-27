@@ -64,6 +64,22 @@ export class ActiveRunEventStream {
     return { commands, nextOffset: content.length };
   }
 
+  readAllEvents(): AgentExecutionProgressEvent[] {
+    if (!existsSync(this.eventsPath)) return [];
+    const content = readFileSync(this.eventsPath, 'utf8');
+    const lines = content.split('\n').filter((line) => line.trim().length > 0);
+    const events: AgentExecutionProgressEvent[] = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as ActiveRunEventEnvelope;
+        if (parsed.type === 'progress' && parsed.event) events.push(parsed.event);
+      } catch {
+        // ignore malformed lines from partial writes
+      }
+    }
+    return events;
+  }
+
   private append(envelope: ActiveRunEventEnvelope): void {
     mkdirSync(path.dirname(this.eventsPath), { recursive: true });
     appendFileSync(this.eventsPath, `${JSON.stringify(envelope)}\n`, 'utf8');
