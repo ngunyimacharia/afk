@@ -565,3 +565,16 @@ test('completed run state renders without crashes', () => {
   assert.equal(snap.selectedTicket?.label, 'feat-a/001');
   assert.equal(snap.selectedTicketDetails?.runtimeState, 'complete');
 });
+
+test('default run state is running', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  assert.equal(state.snapshot().runState, 'running');
+});
+
+test('setRunState updates snapshot runState', () => {
+  const state = new RunDashboardState({}, makeTickets());
+  state.setRunState('paused');
+  assert.equal(state.snapshot().runState, 'paused');
+  state.setRunState('running');
+  assert.equal(state.snapshot().runState, 'running');
+});

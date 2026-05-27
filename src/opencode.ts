@@ -42,6 +42,7 @@ export interface OpenCodeSessionExecutor {
     maxStaleRecoveries?: number;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
+    signal?: AbortSignal;
   }): Promise<{
     sessionId?: string | null;
     output: string[];
@@ -113,11 +114,13 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     title: string;
     agent?: string;
     sessionId?: string | null;
+    workDir?: string;
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
+    signal?: AbortSignal;
   }): Promise<{
     sessionId?: string | null;
     output: string[];
@@ -143,6 +146,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     const staleProgressTimeoutMs = input.staleProgressTimeoutMs ?? DEFAULT_STALE_PROGRESS_TIMEOUT_MS;
     const activeToolStaleTimeoutMs = input.activeToolStaleTimeoutMs ?? DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS;
     const maxStaleRecoveries = input.maxStaleRecoveries ?? DEFAULT_MAX_STALE_RECOVERIES;
+    const signal = input.signal;
     const onProgress = (event: OpenCodeSessionProgressEvent) => {
       input.onProgress?.(event);
       if (!isMeaningfulProgress(event)) return;
@@ -170,6 +174,13 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
       }
       let promptText = input.prompt;
       while (true) {
+        if (signal?.aborted) {
+          onProgress({ message: 'run killed', sessionId: sessionId || null });
+          if (sessionId) {
+            await abortSession(sdk.client, sessionId, onProgress);
+          }
+          break;
+        }
         onProgress({
           message: staleRecoveries
             ? `sent recovery prompt to opencode (${staleRecoveries}/${maxStaleRecoveries})`
@@ -185,8 +196,16 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
           activeToolStaleTimeoutMs,
           getLastMeaningfulProgressAt: () => lastMeaningfulProgressAt,
           getActiveTool: () => activeTool,
+          signal,
         });
         if (promptResult === 'completed') break;
+        if (typeof promptResult === 'object' && promptResult.status === 'aborted') {
+          onProgress({ message: promptResult.message, sessionId: sessionId || null });
+          if (sessionId) {
+            await abortSession(sdk.client, sessionId, onProgress);
+          }
+          break;
+        }
         staleRecoveries += 1;
         onProgress({
           message: promptResult.message,
@@ -255,9 +274,13 @@ async function waitForPromptOrStale(input: {
   activeToolStaleTimeoutMs: number;
   getLastMeaningfulProgressAt: () => number;
   getActiveTool: () => OpenCodeActiveToolState | null;
-}): Promise<'completed' | { status: 'stale'; message: string }> {
+  signal?: AbortSignal;
+}): Promise<'completed' | { status: 'stale'; message: string } | { status: 'aborted'; message: string }> {
   const prompt = input.prompt.then(() => 'completed' as const).catch(() => 'completed' as const);
   while (true) {
+    if (input.signal?.aborted) {
+      return { status: 'aborted', message: 'run killed' };
+    }
     const activeTool = input.getActiveTool();
     const timeoutMs = activeTool ? input.activeToolStaleTimeoutMs : input.staleProgressTimeoutMs;
     const lastProgressAt = activeTool ? activeTool.lastSeenAt : input.getLastMeaningfulProgressAt();
@@ -273,8 +296,16 @@ async function waitForPromptOrStale(input: {
     const result = await Promise.race([
       prompt,
       new Promise<'tick'>((resolve) => setTimeout(() => resolve('tick'), Math.min(remaining, 1_000))),
+      new Promise<'aborted'>((resolve) => {
+        if (input.signal?.aborted) {
+          resolve('aborted');
+          return;
+        }
+        input.signal?.addEventListener('abort', () => resolve('aborted'), { once: true });
+      }),
     ]);
     if (result === 'completed') return 'completed';
+    if (result === 'aborted') return { status: 'aborted', message: 'run killed' };
   }
 }
 

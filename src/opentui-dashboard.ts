@@ -18,6 +18,7 @@ export interface OpenTuiDashboardOptions {
   selectedTickets?: TicketRecord[];
   runOptions?: RunDashboardStateOptions;
   repoRoot?: string;
+  onPauseResume?: () => void;
 }
 
 export interface OpenTuiDashboardModule {
@@ -235,6 +236,9 @@ class OpenTuiDashboard implements LiveRunView {
   private quitResolver: (() => void) | null = null;
   private readonly quitPromise: Promise<void>;
   private frameCounter = 0;
+  private killTimeout: ReturnType<typeof setTimeout> | null = null;
+  private killArmed = false;
+  private killConfirmed = false;
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -242,6 +246,7 @@ class OpenTuiDashboard implements LiveRunView {
     runOptions: RunDashboardStateOptions,
     private readonly opentui: OpenTuiDashboardModule,
     private readonly repoRoot: string,
+    private readonly onPauseResume?: () => void,
   ) {
     this.state = new RunDashboardState(runOptions, selectedTickets);
     this.quitPromise = new Promise((resolve) => {
@@ -298,8 +303,41 @@ class OpenTuiDashboard implements LiveRunView {
     this.destroyed = true;
     this.stopTimer();
     this.clearQuitTimeout();
+    this.clearKillTimeout();
     this.renderer.destroy();
     this.quitResolver?.();
+  }
+
+  private clearKillTimeout(): void {
+    if (this.killTimeout !== null) {
+      clearTimeout(this.killTimeout);
+      this.killTimeout = null;
+    }
+  }
+
+  private armKill(): void {
+    if (this.destroyed) return;
+    this.killArmed = true;
+    this.refresh();
+    this.clearKillTimeout();
+    this.killTimeout = setTimeout(() => {
+      this.disarmKill();
+    }, 2000);
+  }
+
+  private disarmKill(): void {
+    if (this.destroyed) return;
+    this.killArmed = false;
+    this.clearKillTimeout();
+    this.refresh();
+  }
+
+  private confirmKill(): void {
+    if (this.destroyed) return;
+    this.killConfirmed = true;
+    this.killArmed = false;
+    this.clearKillTimeout();
+    this.refresh();
   }
 
   private checkRunComplete(snap: DashboardSnapshot): boolean {
@@ -437,15 +475,24 @@ class OpenTuiDashboard implements LiveRunView {
           this.armQuit();
         }
         return true;
+      case 'p':
+        this.onPauseResume?.();
+        return true;
       case '\x1b[B': // Down arrow
       case 'j':
         this.state.selectNextTicket();
         this.refresh();
         return true;
       case '\x1b[A': // Up arrow
-      case 'k':
         this.state.selectPreviousTicket();
         this.refresh();
+        return true;
+      case 'k':
+        if (this.killArmed) {
+          this.confirmKill();
+        } else {
+          this.armKill();
+        }
         return true;
       case 'a':
       case '\t': // Tab
@@ -455,6 +502,12 @@ class OpenTuiDashboard implements LiveRunView {
       default:
         return false;
     }
+  }
+
+  setRunState(state: 'running' | 'paused'): void {
+    if (this.destroyed) return;
+    this.state.setRunState(state);
+    this.refresh();
   }
 
   update(event: AgentExecutionProgressEvent): void {
@@ -476,8 +529,15 @@ class OpenTuiDashboard implements LiveRunView {
     this.actionText.content = formatActionNeeded(snap);
     this.detailsText.content = formatDetails(snap, this.repoRoot);
     this.eventsText.content = formatEvents(snap);
-    this.footerText.content = this.quitArmed ? 'Press again to quit' : 'Ctrl+C or q to quit';
+    this.footerText.content = this.formatFooter(snap);
     this.maybeStopTimer(snap);
+  }
+
+  private formatFooter(snap: DashboardSnapshot): StyledText {
+    if (this.quitArmed) return stringToStyledText('Press again to quit');
+    if (this.killArmed) return stringToStyledText('Press k again to kill');
+    if (snap.runState === 'paused') return stringToStyledText('p to resume | q to quit | k to kill');
+    return stringToStyledText('p to pause | q to quit | k to kill');
   }
 
   healthCheck(activeSessionIds: Set<string>): void {
@@ -505,6 +565,10 @@ class OpenTuiDashboard implements LiveRunView {
 
   waitForQuit(): Promise<void> {
     return this.quitPromise;
+  }
+
+  killRequested(): boolean {
+    return this.killConfirmed;
   }
 }
 
@@ -535,6 +599,7 @@ export async function createOpenTuiDashboard(
       options.runOptions ?? {},
       opentui,
       options.repoRoot ?? process.cwd(),
+      options.onPauseResume,
     );
   } catch {
     return null;
@@ -602,6 +667,12 @@ export class DashboardProxy implements LiveRunView {
     }
   }
 
+  setRunState(state: 'running' | 'paused'): void {
+    if (this.dashboard && 'setRunState' in this.dashboard) {
+      (this.dashboard as unknown as { setRunState(s: 'running' | 'paused'): void }).setRunState(state);
+    }
+  }
+
   done(): void {
     this.finalized = true;
     const target = this.dashboard ?? this.fallback;
@@ -628,5 +699,9 @@ export class DashboardProxy implements LiveRunView {
 
   waitForQuit(): Promise<void> {
     return this.dashboard?.waitForQuit() ?? this.fallback.waitForQuit();
+  }
+
+  killRequested(): boolean {
+    return this.dashboard?.killRequested() ?? false;
   }
 }

@@ -50,6 +50,7 @@ export interface AgentExecutionRequest {
   onProgress?: AgentExecutionProgressCallback;
   invocationMode?: AgentInvocationMode;
   sessionId?: string | null;
+  signal?: AbortSignal;
 }
 
 export interface AgentExecutionProvider {
@@ -121,6 +122,9 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
   ) {}
 
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    if (request.signal?.aborted) {
+      throw new Error('run killed');
+    }
     const ticket = request.plan.tickets[request.ticketIndex];
     if (!ticket)
       return { status: 'failed', sessionId: null, removable: false, unsafeReason: 'ticket missing in launch request' };
@@ -154,6 +158,7 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
               .map((checkout) => checkout.worktreePath)
               .filter((worktreePath) => worktreePath !== request.plan.checkout?.worktreePath),
           }),
+        signal: request.signal,
       });
       const outputFailure = result.terminalError ?? this.config.failureDetector(result.output ?? []);
       if (outputFailure) {

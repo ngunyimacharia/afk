@@ -57,6 +57,7 @@ export interface DashboardSnapshot {
   reviewerModelId?: string;
   reviewerHarness?: string;
   concurrency?: number;
+  runState: 'running' | 'paused';
   startTime: number;
   elapsedMs: number;
   features: DashboardFeatureSnapshot[];
@@ -140,6 +141,7 @@ export class RunDashboardState {
   private readonly startTime: number;
   private readonly now: () => number;
   private selectedTicketLabel: string | null = null;
+  private runState: 'running' | 'paused' = 'running';
 
   constructor(options: RunDashboardStateOptions = {}, selectedTickets: TicketRecord[] = []) {
     this.options = options;
@@ -160,6 +162,10 @@ export class RunDashboardState {
     if (selectedTickets.length > 0) {
       this.selectedTicketLabel = selectedTickets[0].label;
     }
+  }
+
+  setRunState(state: 'running' | 'paused'): void {
+    this.runState = state;
   }
 
   ingest(event: AgentExecutionProgressEvent): void {
@@ -399,6 +405,7 @@ export class RunDashboardState {
       reviewerModelId: this.options.reviewerModelId,
       reviewerHarness: this.options.reviewerHarness,
       concurrency: this.options.concurrency,
+      runState: this.runState,
       startTime: this.startTime,
       elapsedMs: this.now() - this.startTime,
       features,

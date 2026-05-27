@@ -36,19 +36,41 @@ test('acquireOrAttach attaches while active run is healthy', () => {
     })}\n`,
     'utf8',
   );
-  const controlPlane = new ActiveRunControlPlane({
-    repoRoot,
-    now: () => 2_000,
-    pid: process.pid,
-    staleHeartbeatMs: 5_000,
-  });
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 2_000, pid: process.pid, staleHeartbeatMs: 5_000 });
 
   const result = controlPlane.acquireOrAttach('run-new');
   assert.equal(result.action, 'attached');
   assert.equal(result.record.runId, 'run-existing');
 });
 
-test('acquireOrAttach reclaims stale lock with expired heartbeat', () => {
+test('acquireOrAttach recovers stale lock with dead PID', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-dead-pid-');
+  const statePath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'active-run.json');
+  mkdirSync(path.dirname(statePath), { recursive: true });
+  writeFileSync(
+    statePath,
+    `${JSON.stringify({
+      version: 1,
+      runId: 'run-dead',
+      pid: 999_999,
+      startedAt: new Date(1_000).toISOString(),
+      heartbeatAt: new Date(90_000).toISOString(),
+      state: 'paused',
+      command: 'afk',
+    })}\n`,
+    'utf8',
+  );
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 100_000, pid: process.pid, staleHeartbeatMs: 5_000 });
+
+  const result = controlPlane.acquireOrAttach('run-new');
+  assert.equal(result.action, 'recovered');
+  assert.equal(result.record.runId, 'run-dead');
+  assert.equal(result.previousRecord.pid, 999_999);
+  assert.match(result.recoveryMessage, /previous PID 999999 dead/);
+  assert.match(result.recoveryMessage, /state was paused/);
+});
+
+test('acquireOrAttach recovers stale lock with expired heartbeat', () => {
   const repoRoot = mkRepoLocalTempDir('active-run-stale-');
   const statePath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'active-run.json');
   mkdirSync(path.dirname(statePath), { recursive: true });
@@ -65,17 +87,14 @@ test('acquireOrAttach reclaims stale lock with expired heartbeat', () => {
     })}\n`,
     'utf8',
   );
-  const controlPlane = new ActiveRunControlPlane({
-    repoRoot,
-    now: () => 100_000,
-    pid: process.pid,
-    staleHeartbeatMs: 1_000,
-  });
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 100_000, pid: process.pid, staleHeartbeatMs: 1_000 });
 
   const result = controlPlane.acquireOrAttach('run-new');
-  assert.equal(result.action, 'started');
-  assert.equal(result.staleReclaimed, true);
-  assert.equal(result.record.runId, 'run-new');
+  assert.equal(result.action, 'recovered');
+  assert.equal(result.record.runId, 'run-old');
+  assert.equal(result.previousRecord.runId, 'run-old');
+  assert.match(result.recoveryMessage, /previous PID .* dead/);
+  assert.match(result.recoveryMessage, /state was running/);
 });
 
 test('transition and clear update lifecycle then release lock', () => {
@@ -90,4 +109,89 @@ test('transition and clear update lifecycle then release lock', () => {
   assert.equal(controlPlane.read()?.state, 'killing');
   controlPlane.clear('run-1');
   assert.equal(controlPlane.read(), null);
+});
+
+test('enqueueCommand and readCommands append and poll commands', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-commands-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 20_000, pid: process.pid });
+  controlPlane.acquireOrAttach('run-1');
+
+  controlPlane.enqueueCommand('run-1', { type: 'pause', clientPid: 123 });
+  controlPlane.enqueueCommand('run-1', { type: 'resume', clientPid: 456 });
+
+  const firstRead = controlPlane.readCommands('run-1', 0);
+  assert.equal(firstRead.commands.length, 2);
+  assert.equal(firstRead.commands[0]?.type, 'pause');
+  assert.equal(firstRead.commands[1]?.type, 'resume');
+
+  const secondRead = controlPlane.readCommands('run-1', firstRead.nextOffset);
+  assert.equal(secondRead.commands.length, 0);
+});
+
+test('enqueueCommand ignores wrong runId', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-commands-wrong-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 20_000, pid: process.pid });
+  controlPlane.acquireOrAttach('run-1');
+
+  controlPlane.enqueueCommand('run-2', { type: 'pause', clientPid: 123 });
+
+  const result = controlPlane.readCommands('run-1', 0);
+  assert.equal(result.commands.length, 0);
+});
+
+test('clearCommands removes command file', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-commands-clear-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 20_000, pid: process.pid });
+  controlPlane.acquireOrAttach('run-1');
+  controlPlane.enqueueCommand('run-1', { type: 'pause', clientPid: 123 });
+
+  controlPlane.clearCommands('run-1');
+  const result = controlPlane.readCommands('run-1', 0);
+  assert.equal(result.commands.length, 0);
+});
+
+test('recovery clears stale commands from previous run', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-recovery-clears-commands-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 20_000, pid: process.pid });
+  controlPlane.acquireOrAttach('run-old');
+  controlPlane.enqueueCommand('run-old', { type: 'pause', clientPid: 123 });
+
+  // Simulate stale run by moving time forward
+  const staleControlPlane = new ActiveRunControlPlane({
+    repoRoot,
+    now: () => 200_000,
+    pid: process.pid,
+    staleHeartbeatMs: 1_000,
+  });
+  const result = staleControlPlane.acquireOrAttach('run-new');
+  assert.equal(result.action, 'recovered');
+
+  const commands = staleControlPlane.readCommands('run-old', 0);
+  assert.equal(commands.commands.length, 0);
+});
+
+test('recovery preserves startedAt and updates pid', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-recovery-preserve-start-');
+  const statePath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'active-run.json');
+  mkdirSync(path.dirname(statePath), { recursive: true });
+  const startedAt = new Date(1_000).toISOString();
+  writeFileSync(
+    statePath,
+    `${JSON.stringify({
+      version: 1,
+      runId: 'run-old',
+      pid: 999_999,
+      startedAt,
+      heartbeatAt: new Date(1_001).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}\n`,
+    'utf8',
+  );
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 100_000, pid: process.pid, staleHeartbeatMs: 1_000 });
+
+  const result = controlPlane.acquireOrAttach('run-new');
+  assert.equal(result.action, 'recovered');
+  assert.equal(result.record.startedAt, startedAt);
+  assert.equal(result.record.pid, process.pid);
 });
