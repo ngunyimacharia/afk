@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
+import { ActiveRunEventStream } from './active-run-event-stream.js';
 import {
   type AgentExecutionProvider,
   ClaudeKimiAgentExecutionProvider,
@@ -129,10 +130,7 @@ export async function runAfk(
   const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
   const activeRun = activeRunControlPlane.acquireOrAttach(runId);
   if (activeRun.action === 'attached') {
-    return {
-      code: 0,
-      message: `Attached to active run ${activeRun.record.runId} (${activeRun.record.state}) pid=${activeRun.record.pid}`,
-    };
+    return attachToActiveRun(repoRoot, io, activeRun.record.runId, activeRunControlPlane);
   }
   const activeProjectConfig = projectConfig.config;
   activeRunControlPlane.transition(runId, 'running');
@@ -303,6 +301,7 @@ export async function runAfk(
   };
   const notificationPolicy = new NotificationPolicy();
   const notificationAdapter = new OpenTUINotificationAdapter(renderer);
+  const eventStream = new ActiveRunEventStream(repoRoot, runId);
   const view = createLiveRunView({
     kind: io.stdout.isTTY ? 'dashboard' : 'text',
     stdout: io.stdout,
@@ -327,6 +326,7 @@ export async function runAfk(
     });
   }
   const onProgress = (event: import('./types.js').AgentExecutionProgressEvent) => {
+    eventStream.appendProgress(event);
     view.update(event);
     const policyEvent = classifyProgressEvent(event);
     if (policyEvent) {
@@ -450,6 +450,40 @@ export async function runAfk(
   } finally {
     activeRunControlPlane.clear(runId);
   }
+}
+
+async function attachToActiveRun(
+  repoRoot: string,
+  io: PromptIO,
+  runId: string,
+  controlPlane: ActiveRunControlPlane,
+): Promise<{ code: number; message: string }> {
+  const view = createLiveRunView({
+    kind: io.stdout.isTTY ? 'dashboard' : 'text',
+    stdout: io.stdout,
+    runOptions: { runId },
+    repoRoot,
+  });
+  const stream = new ActiveRunEventStream(repoRoot, runId);
+  let offset = 0;
+  let quit = false;
+  const quitPromise = view.waitForQuit().then(() => {
+    quit = true;
+  });
+
+  while (!quit) {
+    const active = controlPlane.read();
+    const { events, nextOffset } = stream.readFromOffset(offset);
+    offset = nextOffset;
+    for (const event of events) view.update(event);
+    if (!active || active.runId !== runId) {
+      view.done();
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  await quitPromise;
+  return { code: 0, message: `Attached to active run ${runId}` };
 }
 
 function formatTicketMetadataError(error: unknown): string {
