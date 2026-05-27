@@ -71,6 +71,7 @@ test('returns success for empty ticket list', async () => {
   assert.equal(result.success, true);
   assert.deepEqual(result.mergedTickets, []);
   assert.deepEqual(result.failedTickets, []);
+  assert.deepEqual(result.cleanupResults, []);
 });
 
 test('merges tickets in dependency order and advances feature branch', async () => {
@@ -127,6 +128,8 @@ test('merges tickets in dependency order and advances feature branch', async () 
   assert.equal(result.success, true);
   assert.deepEqual(result.mergedTickets, ['001', '002']);
   assert.equal(result.failedTickets.length, 0);
+  assert.equal(result.cleanupResults.length, 2);
+  assert.equal(result.cleanupResults.every((entry) => entry.success), true);
 
   assert.equal(readFileSync(path.join(featureWorktreePath, 'a.txt'), 'utf8'), 'a\n');
   assert.equal(readFileSync(path.join(featureWorktreePath, 'b.txt'), 'utf8'), 'b\n');
@@ -229,6 +232,8 @@ test('detects conflicts, invokes reviewer agent, and resolves', async () => {
   assert.equal(result.success, true);
   assert.deepEqual(result.mergedTickets, ['001', '002']);
   assert.equal(readFileSync(path.join(featureWorktreePath, 'shared.txt'), 'utf8'), 'base\nbranch1\nbranch2\n');
+  assert.equal(result.cleanupResults.length, 2);
+  assert.equal(result.cleanupResults.every((entry) => entry.success), true);
 
   const metadata2 = store.readMetadata(meta2.metadataPath);
   assert.equal(metadata2.MERGE_STATUS, 'conflict-resolved');
@@ -430,4 +435,51 @@ test('discards feature worktree changes before merge wave', async () => {
   assert.equal(result.failedTickets.length, 0);
   assert.equal(readFileSync(path.join(featureWorktreePath, 'README.md'), 'utf8'), 'test\n');
   assert.equal(git(featureWorktreePath, ['status', '--porcelain']), '');
+  assert.equal(result.cleanupResults.length, 1);
+  assert.equal(result.cleanupResults[0].success, true);
+});
+
+test('reports post-merge cleanup failure without failing merge pipeline', async () => {
+  const repoRoot = createRepo('merge-back-cleanup-failure-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  const scratch = createScratchWorktree(repoRoot, feature, '001', feature);
+  writeFileSync(path.join(scratch.worktreePath, 'a.txt'), 'a\n');
+  git(scratch.worktreePath, ['add', 'a.txt']);
+  git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const meta = setupTicketMetadata(store, feature, '001');
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const result = await coordinator.mergeWave({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    wave: 0,
+    tickets: [
+      {
+        feature,
+        issueName: '001',
+        branchName: scratch.branchName,
+        worktreePath: path.join(repoRoot, '.worktree', 'does-not-exist'),
+        ...meta,
+      },
+    ],
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.failedTickets.length, 0);
+  assert.equal(result.cleanupResults.length, 1);
+  assert.equal(result.cleanupResults[0].success, false);
+  assert.equal(result.cleanupResults[0].deletedBranch, false);
+  assert.equal(result.cleanupResults[0].deletedWorktree, false);
+  assert.equal(typeof result.cleanupResults[0].error, 'string');
 });

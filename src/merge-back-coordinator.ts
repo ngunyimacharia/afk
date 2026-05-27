@@ -44,6 +44,17 @@ export interface MergeWaveResult {
   success: boolean;
   mergedTickets: string[];
   failedTickets: Array<{ issueName: string; reason: string; conflictPaths?: string[] }>;
+  cleanupResults: MergeBackCleanupResult[];
+}
+
+export interface MergeBackCleanupResult {
+  issueName: string;
+  branchName: string;
+  worktreePath: string;
+  success: boolean;
+  deletedBranch: boolean;
+  deletedWorktree: boolean;
+  error?: string;
 }
 
 export interface MergeBackCoordinatorDependencies {
@@ -70,7 +81,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
   async mergeWave(input: MergeWaveInput): Promise<MergeWaveResult> {
     const { feature, wave, tickets } = input;
     if (tickets.length === 0) {
-      return { success: true, mergedTickets: [], failedTickets: [] };
+      return { success: true, mergedTickets: [], failedTickets: [], cleanupResults: [] };
     }
 
     this.lockedFeatures.add(feature);
@@ -79,11 +90,34 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
       const sorted = sortTicketsByDependencies(tickets);
       const mergedTickets: string[] = [];
       const failedTickets: Array<{ issueName: string; reason: string; conflictPaths?: string[] }> = [];
+      const cleanupResults: MergeBackCleanupResult[] = [];
 
       for (const ticket of sorted) {
         const result = await this.mergeSingleTicket(input, ticket);
         if (result.success) {
           mergedTickets.push(ticket.issueName);
+          const cleanupResult = cleanupMergedIssueResources(input.repoRoot, ticket);
+          cleanupResults.push(cleanupResult);
+          this.deps.runtimeStore.appendLog(
+            ticket.logPath,
+            JSON.stringify({
+              event: 'post-merge-cleanup',
+              issue: ticket.issueName,
+              branch: ticket.branchName,
+              worktreePath: ticket.worktreePath,
+              status: cleanupResult.success ? 'success' : 'failed',
+              deletedBranch: cleanupResult.deletedBranch,
+              deletedWorktree: cleanupResult.deletedWorktree,
+              error: cleanupResult.error ?? null,
+            }),
+          );
+          input.onProgress?.({
+            ticketLabel: `${ticket.feature}/${ticket.issueName}`,
+            message: cleanupResult.success
+              ? `post-merge cleanup succeeded for ${ticket.branchName}`
+              : `post-merge cleanup failed for ${ticket.branchName}: ${cleanupResult.error ?? 'unknown error'}`,
+            kind: cleanupResult.success ? 'message' : 'failure',
+          });
         } else {
           failedTickets.push({
             issueName: ticket.issueName,
@@ -101,7 +135,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
         this.mergedWaves.set(feature, featureWaves);
       }
 
-      return { success, mergedTickets, failedTickets };
+      return { success, mergedTickets, failedTickets, cleanupResults };
     } finally {
       this.lockedFeatures.delete(feature);
     }
@@ -314,6 +348,36 @@ function tryMerge(worktreePath: string, branchName: string): { success: boolean;
 function discardWorktreeChanges(worktreePath: string): void {
   runGit(worktreePath, ['reset', '--hard', 'HEAD']);
   runGit(worktreePath, ['clean', '-fd']);
+}
+
+function cleanupMergedIssueResources(repoRoot: string, ticket: MergeBackTicket): MergeBackCleanupResult {
+  let deletedWorktree = false;
+  let deletedBranch = false;
+  const errors: string[] = [];
+
+  try {
+    runGit(repoRoot, ['worktree', 'remove', '-f', ticket.worktreePath]);
+    deletedWorktree = true;
+  } catch (error) {
+    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    runGit(repoRoot, ['branch', '-D', ticket.branchName]);
+    deletedBranch = true;
+  } catch (error) {
+    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return {
+    issueName: ticket.issueName,
+    branchName: ticket.branchName,
+    worktreePath: ticket.worktreePath,
+    success: deletedWorktree && deletedBranch,
+    deletedBranch,
+    deletedWorktree,
+    error: errors.length > 0 ? errors.join(' | ') : undefined,
+  };
 }
 
 function getConflictPaths(worktreePath: string): string[] {
