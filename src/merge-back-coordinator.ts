@@ -27,6 +27,14 @@ export interface MergeBackTicket {
   logPath: string;
 }
 
+interface MergeBackCleanupInput {
+  repoRoot: string;
+  featureWorktreePath: string;
+  featureBranchName: string;
+  ticket: MergeBackTicket;
+  mergedIssueTip: string;
+}
+
 export interface MergeWaveInput {
   repoRoot: string;
   feature: string;
@@ -54,6 +62,7 @@ export interface MergeBackCleanupResult {
   success: boolean;
   deletedBranch: boolean;
   deletedWorktree: boolean;
+  warning?: string;
   error?: string;
 }
 
@@ -96,7 +105,13 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
         const result = await this.mergeSingleTicket(input, ticket);
         if (result.success) {
           mergedTickets.push(ticket.issueName);
-          const cleanupResult = cleanupMergedIssueResources(input.repoRoot, ticket);
+          const cleanupResult = cleanupMergedIssueResources({
+            repoRoot: input.repoRoot,
+            featureWorktreePath: input.featureWorktreePath,
+            featureBranchName: input.featureBranchName,
+            ticket,
+            mergedIssueTip: resolveBranchTip(input.featureWorktreePath, ticket.branchName),
+          });
           cleanupResults.push(cleanupResult);
           this.deps.runtimeStore.appendLog(
             ticket.logPath,
@@ -108,6 +123,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
               status: cleanupResult.success ? 'success' : 'failed',
               deletedBranch: cleanupResult.deletedBranch,
               deletedWorktree: cleanupResult.deletedWorktree,
+              warning: cleanupResult.warning ?? null,
               error: cleanupResult.error ?? null,
             }),
           );
@@ -115,8 +131,8 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             ticketLabel: `${ticket.feature}/${ticket.issueName}`,
             message: cleanupResult.success
               ? `post-merge cleanup succeeded for ${ticket.branchName}`
-              : `post-merge cleanup failed for ${ticket.branchName}: ${cleanupResult.error ?? 'unknown error'}`,
-            kind: cleanupResult.success ? 'message' : 'failure',
+              : `post-merge cleanup skipped for ${ticket.branchName}: ${cleanupResult.warning ?? cleanupResult.error ?? 'unknown error'}`,
+            kind: cleanupResult.success ? 'message' : 'message',
           });
         } else {
           failedTickets.push({
@@ -350,7 +366,39 @@ function discardWorktreeChanges(worktreePath: string): void {
   runGit(worktreePath, ['clean', '-fd']);
 }
 
-function cleanupMergedIssueResources(repoRoot: string, ticket: MergeBackTicket): MergeBackCleanupResult {
+function cleanupMergedIssueResources(input: MergeBackCleanupInput): MergeBackCleanupResult {
+  const { repoRoot, featureWorktreePath, featureBranchName, ticket, mergedIssueTip } = input;
+  const reachability = checkBranchReachability(
+    featureWorktreePath,
+    featureBranchName,
+    mergedIssueTip,
+    ticket.issueName,
+  );
+  if (!reachability.ok) {
+    return {
+      issueName: ticket.issueName,
+      branchName: ticket.branchName,
+      worktreePath: ticket.worktreePath,
+      success: false,
+      deletedBranch: false,
+      deletedWorktree: false,
+      warning: reachability.reason,
+    };
+  }
+
+  const cleanWorktree = checkWorktreeClean(repoRoot, ticket.worktreePath);
+  if (!cleanWorktree.ok) {
+    return {
+      issueName: ticket.issueName,
+      branchName: ticket.branchName,
+      worktreePath: ticket.worktreePath,
+      success: false,
+      deletedBranch: false,
+      deletedWorktree: false,
+      warning: cleanWorktree.reason,
+    };
+  }
+
   let deletedWorktree = false;
   let deletedBranch = false;
   const errors: string[] = [];
@@ -378,6 +426,46 @@ function cleanupMergedIssueResources(repoRoot: string, ticket: MergeBackTicket):
     deletedWorktree,
     error: errors.length > 0 ? errors.join(' | ') : undefined,
   };
+}
+
+function checkBranchReachability(
+  worktreePath: string,
+  featureBranchName: string,
+  issueTip: string,
+  issueName: string,
+): { ok: true } | { ok: false; reason: string } {
+  try {
+    runGit(worktreePath, ['merge-base', '--is-ancestor', issueTip, featureBranchName]);
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      reason: `merge proof failed for ${issueName}: branch tip is not reachable from feature HEAD`,
+    };
+  }
+}
+
+function resolveBranchTip(worktreePath: string, branchName: string): string {
+  return runGit(worktreePath, ['rev-parse', `${branchName}^{commit}`]).trim();
+}
+
+function checkWorktreeClean(repoRoot: string, worktreePath: string): { ok: true } | { ok: false; reason: string } {
+  if (!existsSync(worktreePath)) {
+    return { ok: false, reason: `issue worktree has uncommitted changes or is unavailable: ${worktreePath}` };
+  }
+
+  try {
+    const status = runGit(worktreePath, ['status', '--porcelain']);
+    if (status.trim().length === 0) return { ok: true };
+    return { ok: false, reason: `issue worktree has uncommitted changes: ${worktreePath}` };
+  } catch {
+    const listing = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
+    const registered = listing.split('\n').some((line) => line.trim() === `worktree ${path.resolve(worktreePath)}`);
+    if (!registered) {
+      return { ok: false, reason: `issue worktree has uncommitted changes or is unavailable: ${worktreePath}` };
+    }
+    return { ok: false, reason: `issue worktree has uncommitted changes: ${worktreePath}` };
+  }
 }
 
 function getConflictPaths(worktreePath: string): string[] {
