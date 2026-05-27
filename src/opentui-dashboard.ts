@@ -18,6 +18,7 @@ export interface OpenTuiDashboardOptions {
   selectedTickets?: TicketRecord[];
   runOptions?: RunDashboardStateOptions;
   repoRoot?: string;
+  onPauseResume?: () => void;
 }
 
 export interface OpenTuiDashboardModule {
@@ -242,6 +243,7 @@ class OpenTuiDashboard implements LiveRunView {
     runOptions: RunDashboardStateOptions,
     private readonly opentui: OpenTuiDashboardModule,
     private readonly repoRoot: string,
+    private readonly onPauseResume?: () => void,
   ) {
     this.state = new RunDashboardState(runOptions, selectedTickets);
     this.quitPromise = new Promise((resolve) => {
@@ -437,6 +439,9 @@ class OpenTuiDashboard implements LiveRunView {
           this.armQuit();
         }
         return true;
+      case 'p':
+        this.onPauseResume?.();
+        return true;
       case '\x1b[B': // Down arrow
       case 'j':
         this.state.selectNextTicket();
@@ -455,6 +460,12 @@ class OpenTuiDashboard implements LiveRunView {
       default:
         return false;
     }
+  }
+
+  setRunState(state: 'running' | 'paused'): void {
+    if (this.destroyed) return;
+    this.state.setRunState(state);
+    this.refresh();
   }
 
   update(event: AgentExecutionProgressEvent): void {
@@ -476,8 +487,14 @@ class OpenTuiDashboard implements LiveRunView {
     this.actionText.content = formatActionNeeded(snap);
     this.detailsText.content = formatDetails(snap, this.repoRoot);
     this.eventsText.content = formatEvents(snap);
-    this.footerText.content = this.quitArmed ? 'Press again to quit' : 'Ctrl+C or q to quit';
+    this.footerText.content = this.formatFooter(snap);
     this.maybeStopTimer(snap);
+  }
+
+  private formatFooter(snap: DashboardSnapshot): StyledText {
+    if (this.quitArmed) return stringToStyledText('Press again to quit');
+    if (snap.runState === 'paused') return stringToStyledText('p to resume | q to quit');
+    return stringToStyledText('p to pause | q to quit');
   }
 
   healthCheck(activeSessionIds: Set<string>): void {
@@ -535,6 +552,7 @@ export async function createOpenTuiDashboard(
       options.runOptions ?? {},
       opentui,
       options.repoRoot ?? process.cwd(),
+      options.onPauseResume,
     );
   } catch {
     return null;
@@ -599,6 +617,12 @@ export class DashboardProxy implements LiveRunView {
   healthCheck(activeSessionIds: Set<string>): void {
     if (this.dashboard && 'healthCheck' in this.dashboard) {
       (this.dashboard as unknown as { healthCheck(ids: Set<string>): void }).healthCheck(activeSessionIds);
+    }
+  }
+
+  setRunState(state: 'running' | 'paused'): void {
+    if (this.dashboard && 'setRunState' in this.dashboard) {
+      (this.dashboard as unknown as { setRunState(s: 'running' | 'paused'): void }).setRunState(state);
     }
   }
 

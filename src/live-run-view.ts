@@ -8,6 +8,7 @@ export interface LiveRunView {
   done(): void;
   cleanup(): void;
   waitForQuit(): Promise<void>;
+  setRunState?(state: 'running' | 'paused'): void;
 }
 
 export type LiveRunViewKind = 'text' | 'dashboard';
@@ -20,15 +21,16 @@ export interface LiveRunViewOptions {
   selectedTickets?: TicketRecord[];
   runOptions?: RunDashboardStateOptions;
   repoRoot?: string;
+  onPauseResume?: () => void;
 }
 
 export function createLiveRunView(options: LiveRunViewOptions): LiveRunView {
-  const { kind = 'text', stdout, isPromptActive, providerName, selectedTickets, runOptions, repoRoot } = options;
+  const { kind = 'text', stdout, isPromptActive, providerName, selectedTickets, runOptions, repoRoot, onPauseResume } = options;
   if (kind === 'dashboard' && stdout.isTTY) {
     const proxy = new DashboardProxy(
       stdout,
       { isPromptActive, providerName },
-      { stdout, selectedTickets, runOptions, repoRoot },
+      { stdout, selectedTickets, runOptions, repoRoot, onPauseResume },
       (opts) => createOpenTuiDashboard(opts),
     );
     proxy.start().catch(() => {});
