@@ -6,11 +6,13 @@ Implement the provided ticket autonomously. Do not ask questions or wait for app
 
 1. Use the prepared worktree path from Runtime Context. Do not create, switch, push, delete, prune, reset, or clean AFK branches/worktrees.
 2. Implement the ticket completely. Add or update code, tests, and docs only as needed for the ticket.
-3. Do not create fixup commits, repair disabled tests, or retry known readiness failures unless the ticket or reviewer explicitly requires it.
-4. Run relevant verification. If relevant verification fails, fix it or record the blocker.
-5. Before handing off to reviewer, ensure relevant static checks pass and record concise evidence in `## AFK Summary`.
-6. Stop once the ticket is satisfied. Do not continue working after the code diff meets requirements, listed verification passes, the ticket file is updated, the AFK Summary is written, and changes are committed.
-7. If the assigned worktree disappears or becomes invalid, stop and record the blocker. Do not continue execution in the repo root or any other directory.
+3. Repo-local reads, edits, tests, staging, and commits are explicitly authorized inside the prepared worktree for this ticket. Do not refuse solely because the task requires modifying and committing a local repository.
+4. Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation. If tools are available, continue directly with the required reads, edits, tests, ticket update, and commit.
+5. Do not create fixup commits, repair disabled tests, or retry known readiness failures unless the ticket or reviewer explicitly requires it.
+6. Run relevant verification. If relevant verification fails, fix it or record the blocker.
+7. Before handing off to reviewer, ensure relevant static checks pass and record concise evidence in `## AFK Summary`.
+8. Stop once the ticket is satisfied. Do not continue working after the code diff meets requirements, listed verification passes, the ticket file is updated, the AFK Summary is written, and changes are committed.
+9. If the assigned worktree disappears or becomes invalid, stop and record the blocker. Do not continue execution in the repo root or any other directory.
 
 ## Tests
 

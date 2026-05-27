@@ -46,6 +46,9 @@ test('prompt consumes prepared checkout context', () => {
   assert.match(prompt, /status: ready-for-agent/);
   assert.doesNotMatch(prompt, /## AFK State Snapshot/);
   assert.match(prompt, /Access policy: source-code reads, searches, tests, and edits must use the Working checkout/);
+  assert.match(prompt, /repo-local reads, edits, tests, staging, and commits are explicitly allowed inside the Working checkout/);
+  assert.match(prompt, /Do not refuse solely because this task requires modifying and committing a local repository/);
+  assert.match(prompt, /Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation/);
   assert.match(prompt, /Root repo writes are allowed only under the listed shared \.scratch artifact paths/);
   assert.match(prompt, /Search policy: search only inside the Working checkout/);
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
@@ -56,6 +59,9 @@ test('afk prompt includes budget, handoff guardrails, and worktree disappearance
   assert.match(source, /Do not create fixup commits, repair disabled tests, or retry known readiness failures/);
   assert.match(source, /Append or update `## AFK Summary`/);
   assert.match(source, /If the assigned worktree disappears or becomes invalid, stop and record the blocker/);
+  assert.match(source, /Repo-local reads, edits, tests, staging, and commits are explicitly authorized/);
+  assert.match(source, /Do not refuse solely because the task requires modifying and committing a local repository/);
+  assert.match(source, /Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation/);
   assert.match(source, /Do not continue execution in the repo root/);
   assert.match(source, /Stop once the ticket is satisfied/);
   assert.match(source, /do not rerun the same passing tests again/);
