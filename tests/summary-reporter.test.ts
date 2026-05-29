@@ -34,8 +34,7 @@ Outcome: completed
   const report = await new SummaryReporter({ repoRoot }).summarize();
   assert.match(report.message, /feat\/01/);
   assert.match(report.message, /2 attempts/);
-  assert.match(report.message, /Missing summaries/);
-  assert.match(report.message, /feat\/02/);
+  assert.match(report.message, /Legacy \/ malformed[\s\S]*feat\/02/);
   assert.match(report.message, /feat\/01: 2 attempts/);
 });
 
@@ -262,4 +261,85 @@ Outcome: handoff
   assert.match(report.message, /implementation: completed/);
   assert.match(report.message, /review: unavailable/);
   assert.doesNotMatch(report.message, /Failed or blocked work[\s\S]*feat\/01/);
+});
+
+test('ready-for-agent ticket without summary appears in Not yet started', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    `---
+feature: feat
+status: ready-for-agent
+---
+`,
+  );
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Not yet started[\s\S]*feat\/01/);
+  assert.doesNotMatch(report.message, /Missing summaries[\s\S]*feat\/01/);
+});
+
+test('wontfix ticket without summary appears in Will not fix', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    `---
+feature: feat
+status: wontfix
+---
+`,
+  );
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Won't fix[\s\S]*feat\/01/);
+  assert.doesNotMatch(report.message, /Missing summaries[\s\S]*feat\/01/);
+});
+
+test('ticket with no status and no summary appears in Legacy / malformed', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '');
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Legacy \/ malformed[\s\S]*feat\/01/);
+  assert.doesNotMatch(report.message, /Missing summaries[\s\S]*feat\/01/);
+});
+
+test('blocked ticket without summary appears in Missing summaries', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    `---
+feature: feat
+status: blocked
+---
+`,
+  );
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Missing summaries[\s\S]*feat\/01/);
+});
+
+test('ticket with summary and ready-for-agent status is classified by summary content', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    `---
+feature: feat
+status: ready-for-agent
+---
+
+## AFK Summary
+Timestamp: 2026-05-18T00:00:00.000Z
+Outcome: completed
+`,
+  );
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Completed or successful work[\s\S]*feat\/01/);
+  assert.doesNotMatch(report.message, /Not yet started[\s\S]*feat\/01/);
 });

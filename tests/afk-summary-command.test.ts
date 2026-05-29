@@ -77,3 +77,72 @@ test('afk summary subcommand is supported by the single executable entrypoint', 
   assert.equal(result.code, 0);
   assert.match(result.message, /AFK Summary/);
 });
+
+test('afk summary shows new status-based sections', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+
+  writeFileSync(
+    path.join(issuesDir, '01-ready.md'),
+    `---
+feature: feat
+status: ready-for-agent
+---
+`,
+  );
+
+  writeFileSync(
+    path.join(issuesDir, '02-wontfix.md'),
+    `---
+feature: feat
+status: wontfix
+---
+`,
+  );
+
+  writeFileSync(
+    path.join(issuesDir, '03-legacy.md'),
+    `---
+feature: feat
+---
+`,
+  );
+
+  writeFileSync(
+    path.join(issuesDir, '04-missing.md'),
+    `---
+feature: feat
+status: failed
+---
+`,
+  );
+
+  writeFileSync(
+    path.join(issuesDir, '05-completed.md'),
+    `---
+feature: feat
+status: completed
+---
+
+## AFK Summary
+Timestamp: 2026-05-18T00:00:00.000Z
+Outcome: completed
+`,
+  );
+
+  const originalArg = process.argv[2];
+  process.argv[2] = 'afk-summary';
+  const result = await runAfk(repoRoot);
+  process.argv[2] = originalArg;
+
+  assert.equal(result.code, 0);
+  assert.match(result.message, /AFK Summary/);
+  assert.match(result.message, /Completed or successful work/);
+  assert.match(result.message, /Failed or blocked work/);
+  assert.match(result.message, /Interrupted or incomplete work/);
+  assert.match(result.message, /Not yet started/);
+  assert.match(result.message, /Won't fix/);
+  assert.match(result.message, /Legacy \/ malformed/);
+  assert.match(result.message, /Missing summaries/);
+});

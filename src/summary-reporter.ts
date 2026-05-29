@@ -106,6 +106,15 @@ function fieldValue(fields: Record<string, string>, ...names: string[]): string 
   return undefined;
 }
 
+function getNoSummaryBucket(status: string | undefined): 'not-yet-started' | 'wontfix' | 'legacy' | 'missing' {
+  const normalized = normalize(status);
+  if (!normalized) return 'legacy';
+  if (['ready-for-agent', 'ready-for-human', 'needs-triage', 'needs-info'].includes(normalized))
+    return 'not-yet-started';
+  if (normalized === 'wontfix') return 'wontfix';
+  return 'missing';
+}
+
 function classify(
   status: string | undefined,
   attempt: SummaryAttempt,
@@ -297,12 +306,20 @@ export class SummaryReporter {
     const handoff: string[] = [];
     const failed: string[] = [];
     const interrupted: string[] = [];
+    const notYetStarted: string[] = [];
+    const wontFix: string[] = [];
+    const legacy: string[] = [];
     const missing: string[] = [];
     const repeated: string[] = [];
 
     for (const issue of issues) {
       if (!issue.summaries.length) {
-        missing.push(`- ${issue.feature}/${issue.issueName} (${issue.filePath})`);
+        const bucket = getNoSummaryBucket(issue.status);
+        const line = `- ${issue.feature}/${issue.issueName} (${issue.filePath})`;
+        if (bucket === 'not-yet-started') notYetStarted.push(line);
+        else if (bucket === 'wontfix') wontFix.push(line);
+        else if (bucket === 'legacy') legacy.push(line);
+        else missing.push(line);
         continue;
       }
       if (issue.summaries.length > 1)
@@ -334,6 +351,15 @@ export class SummaryReporter {
       '',
       'Interrupted or incomplete work',
       ...(interrupted.length ? interrupted : ['- none']),
+      '',
+      'Not yet started',
+      ...(notYetStarted.length ? notYetStarted : ['- none']),
+      '',
+      "Won't fix",
+      ...(wontFix.length ? wontFix : ['- none']),
+      '',
+      'Legacy / malformed',
+      ...(legacy.length ? legacy : ['- none']),
       '',
       'Missing summaries',
       ...(missing.length ? missing : ['- none']),
