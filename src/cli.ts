@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
@@ -11,8 +12,10 @@ import {
 } from './agent-execution-provider.js';
 import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
+import { type DaemonLaunchContext, runDaemon } from './daemon.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
+import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
 import { createLiveRunView } from './live-run-view.js';
@@ -26,12 +29,7 @@ import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
-import {
-  type FeatureLockProvider,
-  type FeatureMergeBackProvider,
-  Scheduler,
-  type SchedulerTicketResult,
-} from './scheduler.js';
+import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
@@ -43,15 +41,20 @@ import {
   refreshWorkspaceExecutionGraph,
   type WorkspaceExecutionGraph,
 } from './workspace-execution-graph.js';
-import {
-  branchExists,
-  runGit,
-  WorktreePreparationService,
-  WorktreeReadinessBlockedError,
-} from './worktree-preparation-service.js';
+import { WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
 
 function commandArg(): string | undefined {
-  const knownCommands = new Set(['summary', 'cleanup', 'afk-summary', 'afk-cleanup', 'sync', 'tui', 'stop', 'status']);
+  const knownCommands = new Set([
+    'summary',
+    'cleanup',
+    'afk-summary',
+    'afk-cleanup',
+    'sync',
+    'tui',
+    'stop',
+    'status',
+    '__daemon',
+  ]);
   const arg1 = process.argv[1];
   const arg2 = process.argv[2];
   if (arg1 && knownCommands.has(arg1)) {
@@ -68,9 +71,20 @@ function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
 }
 
+export interface SpawnDaemonHandle {
+  pid: number | undefined;
+  unref: () => void;
+  on: (event: 'exit' | 'error', callback: (code?: number | null, signal?: NodeJS.Signals | null) => void) => void;
+}
+
 export async function runAfk(
   repoRoot = process.cwd(),
-  runtime: { io?: PromptIO; env?: NodeJS.ProcessEnv } = {},
+  runtime: {
+    io?: PromptIO;
+    env?: NodeJS.ProcessEnv;
+    spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
+    inlineLaunch?: boolean;
+  } = {},
 ): Promise<{ code: number; message: string }> {
   const io = runtime.io ?? { stdin: process.stdin, stdout: process.stdout };
   const env = runtime.env ?? process.env;
@@ -149,7 +163,32 @@ export async function runAfk(
     return { code: 0, message: 'Not yet implemented' };
   }
   if (command === 'status') {
-    return { code: 0, message: 'Not yet implemented' };
+    const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
+    const activeRun = activeRunControlPlane.read();
+    if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
+      return { code: 0, message: 'No active AFK run' };
+    }
+    return {
+      code: 0,
+      message: [
+        `Run ID: ${activeRun.runId}`,
+        `State: ${activeRun.state}`,
+        `PID: ${activeRun.pid}`,
+        `Started: ${activeRun.startedAt}`,
+      ].join('\n'),
+    };
+  }
+  if (command === '__daemon') {
+    const contextPath = process.argv[1] === '__daemon' ? process.argv[2] : process.argv[3];
+    if (!contextPath) return { code: 1, message: 'Daemon context path required' };
+    const context = JSON.parse(readFileSync(contextPath, 'utf8')) as DaemonLaunchContext;
+    try {
+      unlinkSync(contextPath);
+    } catch {
+      // Best-effort cleanup of context file
+    }
+    await runDaemon(context);
+    return { code: 0, message: '' };
   }
   const runtimeStore = new RuntimeStore({ repoRoot });
   const launchPreferences = runtimeStore.readLaunchPreferences();
@@ -182,6 +221,7 @@ export async function runAfk(
   const activeProjectConfig = projectConfig.config;
   activeRunControlPlane.transition(runId, 'running');
   let killPollInterval: ReturnType<typeof setInterval> | null = null;
+  let clearOnExit = true;
   try {
     const repository = new TicketRepository(repoRoot);
     let allTickets: TicketRecord[];
@@ -329,7 +369,50 @@ export async function runAfk(
       { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
       checkoutsByFeature,
       featureDependencies,
+      harness,
     );
+
+    if (!runtime.inlineLaunch) {
+      const context: DaemonLaunchContext = {
+        repoRoot,
+        runId,
+        plan,
+        harness,
+        reviewerHarness,
+        concurrency,
+        budgets: launchPreferences.budgets,
+      };
+      const spawnDaemon = runtime.spawnDaemon ?? defaultSpawnDaemon;
+      const handle = spawnDaemon(context);
+      if (!handle.pid) {
+        activeRunControlPlane.clear(runId);
+        return { code: 1, message: 'Failed to start background daemon. Check permissions and disk space.' };
+      }
+      activeRunControlPlane.updatePid(runId, handle.pid);
+      handle.unref();
+      clearOnExit = false;
+      return {
+        code: 0,
+        message: [
+          `Run ID: ${runId}`,
+          `Selected model: ${plan.model.id}`,
+          `Selected harness: ${harness}`,
+          `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
+          `Selected reviewer harness: ${reviewerHarness}`,
+          `Reviewer prompt: ${plan.reviewerPrompt?.id ?? 'unknown'}`,
+          `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
+          `Selected features (${selectedFeatures.length}): ${selectedFeatures.join(', ')}`,
+          `Concurrency: ${concurrency}`,
+          `Repo root: ${path.resolve(plan.repoRoot)}`,
+          `Worktree: ${plan.checkout.effectiveWorktreeName}`,
+          `Branch: ${plan.checkout.effectiveBranchName}`,
+          '',
+          'Daemon started in background.',
+          'Run `afk tui` to attach and view progress.',
+        ].join('\n'),
+      };
+    }
+
     const permissionCoordinator = new PermissionCoordinator({
       ticketLabel: selectedTickets[0]?.label,
       autoApprove: true,
@@ -579,7 +662,7 @@ export async function runAfk(
     };
   } finally {
     if (killPollInterval) clearInterval(killPollInterval);
-    activeRunControlPlane.clear(runId);
+    if (clearOnExit) activeRunControlPlane.clear(runId);
   }
 }
 
@@ -929,54 +1012,6 @@ function validateApprovedTicketFile(ticketPath?: string): string | null {
   return null;
 }
 
-class GitFeatureMergeBackProvider implements FeatureMergeBackProvider {
-  constructor(
-    private repoRoot: string,
-    private checkouts: Record<string, ReturnType<WorktreePreparationService['prepare']>>,
-  ) {}
-
-  isWaveMerged(feature: string, _wave: number, issueNames: string[]): boolean {
-    const featureCheckout = this.checkouts[feature];
-    if (!featureCheckout) return false;
-    for (const issueName of issueNames) {
-      const ticketBranch = `afk/${feature}/${issueName}`;
-      if (!branchExists(this.repoRoot, ticketBranch)) continue;
-      try {
-        runGit(this.repoRoot, ['merge-base', '--is-ancestor', ticketBranch, featureCheckout.effectiveBranchName]);
-      } catch {
-        return false;
-      }
-    }
-    return true;
-  }
-}
-
-class GitFeatureLockProvider implements FeatureLockProvider {
-  constructor(private checkouts: Record<string, ReturnType<WorktreePreparationService['prepare']>>) {}
-
-  isLocked(feature: string): boolean {
-    const checkout = this.checkouts[feature];
-    if (!checkout) return false;
-    const gitDir = resolveGitDir(checkout.worktreePath);
-    if (existsSync(path.join(gitDir, 'MERGE_HEAD'))) return true;
-    if (existsSync(path.join(gitDir, 'index.lock'))) return true;
-    return false;
-  }
-}
-
-function resolveGitDir(worktreePath: string): string {
-  const gitFile = path.join(worktreePath, '.git');
-  try {
-    const content = readFileSync(gitFile, 'utf8').trim();
-    if (content.startsWith('gitdir:')) {
-      return content.slice(7).trim();
-    }
-  } catch {
-    // .git is a directory
-  }
-  return gitFile;
-}
-
 function isTerminalTicketStatus(status?: string): boolean {
   return !!status && new Set(['done', 'closed', 'complete', 'resolved']).has(status.trim().toLowerCase());
 }
@@ -1009,4 +1044,42 @@ function createAgentExecutionProvider(
 function providerNameFromHarness(harness: 'OpenCode' | 'Claude-Kimi'): string {
   if (harness === 'Claude-Kimi') return 'claude-kimi';
   return 'opencode';
+}
+
+function getDaemonSpawnCommand(contextPath: string): { command: string; args: string[] } {
+  const script = process.argv[1];
+  const isCompiled = !script || (!script.endsWith('.ts') && !script.endsWith('.js'));
+  if (isCompiled) {
+    return { command: process.argv[0], args: ['__daemon', contextPath] };
+  }
+  return { command: process.argv[0], args: [script, '__daemon', contextPath] };
+}
+
+function defaultSpawnDaemon(context: DaemonLaunchContext): SpawnDaemonHandle {
+  const contextPath = path.join(
+    context.repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    `daemon-context-${context.runId}.json`,
+  );
+  writeFileSync(contextPath, JSON.stringify(context), 'utf8');
+
+  const logDir = path.join(context.repoRoot, '.scratch', '.opencode-afk-logs');
+  const outLog = path.join(logDir, 'daemon.out.log');
+  const errLog = path.join(logDir, 'daemon.err.log');
+  const out = openSync(outLog, 'a');
+  const err = openSync(errLog, 'a');
+
+  const { command, args } = getDaemonSpawnCommand(contextPath);
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: ['ignore', out, err],
+    cwd: context.repoRoot,
+  });
+
+  return {
+    pid: child.pid,
+    unref: () => child.unref(),
+    on: (event, callback) => child.on(event, callback),
+  };
 }
