@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  ClaudeKimiAgentExecutionProvider,
   decideAfkPermission,
   FakeAgentExecutionProvider,
   OpenCodeAgentExecutionProvider,
@@ -497,6 +498,50 @@ test('opencode provider forwards signal to executor', async () => {
   });
 
   assert.equal(capturedSignal, controller.signal);
+});
+
+test('opencode provider forwards workDir from checkout worktreePath', async () => {
+  let capturedWorkDir: string | undefined;
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedWorkDir = input.workDir;
+      return { sessionId: 'session-workdir', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: {
+      model: { id: 'openai/gpt-5.5' },
+      tickets: [{ label: 'feat/01' }],
+      checkout: { worktreePath: '/repo/.worktree/feature' },
+    } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(capturedWorkDir, '/repo/.worktree/feature');
+});
+
+test('claude-kimi provider forwards workDir from checkout worktreePath', async () => {
+  let capturedWorkDir: string | undefined;
+  const provider = new ClaudeKimiAgentExecutionProvider({
+    run: async (input) => {
+      capturedWorkDir = input.workDir;
+      return { sessionId: 'session-workdir', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: {
+      model: { id: 'anthropic/claude-sonnet-4' },
+      tickets: [{ label: 'feat/01' }],
+      checkout: { worktreePath: '/repo/.worktree/feature' },
+    } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(capturedWorkDir, '/repo/.worktree/feature');
 });
 
 test('shared permission coordinator serializes concurrent tickets FIFO', async () => {
