@@ -13,6 +13,12 @@ test('resolveExecutable returns absolute path for existing executable', () => {
   assert.ok(result.startsWith('/'));
 });
 
+test('resolveExecutable returns absolute path for which', () => {
+  const result = resolveExecutable('which');
+  assert.ok(result.length > 0);
+  assert.ok(result.startsWith('/'));
+});
+
 test('resolveExecutable throws RequiredExecutableError for missing executable', () => {
   assert.throws(
     () => resolveExecutable('afk-nonexistent-executable-12345'),

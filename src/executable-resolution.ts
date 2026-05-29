@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+
+const SH_PATH = existsSync('/bin/sh') ? '/bin/sh' : 'sh';
 
 export class RequiredExecutableError extends Error {
   constructor(public readonly missing: string[]) {
@@ -13,7 +16,7 @@ export function resolveExecutable(name: string): string {
   const cached = cache[name];
   if (cached) return cached;
   try {
-    const resolved = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim();
+    const resolved = execFileSync(SH_PATH, ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim();
     cache[name] = resolved;
     return resolved;
   } catch {
