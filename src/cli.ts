@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
@@ -149,7 +149,24 @@ export async function runAfk(
     return { code: 0, message: 'Not yet implemented' };
   }
   if (command === 'status') {
-    return { code: 0, message: 'Not yet implemented' };
+    const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
+    const activeRun = activeRunControlPlane.read();
+    if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
+      return { code: 0, message: 'No active AFK run' };
+    }
+    const runMetadata = readRunMetadata(repoRoot, activeRun.runId);
+    const heartbeatAgeMs = Date.now() - Date.parse(activeRun.heartbeatAt);
+    const lines = [
+      `Run ID:    ${activeRun.runId}`,
+      `State:     ${activeRun.state}`,
+      `PID:       ${activeRun.pid}`,
+      `Started:   ${activeRun.startedAt}`,
+      `Heartbeat: ${formatHeartbeatAge(heartbeatAgeMs)} ago`,
+    ];
+    if (runMetadata.modelId) lines.push(`Model:     ${runMetadata.modelId}`);
+    if (runMetadata.harness) lines.push(`Harness:   ${runMetadata.harness}`);
+    if (runMetadata.ticketCount > 0) lines.push(`Tickets:   ${runMetadata.ticketCount}`);
+    return { code: 0, message: lines.join('\n') };
   }
   const runtimeStore = new RuntimeStore({ repoRoot });
   const launchPreferences = runtimeStore.readLaunchPreferences();
@@ -645,6 +662,64 @@ async function attachToActiveRun(
   clearInterval(killPollInterval);
   await quitPromise;
   return { code: 0, message: killed ? `Kill dispatched for active run ${runId}` : `Attached to active run ${runId}` };
+}
+
+function formatHeartbeatAge(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0)
+    return `${hours}h ${(minutes % 60).toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+  if (minutes > 0) return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+  return `${seconds}s`;
+}
+
+interface RunMetadata {
+  modelId?: string;
+  harness?: string;
+  ticketCount: number;
+}
+
+function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
+  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  if (!existsSync(metadataRoot)) return { ticketCount: 0 };
+
+  let ticketCount = 0;
+  let modelId: string | undefined;
+  let harness: string | undefined;
+
+  for (const file of readdirSync(metadataRoot)) {
+    if (!file.endsWith('.json')) continue;
+    try {
+      const content = readFileSync(path.join(metadataRoot, file), 'utf8');
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      if (parsed.RUN_ID !== runId) continue;
+      ticketCount++;
+      if (!modelId && typeof parsed.EXECUTION_MODEL_ID === 'string') modelId = parsed.EXECUTION_MODEL_ID;
+      if (!harness && typeof parsed.EXECUTION_PROVIDER === 'string') {
+        harness = parsed.EXECUTION_PROVIDER === 'opencode' ? 'OpenCode' : parsed.EXECUTION_PROVIDER;
+      }
+    } catch {
+      // skip malformed metadata files
+    }
+  }
+
+  // Fall back to launch preferences if runtime metadata did not yield model/harness
+  if (!modelId || !harness) {
+    try {
+      const prefsPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
+      if (existsSync(prefsPath)) {
+        const prefs = JSON.parse(readFileSync(prefsPath, 'utf8')) as Record<string, unknown>;
+        if (!modelId && typeof prefs.modelId === 'string') modelId = prefs.modelId;
+        if (!harness && typeof prefs.harness === 'string') harness = prefs.harness;
+      }
+    } catch {
+      // ignore unreadable preferences
+    }
+  }
+
+  return { modelId, harness, ticketCount };
 }
 
 function formatTicketMetadataError(error: unknown): string {
