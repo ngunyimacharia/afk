@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
+import { KimiCodeSyncAdapter } from '../src/sync/adapters/kimi-code.js';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 import { AssetSyncEngine, formatSyncReport } from '../src/sync/engine.js';
 
@@ -90,4 +91,39 @@ test('sync report reminds the user to restart opencode', () => {
     actions: [],
   });
   assert.match(message, /Adapter: opencode/);
+});
+
+async function makeKimiCodeFixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'afk-kimi-code-sync-'));
+  const artifacts = path.join(root, 'artifacts');
+  const kimiCode = path.join(root, '.kimi-code');
+  await mkdir(path.join(artifacts, 'skills'), { recursive: true });
+  return { root, artifacts, kimiCode };
+}
+
+test('syncs initial kimi-code asset categories into the destination tree', async () => {
+  const { artifacts, kimiCode } = await makeKimiCodeFixture();
+  await writeFile(path.join(artifacts, 'skills', 'alpha.md'), '# alpha');
+
+  const engine = new AssetSyncEngine({
+    id: 'kimi-code',
+    assetCategories: () =>
+      KimiCodeSyncAdapter.assetCategories().map((category) => {
+        const relativeSource = path.basename(category.sourceRoot);
+        const relativeDestination = path.basename(category.destinationRoot);
+        return {
+          ...category,
+          sourceRoot: path.join(artifacts, relativeSource),
+          destinationRoot: path.join(kimiCode, relativeDestination),
+          destinationBase: kimiCode,
+        };
+      }),
+  });
+
+  const first = await engine.execute();
+  assert.equal(first.counts.created, 1);
+  assert.equal(await readFile(path.join(kimiCode, 'skills', 'alpha', 'SKILL.md'), 'utf8'), '# alpha');
+
+  const second = await engine.execute();
+  assert.equal(second.counts.unchanged, 1);
 });
