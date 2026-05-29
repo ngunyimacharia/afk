@@ -158,7 +158,7 @@ export class ActiveRunControlPlane {
     }
   }
 
-  private isHealthy(record: ActiveRunRecord): boolean {
+  isHealthy(record: ActiveRunRecord): boolean {
     if (!this.isPidAlive(record.pid)) return false;
     const heartbeatEpoch = Date.parse(record.heartbeatAt);
     if (!Number.isFinite(heartbeatEpoch)) return false;

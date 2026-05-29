@@ -51,7 +51,7 @@ import {
 } from './worktree-preparation-service.js';
 
 function commandArg(): string | undefined {
-  const knownCommands = new Set(['summary', 'cleanup', 'afk-summary', 'afk-cleanup', 'sync']);
+  const knownCommands = new Set(['summary', 'cleanup', 'afk-summary', 'afk-cleanup', 'sync', 'tui', 'stop', 'status']);
   const arg1 = process.argv[1];
   const arg2 = process.argv[2];
   if (arg1 && knownCommands.has(arg1)) {
@@ -137,6 +137,20 @@ export async function runAfk(
     };
   }
   if (command === 'sync') return runSync();
+  if (command === 'tui') {
+    const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
+    const activeRun = activeRunControlPlane.read();
+    if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
+      return { code: 1, message: 'No active run' };
+    }
+    return attachToActiveRun(repoRoot, io, activeRun.runId, activeRunControlPlane);
+  }
+  if (command === 'stop') {
+    return { code: 0, message: 'Not yet implemented' };
+  }
+  if (command === 'status') {
+    return { code: 0, message: 'Not yet implemented' };
+  }
   const runtimeStore = new RuntimeStore({ repoRoot });
   const launchPreferences = runtimeStore.readLaunchPreferences();
   const projectConfig = loadAfkProjectConfig(repoRoot);
