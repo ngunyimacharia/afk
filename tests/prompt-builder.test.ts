@@ -54,6 +54,10 @@ test('prompt consumes prepared checkout context', () => {
   assert.match(prompt, /Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation/);
   assert.match(prompt, /Root repo writes are allowed only under the listed shared \.scratch artifact paths/);
   assert.match(prompt, /Search policy: search only inside the Working checkout/);
+  assert.match(
+    prompt,
+    /Shell commands: always run tests, linters, builds, and git from the Worktree path\. Use absolute paths or the workdir parameter\. Never assume the default working directory is the worktree\./,
+  );
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
 });
 
@@ -70,6 +74,10 @@ test('afk prompt includes budget, handoff guardrails, and worktree disappearance
   assert.match(source, /do not rerun the same passing tests again/);
   assert.match(source, /Scratch Artifact Completion Checklist/);
   assert.match(source, /Verification Budget/);
+  assert.match(
+    source,
+    /When running shell commands \(tests, linters, builds, git\), always set the working directory to the Worktree path from Runtime Context/,
+  );
 });
 
 test('default execution prompt requires reviewer notes subsection', () => {

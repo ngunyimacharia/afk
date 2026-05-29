@@ -30,6 +30,7 @@ export function buildPrompt(input: PromptInput): string {
     `Branch: ${input.checkout.effectiveBranchName}`,
     `Worktree path: ${input.checkout.worktreePath}`,
     ...(input.snapshot?.head ? [`Implementation HEAD: ${input.snapshot.head}`] : []),
+    'Shell commands: always run tests, linters, builds, and git from the Worktree path. Use absolute paths or the workdir parameter. Never assume the default working directory is the worktree.',
     `Repo root, for shared scratch artifacts only: ${input.snapshot?.repoRoot ?? 'unknown'}`,
     'Authorization: repo-local reads, edits, tests, staging, and commits are explicitly allowed inside the Working checkout for this ticket.',
     'Do not refuse solely because this task requires modifying and committing a local repository; the prepared checkout is the AFK execution sandbox.',

@@ -516,6 +516,84 @@ test('marks a running opencode tool stale after the active tool timeout', async 
   );
 });
 
+test('passes workDir as directory query to session create and prompt', async () => {
+  const createArgs: unknown[] = [];
+  const promptBodies: unknown[] = [];
+  const executor = new SDKOpenCodeSessionExecutor(
+    async () =>
+      ({
+        server: { url: 'http://127.0.0.1:1', close() {} },
+        client: {
+          session: {
+            create: async (options: unknown) => {
+              createArgs.push(options);
+              return { id: 'session-workdir' };
+            },
+            prompt: async (options: { path: { id: string }; body: unknown }) => {
+              promptBodies.push(options.body);
+              return { ok: true };
+            },
+            messages: async () => [{ role: 'assistant', parts: [{ type: 'text', text: 'Done' }] }],
+          },
+        },
+      }) as never,
+  );
+
+  const result = await executor.run({
+    model: { id: 'openai/gpt-5.3-codex' },
+    title: 'afk: feat/01',
+    prompt: 'Implement feature',
+    workDir: '/repo/.worktree/feat-01',
+  });
+
+  assert.equal(result.sessionId, 'session-workdir');
+  assert.equal(result.terminalError, null);
+  assert.equal(createArgs.length, 1);
+  assert.deepEqual((createArgs[0] as { query?: { directory?: string } }).query, {
+    directory: '/repo/.worktree/feat-01',
+  });
+  assert.equal(promptBodies.length, 1);
+  assert.deepEqual((promptBodies[0] as { query?: { directory?: string } }).query, {
+    directory: '/repo/.worktree/feat-01',
+  });
+});
+
+test('omits directory query when workDir is undefined', async () => {
+  const createArgs: unknown[] = [];
+  const promptBodies: unknown[] = [];
+  const executor = new SDKOpenCodeSessionExecutor(
+    async () =>
+      ({
+        server: { url: 'http://127.0.0.1:1', close() {} },
+        client: {
+          session: {
+            create: async (options: unknown) => {
+              createArgs.push(options);
+              return { id: 'session-no-workdir' };
+            },
+            prompt: async (options: { path: { id: string }; body: unknown }) => {
+              promptBodies.push(options.body);
+              return { ok: true };
+            },
+            messages: async () => [{ role: 'assistant', parts: [{ type: 'text', text: 'Done' }] }],
+          },
+        },
+      }) as never,
+  );
+
+  const result = await executor.run({
+    model: { id: 'openai/gpt-5.3-codex' },
+    title: 'afk: feat/01',
+    prompt: 'Implement feature',
+  });
+
+  assert.equal(result.sessionId, 'session-no-workdir');
+  assert.equal(createArgs.length, 1);
+  assert.equal((createArgs[0] as { query?: unknown }).query, undefined);
+  assert.equal(promptBodies.length, 1);
+  assert.equal((promptBodies[0] as { query?: unknown }).query, undefined);
+});
+
 async function* oneEventAfterTick(event: unknown): AsyncIterable<unknown> {
   await delay(0);
   yield event;
