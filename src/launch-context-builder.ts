@@ -170,6 +170,7 @@ export function buildLaunchPlan(
   },
   checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
   featureDependencies?: Record<string, string[]>,
+  harness?: 'OpenCode' | 'Claude-Kimi',
 ): LaunchPlan {
   const snapshots = Object.fromEntries(
     tickets.map((ticket) => [
@@ -179,6 +180,7 @@ export function buildLaunchPlan(
   );
   return {
     repoRoot,
+    harness,
     model,
     reviewerHarness: reviewer?.harness,
     reviewerModel: reviewer?.model,

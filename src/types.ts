@@ -131,6 +131,7 @@ export interface AfkStateSnapshot {
 }
 
 export interface LaunchPlan {
+  harness?: 'OpenCode' | 'Claude-Kimi';
   model: LaunchModel;
   reviewerHarness?: 'OpenCode' | 'Claude-Kimi';
   reviewerModel?: LaunchModel;

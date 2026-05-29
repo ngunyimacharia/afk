@@ -215,3 +215,22 @@ test('recovery preserves startedAt and updates pid', () => {
   assert.equal(result.record.startedAt, startedAt);
   assert.equal(result.record.pid, process.pid);
 });
+
+test('updatePid changes pid and heartbeat', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-update-pid-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 10_000, pid: 123 });
+  controlPlane.acquireOrAttach('run-1');
+  controlPlane.updatePid('run-1', 456);
+  const record = controlPlane.read();
+  assert.equal(record?.pid, 456);
+  assert.equal(record?.heartbeatAt, new Date(10_000).toISOString());
+});
+
+test('updatePid ignores wrong runId', () => {
+  const repoRoot = mkRepoLocalTempDir('active-run-update-pid-wrong-');
+  const controlPlane = new ActiveRunControlPlane({ repoRoot, now: () => 10_000, pid: 123 });
+  controlPlane.acquireOrAttach('run-1');
+  controlPlane.updatePid('run-2', 456);
+  const record = controlPlane.read();
+  assert.equal(record?.pid, 123);
+});

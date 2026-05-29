@@ -90,6 +90,13 @@ export class ActiveRunControlPlane {
     writeFileSync(this.activeRunPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
   }
 
+  updatePid(runId: string, pid: number): void {
+    const current = this.read();
+    if (!current || current.runId !== runId) return;
+    const next: ActiveRunRecord = { ...current, pid, heartbeatAt: isoFromEpoch(this.now()) };
+    writeFileSync(this.activeRunPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  }
+
   clear(runId: string): void {
     const current = this.read();
     if (!current || current.runId !== runId) return;
