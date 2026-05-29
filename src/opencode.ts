@@ -155,7 +155,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
       activeTool = updateActiveToolState(activeTool, event, now);
     };
     try {
-      const sessionId = input.sessionId?.trim() || (await createSession(sdk.client, input.title));
+      const sessionId = input.sessionId?.trim() || (await createSession(sdk.client, input.title, input.workDir));
       onProgress({
         message: input.sessionId
           ? `resuming opencode session ${sessionId || 'unknown'}`
@@ -190,7 +190,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
         const promptResult = await waitForPromptOrStale({
           prompt: sdk.client.session.prompt({
             path: { id: sessionId },
-            body: buildPromptBody({ providerID, modelID, agent: input.agent, prompt: promptText }),
+            body: buildPromptBody({ providerID, modelID, agent: input.agent, prompt: promptText, directory: input.workDir }),
           }),
           staleProgressTimeoutMs,
           activeToolStaleTimeoutMs,
@@ -248,24 +248,38 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
   }
 }
 
-async function createSession(client: unknown, title: string): Promise<string> {
+async function createSession(client: unknown, title: string, directory?: string): Promise<string> {
   const sessionResponse = await (
     client as { session: { create: (options: unknown) => Promise<unknown> } }
-  ).session.create({ body: { title } });
+  ).session.create({
+    body: { title },
+    query: directory ? { directory } : undefined,
+  });
   const session = unwrap(sessionResponse) as { id?: unknown } | null;
   return String(session?.id ?? '');
 }
 
-function buildPromptBody(input: { providerID: string; modelID: string; agent?: string; prompt: string }): {
+function buildPromptBody(input: {
+  providerID: string;
+  modelID: string;
+  agent?: string;
+  prompt: string;
+  directory?: string;
+}): {
   model: { providerID: string; modelID: string };
   agent?: string;
   parts: Array<{ type: 'text'; text: string }>;
+  query?: { directory: string };
 } {
-  return {
+  const body: ReturnType<typeof buildPromptBody> = {
     model: { providerID: input.providerID, modelID: input.modelID },
     agent: input.agent,
     parts: [{ type: 'text', text: input.prompt }],
   };
+  if (input.directory) {
+    body.query = { directory: input.directory };
+  }
+  return body;
 }
 
 async function waitForPromptOrStale(input: {
