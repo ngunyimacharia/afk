@@ -1,6 +1,7 @@
 import { type ExecFileSyncOptionsWithStringEncoding, execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { resolveExecutable } from './executable-resolution.js';
 import type { AfkProjectConfig } from './project-config.js';
 
 export type ReadinessTerminalState = 'passed' | 'disabled-by-user' | 'blocked';
@@ -279,7 +280,8 @@ function staticStyleCommands(worktreePath: string): string[] {
 
 function readBranch(worktreePath: string): string | undefined {
   try {
-    return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim();
+    const gitPath = resolveExecutable('git');
+    return execFileSync(gitPath, ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim();
   } catch {
     return undefined;
   }
@@ -287,7 +289,8 @@ function readBranch(worktreePath: string): string | undefined {
 
 function gitPath(worktreePath: string, name: string): string {
   try {
-    return execFileSync('git', ['rev-parse', '--git-path', name], { cwd: worktreePath, encoding: 'utf8' }).trim();
+    const gitPath = resolveExecutable('git');
+    return execFileSync(gitPath, ['rev-parse', '--git-path', name], { cwd: worktreePath, encoding: 'utf8' }).trim();
   } catch {
     return path.join(worktreePath, '.git', name);
   }

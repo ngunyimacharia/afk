@@ -5,9 +5,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { CleanupExecutor, CleanupPlanner } from '../src/cleanup.js';
+import { resolveExecutable } from '../src/executable-resolution.js';
+
+const GIT_PATH = resolveExecutable('git');
 
 function git(repoRoot: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+  return execFileSync(GIT_PATH, args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
 test('executes only approved cleanup targets', () => {

@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
@@ -11,10 +10,7 @@ import type {
   TicketRecord,
 } from './types.js';
 import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
-
-function runGit(repoRoot: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
-}
+import { runGit } from './worktree-preparation-service.js';
 
 function ticketStatus(ticket?: TicketRecord): string {
   return ticket?.status?.trim() || 'unknown';

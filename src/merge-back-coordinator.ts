@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
@@ -675,8 +674,8 @@ function getConflictPaths(worktreePath: string): string[] {
 
 function hasConflictMarkers(worktreePath: string): boolean {
   try {
-    const output = execFileSync('git', ['grep', '-l', '^<<<<<<< '], { cwd: worktreePath, encoding: 'utf8' });
-    return output.trim().length > 0;
+    const output = runGit(worktreePath, ['grep', '-l', '^<<<<<<< ']);
+    return output.length > 0;
   } catch (error) {
     const code = (error as { status?: number }).status;
     if (code === 1) return false;
@@ -702,10 +701,7 @@ function abortMerge(worktreePath: string): void {
 }
 
 function commitMerge(worktreePath: string, message: string): void {
-  execFileSync('git', ['-c', 'user.name=AFK MergeBack', '-c', 'user.email=afk@localhost', 'commit', '-m', message], {
-    cwd: worktreePath,
-    encoding: 'utf8',
-  });
+  runGit(worktreePath, ['-c', 'user.name=AFK MergeBack', '-c', 'user.email=afk@localhost', 'commit', '-m', message]);
 }
 
 function resolveGitDir(worktreePath: string): string {

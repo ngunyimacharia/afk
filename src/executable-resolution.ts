@@ -7,9 +7,14 @@ export class RequiredExecutableError extends Error {
   }
 }
 
+const cache: Record<string, string> = {};
+
 export function resolveExecutable(name: string): string {
+  const cached = cache[name];
+  if (cached) return cached;
   try {
     const resolved = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim();
+    cache[name] = resolved;
     return resolved;
   } catch {
     throw new RequiredExecutableError([name]);
@@ -22,7 +27,7 @@ export function resolveExecutables(names: string[]): Record<string, string> {
 
   for (const name of names) {
     try {
-      resolved[name] = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim();
+      resolved[name] = resolveExecutable(name);
     } catch {
       missing.push(name);
     }
