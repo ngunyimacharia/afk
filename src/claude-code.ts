@@ -9,6 +9,7 @@ import type {
   SDKToolProgressMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { resolveExecutable } from './executable-resolution.js';
 import type {
   OpenCodePermissionDecision,
   OpenCodePermissionRequest,
@@ -29,7 +30,8 @@ function resolveClaudeCodeExecutablePath(): string | undefined {
   if (cachedClaudeCodePath !== null) return cachedClaudeCodePath ?? undefined;
 
   try {
-    const path = execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
+    const whichPath = resolveExecutable('which');
+    const path = execFileSync(whichPath, ['claude'], { encoding: 'utf8' }).trim();
     cachedClaudeCodePath = path;
     return path;
   } catch {

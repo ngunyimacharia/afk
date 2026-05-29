@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { resolveExecutable } from './executable-resolution.js';
 import type { AfkProjectConfig } from './project-config.js';
 import {
   buildWorktreeReadiness,
@@ -152,7 +153,8 @@ export function copyReadinessArtifacts(
 }
 
 export function runGit(repoRoot: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+  const gitPath = resolveExecutable('git');
+  return execFileSync(gitPath, args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
 export function branchExists(repoRoot: string, branchName: string): boolean {

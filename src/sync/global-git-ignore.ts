@@ -2,13 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { resolveExecutable } from '../executable-resolution.js';
 
 export const AFK_GLOBAL_GIT_IGNORE_ENTRIES = ['/.scratch/', '/.worktree/', '/afk.json'];
 
 type GitCommand = (args: string[], env: NodeJS.ProcessEnv) => string;
 
 function runGit(args: string[], env: NodeJS.ProcessEnv): string {
-  return execFileSync('git', args, { encoding: 'utf8', env: { ...process.env, ...env } }).trim();
+  const gitPath = resolveExecutable('git');
+  return execFileSync(gitPath, args, { encoding: 'utf8', env: { ...process.env, ...env } }).trim();
 }
 
 function expandHome(filePath: string, home: string): string {

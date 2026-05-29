@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+import { resolveExecutable } from '../src/executable-resolution.js';
 import { buildPrompt } from '../src/prompt-builder.js';
 import { buildWorktreeReadiness, detectTestSuite, type ReadinessCommandExecutor } from '../src/readiness-service.js';
 import {
@@ -12,8 +13,10 @@ import {
 } from '../src/worktree-preparation-service.js';
 import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
 
+const GIT_PATH = resolveExecutable('git');
+
 function git(repoRoot: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+  return execFileSync(GIT_PATH, args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
 function createRepo(prefix: string): string {
