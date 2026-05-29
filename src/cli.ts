@@ -11,6 +11,7 @@ import {
 } from './agent-execution-provider.js';
 import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
+import { logResolvedExecutables, RequiredExecutableError, resolveExecutables } from './executable-resolution.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
@@ -75,6 +76,19 @@ export async function runAfk(
   const io = runtime.io ?? { stdin: process.stdin, stdout: process.stdout };
   const env = runtime.env ?? process.env;
   const command = commandArg();
+
+  try {
+    const resolvedExecutables = resolveExecutables(['git', 'which']);
+    if (hasFlag('--verbose') || hasFlag('-v') || env.AFK_DEBUG) {
+      logResolvedExecutables(resolvedExecutables);
+    }
+  } catch (error) {
+    if (error instanceof RequiredExecutableError) {
+      return { code: 1, message: error.message };
+    }
+    throw error;
+  }
+
   if (command === 'afk-summary') {
     const reporter = new SummaryReporter({ repoRoot });
     const report = await reporter.summarize();
