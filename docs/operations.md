@@ -72,15 +72,14 @@ Asset sync is implemented under `src/sync/`.
 
 `afk sync` currently copies vendored markdown assets from:
 
-- `artifacts/opencode/agents/`
-- `artifacts/opencode/prompts/`
-- `artifacts/opencode/commands/`
+- `artifacts/skills/`
+- `artifacts/prompts/`
 
-into the global OpenCode config directory:
+into each harness's config directory:
 
-- `$XDG_CONFIG_HOME/opencode/agents/`, or `~/.config/opencode/agents/`
-- `$XDG_CONFIG_HOME/opencode/prompts/`, or `~/.config/opencode/prompts/`
-- `$XDG_CONFIG_HOME/opencode/command/`, or `~/.config/opencode/command/`
+- OpenCode: `$XDG_CONFIG_HOME/opencode/`, or `~/.config/opencode/`
+- Claude Code: `~/.claude/`
+- Kimi Code: `$KIMI_CODE_HOME/`, or `~/.kimi-code/`
 
 Current sync behavior:
 
@@ -89,9 +88,9 @@ Current sync behavior:
 - leaves identical files untouched
 - blocks destination root escapes
 - does not delete destination files by default
-- reminds the user to restart OpenCode after sync
+- reminds the user to restart each harness after sync
 
-Internal runner prompts live under `src/prompts/` and are not syncable OpenCode artifacts.
+Internal runner prompts live under `src/prompts/` and are not syncable artifacts.
 
 ## Verification
 
@@ -110,4 +109,4 @@ Tests cover:
 - scheduler behavior
 - summary reporting and summary-presence gating
 - cleanup planning and execution
-- asset sync engine and OpenCode sync mappings
+- asset sync engine and harness sync mappings
