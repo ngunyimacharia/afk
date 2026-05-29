@@ -11,8 +11,12 @@ Run `afk summary`. Read-only summary of AFK work. This command is strictly read-
 
 2. **Parse the standard sections**: Extract entries from:
    - `Completed or successful work`
+   - `Handoff or manual review`
    - `Failed or blocked work`
    - `Interrupted or incomplete work`
+   - `Not yet started`
+   - `Won't fix`
+   - `Legacy / malformed`
    - `Missing summaries`
    - `Repeated attempts`
    - Optional diagnostics: `Phase timing highlights`, `Failure kind totals`
@@ -21,9 +25,14 @@ Run `afk summary`. Read-only summary of AFK work. This command is strictly read-
 
 4. **Group the report by outcome**:
    - Completed or successful work
+   - Handoff or manual review
    - Failed or blocked work
    - Interrupted or incomplete work
-   - Issues with missing `## AFK Summary` blocks
+   - Not yet started — tickets with pre-work statuses (`ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`) that have no AFK Summary
+   - Won't fix — tickets with `wontfix` status that have no AFK Summary
+   - Legacy / malformed — tickets with no status field that have no AFK Summary
+   - Missing summaries — tickets that were attempted but lack an AFK Summary block
+   - Repeated attempts
 
 5. **Use issue files only as fallback**: If `afk summary` is unavailable, errors, or returns empty output, inspect `.scratch/*/issues/*.md`, read frontmatter `status`, and parse each `## AFK Summary` block.
 
@@ -33,6 +42,7 @@ Run `afk summary`. Read-only summary of AFK work. This command is strictly read-
 
 8. **Only ask for raw logs for these reasons**:
     - Missing summaries
+    - Legacy / malformed
     - Incomplete details
     - Contradictory summaries
     - Explicit user request for deeper investigation
@@ -43,8 +53,12 @@ Run `afk summary`. Read-only summary of AFK work. This command is strictly read-
 
 11. **Produce summary**: Output a structured report containing:
     - Completed work: ticket references, status, and AFK summary details
+    - Handoff or manual review: ticket references, status, and handoff details
     - Failed or blocked work: ticket references, status, and blocker details
     - Interrupted or incomplete work: ticket references, status, and last known state
+    - Not yet started: tickets with pre-work statuses that have no AFK Summary
+    - Won't fix: tickets with `wontfix` status that have no AFK Summary
+    - Legacy / malformed: tickets with no status field that have no AFK Summary
     - Missing summaries: issue references with no `## AFK Summary` block
     - Any repeated attempts or patterns visible across issue summaries
 

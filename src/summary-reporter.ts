@@ -109,7 +109,8 @@ function fieldValue(fields: Record<string, string>, ...names: string[]): string 
 function getNoSummaryBucket(status: string | undefined): 'not-yet-started' | 'wontfix' | 'legacy' | 'missing' {
   const normalized = normalize(status);
   if (!normalized) return 'legacy';
-  if (['ready-for-agent', 'ready-for-human', 'needs-triage', 'needs-info'].includes(normalized)) return 'not-yet-started';
+  if (['ready-for-agent', 'ready-for-human', 'needs-triage', 'needs-info'].includes(normalized))
+    return 'not-yet-started';
   if (normalized === 'wontfix') return 'wontfix';
   return 'missing';
 }
