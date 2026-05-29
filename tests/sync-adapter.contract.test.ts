@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
+import { KimiCodeSyncAdapter } from '../src/sync/adapters/kimi-code.js';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 import { formatSyncReport } from '../src/sync/engine.js';
 
@@ -93,4 +94,36 @@ test('claude-code sync report renders reviewable counts and actions', () => {
   assert.match(output, /Adapter: claude-code/);
   assert.match(output, /Created: 1/);
   assert.match(output, /UPDATED prompts: artifacts\/prompts\/b\.md -> ~\/\.claude\/prompts\/b\.md/);
+});
+
+test('kimi-code adapter provides mappings without hard-coded core paths', () => {
+  const categories = KimiCodeSyncAdapter.assetCategories();
+  assert.equal(categories.length, 1);
+  assert.deepEqual(
+    categories.map((c) => path.basename(c.destinationRoot)),
+    ['skills'],
+  );
+  assert.deepEqual(
+    categories.map((c) => c.destinationBase),
+    categories.map((c) => path.dirname(c.destinationRoot)),
+  );
+});
+
+test('kimi-code sync report renders reviewable counts and actions', () => {
+  const output = formatSyncReport({
+    adapterId: 'kimi-code',
+    counts: { created: 1, updated: 0, unchanged: 0, skipped: 0 },
+    actions: [
+      {
+        category: 'skills',
+        sourcePath: 'artifacts/skills/a.md',
+        destinationPath: '~/.kimi-code/skills/a/SKILL.md',
+        status: 'created',
+      },
+    ],
+  });
+
+  assert.match(output, /Adapter: kimi-code/);
+  assert.match(output, /Created: 1/);
+  assert.match(output, /CREATED skills: artifacts\/skills\/a\.md -> ~\/\.kimi-code\/skills\/a\/SKILL\.md/);
 });
