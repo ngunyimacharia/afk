@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -54,14 +54,82 @@ test('afk tui attaches to an active run', async () => {
   assert.match(result.message, /existing-run/);
 });
 
-test('afk stop prints not yet implemented', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-'));
+test('afk stop with no active run prints error and exits 1', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-no-run-'));
   const originalArg = process.argv[2];
   process.argv[2] = 'stop';
   const result = await runAfk(repoRoot);
   process.argv[2] = originalArg;
+  assert.equal(result.code, 1);
+  assert.match(result.message, /No active AFK run/);
+});
+
+test('afk stop signals active run and blocks until it exits', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-success-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId: 'stop-run-123',
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  // Simulate the daemon clearing the run record shortly after kill is sent
+  setTimeout(() => {
+    try {
+      const activeRunPath = path.join(logsDir, 'active-run.json');
+      if (existsSync(activeRunPath)) {
+        rmSync(activeRunPath);
+      }
+    } catch {
+      // ignore
+    }
+  }, 100);
+
+  const originalArg = process.argv[2];
+  process.argv[2] = 'stop';
+  const result = await runAfk(repoRoot, { stopTimeoutMs: 2_000, stopPollIntervalMs: 50 });
+  process.argv[2] = originalArg;
   assert.equal(result.code, 0);
-  assert.match(result.message, /Not yet implemented/);
+  assert.match(result.message, /Stopped AFK run stop-run-123/);
+});
+
+test('afk stop times out if daemon does not exit', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-timeout-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId: 'stop-run-456',
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  const originalArg = process.argv[2];
+  process.argv[2] = 'stop';
+  const result = await runAfk(repoRoot, { stopTimeoutMs: 150, stopPollIntervalMs: 50 });
+  process.argv[2] = originalArg;
+  assert.equal(result.code, 1);
+  assert.match(result.message, /Timeout: AFK run stop-run-456 did not stop within 0\.15s/);
 });
 
 test('afk status prints no active run when no run exists', async () => {

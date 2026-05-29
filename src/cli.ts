@@ -85,6 +85,8 @@ export async function runAfk(
     env?: NodeJS.ProcessEnv;
     spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
     inlineLaunch?: boolean;
+    stopTimeoutMs?: number;
+    stopPollIntervalMs?: number;
   } = {},
 ): Promise<{ code: number; message: string }> {
   const io = runtime.io ?? { stdin: process.stdin, stdout: process.stdout };
@@ -174,7 +176,24 @@ export async function runAfk(
     return attachToActiveRun(repoRoot, io, activeRun.runId, activeRunControlPlane);
   }
   if (command === 'stop') {
-    return { code: 0, message: 'Not yet implemented' };
+    const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
+    const activeRun = activeRunControlPlane.read();
+    if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
+      return { code: 1, message: 'No active AFK run' };
+    }
+    const eventStream = new ActiveRunEventStream(repoRoot, activeRun.runId);
+    eventStream.appendCommand('kill');
+    const stopTimeoutMs = runtime.stopTimeoutMs ?? 30_000;
+    const stopPollIntervalMs = runtime.stopPollIntervalMs ?? 500;
+    const start = Date.now();
+    while (Date.now() - start < stopTimeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, stopPollIntervalMs));
+      const current = activeRunControlPlane.read();
+      if (!current || !activeRunControlPlane.isHealthy(current)) {
+        return { code: 0, message: `Stopped AFK run ${activeRun.runId}` };
+      }
+    }
+    return { code: 1, message: `Timeout: AFK run ${activeRun.runId} did not stop within ${stopTimeoutMs / 1000}s` };
   }
   if (command === 'status') {
     const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
