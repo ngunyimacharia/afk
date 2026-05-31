@@ -7,6 +7,7 @@ import {
   OpenCodeAgentExecutionProvider,
 } from './agent-execution-provider.js';
 import { ClaudeCodeSessionExecutor } from './claude-code.js';
+import { mergeCompletedFeaturesToBase } from './feature-base-merge.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
@@ -26,10 +27,13 @@ export interface DaemonLaunchContext {
   reviewerHarness: 'OpenCode' | 'Claude-Kimi';
   concurrency: number;
   budgets?: Partial<BudgetPolicy>;
+  mergeBackToBase?: boolean;
+  baseBranch?: string;
 }
 
 export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
-  const { repoRoot, runId, plan, harness, reviewerHarness, concurrency, budgets } = context;
+  const { repoRoot, runId, plan, harness, reviewerHarness, concurrency, budgets, mergeBackToBase, baseBranch } =
+    context;
 
   const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
   activeRunControlPlane.transition(runId, 'running');
@@ -110,11 +114,12 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
       if (!featureCheckout) return;
       const tickets = issueNames.map((issueName) => {
         const ticketRecord = plan.tickets.find((t) => t.feature === feature && t.issueName === issueName);
+        const ticketSnapshot = plan.snapshots?.[`${feature}/${issueName}`];
         return {
           feature,
           issueName,
           branchName: `afk/${feature}/${issueName}`,
-          worktreePath: featureCheckout.worktreePath,
+          worktreePath: ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
           dependsOn: ticketRecord?.dependsOn,
           metadataPath: path.join(
             repoRoot,
@@ -177,6 +182,24 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     if (killController.signal.aborted) {
       activeRunControlPlane.transition(runId, 'killing');
       return;
+    }
+
+    if (
+      mergeBackToBase &&
+      baseBranch &&
+      schedulerResult.ticketResults.every((result) => result.outcome === 'completed')
+    ) {
+      await mergeCompletedFeaturesToBase({
+        repoRoot,
+        baseBranch,
+        features: Object.keys(checkoutsByFeature),
+        checkoutsByFeature,
+        coordinator: mergeBackCoordinator,
+        model: plan.model,
+        reviewerModel: plan.reviewerModel,
+        reviewerPrompt: plan.reviewerPrompt,
+        onProgress,
+      });
     }
 
     const runOutcomeEvent = classifyRunOutcome({

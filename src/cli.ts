@@ -14,6 +14,7 @@ import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-co
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import { type DaemonLaunchContext, runDaemon } from './daemon.js';
 import { logResolvedExecutables, RequiredExecutableError, resolveExecutables } from './executable-resolution.js';
+import { type FeatureBaseMergeResult, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
@@ -42,7 +43,7 @@ import {
   refreshWorkspaceExecutionGraph,
   type WorkspaceExecutionGraph,
 } from './workspace-execution-graph.js';
-import { WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
+import { runGit, WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
 
 function commandArg(): string | undefined {
   const knownCommands = new Set([
@@ -275,6 +276,7 @@ export async function runAfk(
     let reviewerPrompt: { id: string; label: string; path: string } | undefined;
     let selectedTickets: TicketRecord[] = [];
     let concurrency = 3;
+    let mergeBackToBase = false;
     let harness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
     let reviewerHarness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
 
@@ -327,12 +329,14 @@ export async function runAfk(
       reviewerPrompt = wizard.reviewerPrompt;
       selectedTickets = wizard.tickets ?? [];
       concurrency = wizard.concurrency ?? concurrency;
+      mergeBackToBase = wizard.mergeBackToBase ?? false;
       runtimeStore.writeLaunchPreferences({
         harness: wizard.harness,
         modelId: model?.id,
         reviewerHarness: wizard.reviewerHarness,
         reviewerModelId: reviewerModel?.id,
         concurrency,
+        mergeBackToBase,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown model discovery error';
@@ -371,6 +375,7 @@ export async function runAfk(
     const featureBlock = validateSelectedFeatureDependencies(workspaceGraph, selectedFeatures);
     if (featureBlock) return { code: 1, message: featureBlock };
     const firstTicket = selectedTickets[0];
+    const baseBranch = runGit(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
     const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
     let checkouts: ReturnType<WorktreePreparationService['prepare']>[];
     try {
@@ -418,6 +423,8 @@ export async function runAfk(
         reviewerHarness,
         concurrency,
         budgets: launchPreferences.budgets,
+        mergeBackToBase,
+        baseBranch,
       };
       const spawnDaemon = runtime.spawnDaemon ?? defaultSpawnDaemon;
       const handle = spawnDaemon(context);
@@ -580,11 +587,12 @@ export async function runAfk(
         if (!featureCheckout) return;
         const tickets = issueNames.map((issueName) => {
           const ticketRecord = plan.tickets.find((t) => t.feature === feature && t.issueName === issueName);
+          const ticketSnapshot = plan.snapshots?.[`${feature}/${issueName}`];
           return {
             feature,
             issueName,
             branchName: `afk/${feature}/${issueName}`,
-            worktreePath: featureCheckout.worktreePath,
+            worktreePath: ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
             dependsOn: ticketRecord?.dependsOn,
             metadataPath: path.join(
               repoRoot,
@@ -629,6 +637,7 @@ export async function runAfk(
     }, 500);
 
     let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
+    let baseMergeResults: FeatureBaseMergeResult[] = [];
     try {
       commandPollInterval = setInterval(() => {
         const { commands, nextOffset } = activeRunControlPlane.readCommands(runId, lastCommandOffset);
@@ -644,6 +653,19 @@ export async function runAfk(
         runId,
         signal: killController.signal,
       });
+      if (mergeBackToBase && schedulerResult.ticketResults.every((result) => result.outcome === 'completed')) {
+        baseMergeResults = await mergeCompletedFeaturesToBase({
+          repoRoot,
+          baseBranch,
+          features: checkoutFeatures,
+          checkoutsByFeature,
+          coordinator: mergeBackCoordinator,
+          model: plan.model,
+          reviewerModel: plan.reviewerModel,
+          reviewerPrompt: plan.reviewerPrompt,
+          onProgress,
+        });
+      }
       if (killPollInterval) clearInterval(killPollInterval);
       if (killController.signal.aborted) {
         activeRunControlPlane.transition(runId, 'killing');
@@ -694,6 +716,7 @@ export async function runAfk(
           runId,
           ticketResults: schedulerResult.ticketResults,
         }),
+        ...formatFeatureBaseMergeResultLines(baseMergeResults),
         ...formatManualPermissionReviewLines(permissionCoordinator.history),
       ].join('\n'),
     };
@@ -701,6 +724,17 @@ export async function runAfk(
     if (killPollInterval) clearInterval(killPollInterval);
     if (clearOnExit) activeRunControlPlane.clear(runId);
   }
+}
+
+function formatFeatureBaseMergeResultLines(results: FeatureBaseMergeResult[]): string[] {
+  if (!results.length) return [];
+  return [
+    'Feature base merge results',
+    ...results.map(
+      (result) =>
+        `- ${result.feature}: ${result.success ? 'merged and cleaned up' : `failed (${result.reason ?? 'unknown error'})`}`,
+    ),
+  ];
 }
 
 async function attachToActiveRun(

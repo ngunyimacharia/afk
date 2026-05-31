@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 import { resolveExecutable } from '../src/executable-resolution.js';
+import { mergeCompletedFeaturesToBase } from '../src/feature-base-merge.js';
 import { MergeBackCoordinator } from '../src/merge-back-coordinator.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
@@ -148,6 +149,50 @@ test('merges tickets in dependency order and advances feature branch', async () 
   assert.equal(metadata1.MERGE_STATUS, 'merged');
   const metadata2 = store.readMetadata(meta2.metadataPath);
   assert.equal(metadata2.MERGE_STATUS, 'merged');
+});
+
+test('merges completed feature branch to base and deletes feature resources', async () => {
+  const repoRoot = createRepo('feature-base-merge-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+  writeFileSync(path.join(featureWorktreePath, 'feature.txt'), 'feature\n');
+  git(featureWorktreePath, ['add', 'feature.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature work']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const results = await mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [feature],
+    checkoutsByFeature: {
+      [feature]: {
+        featureSlug: feature,
+        defaultWorktreeName: feature,
+        effectiveWorktreeName: feature,
+        defaultBranchName: feature,
+        effectiveBranchName: feature,
+        worktreePath: featureWorktreePath,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.feature, feature);
+  assert.equal(results[0]?.branchName, feature);
+  assert.equal(results[0]?.success, true);
+  assert.equal(results[0]?.deletedBranch, true);
+  assert.equal(results[0]?.deletedWorktree, true);
+  assert.equal(git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
+  assert.equal(readFileSync(path.join(repoRoot, 'feature.txt'), 'utf8'), 'feature\n');
+  assert.equal(existsSync(featureWorktreePath), false);
+  assert.throws(() => git(repoRoot, ['rev-parse', '--verify', feature]));
 });
 
 test('locks feature during merge and releases after', async () => {
