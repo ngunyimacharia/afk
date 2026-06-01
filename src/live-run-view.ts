@@ -5,10 +5,12 @@ import type { AgentExecutionProgressEvent, TicketRecord } from './types.js';
 
 export interface LiveRunView {
   update(event: AgentExecutionProgressEvent): void;
+  updateMany?(events: AgentExecutionProgressEvent[]): void;
   done(): void;
   cleanup(): void;
   waitForQuit(): Promise<void>;
   setRunState?(state: 'running' | 'paused'): void;
+  completeRun?(): void;
   killRequested(): boolean;
 }
 

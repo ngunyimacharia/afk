@@ -4,7 +4,12 @@ import type { CliRenderer, TextRenderable } from '@opentui/core';
 import type { LiveRunView } from '../src/live-run-view.js';
 import { createLiveRunView } from '../src/live-run-view.js';
 import type { NotificationPayload } from '../src/notification-policy.js';
-import { createOpenTuiDashboard, DashboardProxy, type OpenTuiDashboardModule } from '../src/opentui-dashboard.js';
+import {
+  createOpenTuiDashboard,
+  DashboardProxy,
+  formatDuration,
+  type OpenTuiDashboardModule,
+} from '../src/opentui-dashboard.js';
 import { OpenTUIDashboardView } from '../src/opentui-dashboard-view.js';
 import type { DashboardNotificationState } from '../src/progress-line.js';
 import type { AgentExecutionProgressEvent, TicketRecord } from '../src/types.js';
@@ -56,6 +61,12 @@ function samplePayload(overrides: Partial<NotificationPayload> = {}): Notificati
     ...overrides,
   };
 }
+
+test('formatDuration renders h m s consistently', () => {
+  assert.equal(formatDuration(0), '0h 0m 0s');
+  assert.equal(formatDuration(65_000), '0h 1m 5s');
+  assert.equal(formatDuration(3_725_000), '1h 2m 5s');
+});
 
 test('dashboard view sets supported capability when renderer advertises notifications', () => {
   const progressLine = fakeProgressLine();
@@ -353,6 +364,36 @@ test('DashboardProxy falls back to text progress when dashboard creation fails',
   const output = writes.join('');
   assert.match(output, /starting/);
   assert.match(output, /running/);
+});
+
+test('DashboardProxy forwards event batches to dashboard when available', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  const receivedBatches: AgentExecutionProgressEvent[][] = [];
+  const dashboard: LiveRunView = {
+    update() {},
+    updateMany(events) {
+      receivedBatches.push(events);
+    },
+    done() {},
+    cleanup() {},
+    waitForQuit() {
+      return Promise.resolve();
+    },
+    killRequested() {
+      return false;
+    },
+  };
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, async () => dashboard);
+
+  await proxy.start();
+  proxy.updateMany([
+    { ticketLabel: 'feat-a/001', message: 'event 1' },
+    { ticketLabel: 'feat-a/002', message: 'event 2' },
+  ]);
+
+  assert.equal(receivedBatches.length, 1);
+  assert.equal(receivedBatches[0]?.length, 2);
 });
 
 test('DashboardProxy done flushes buffered events to dashboard before calling done', async () => {
@@ -825,7 +866,7 @@ test('createOpenTuiDashboard renders metadata in selected ticket details panel',
   assert.match(detailsContent, /Harness: opencode/);
   assert.match(detailsContent, /Review: approved \(clean\)/);
   assert.match(detailsContent, /Phases:/);
-  assert.match(detailsContent, /execution 60000ms/);
+  assert.match(detailsContent, /execution 0h 1m 0s/);
   assert.doesNotMatch(detailsContent, /Recent events:/);
 
   view?.done();
@@ -1105,7 +1146,7 @@ test('createOpenTuiDashboard renders timestamps in recent events panel', async (
     {
       stdout,
       selectedTickets: tickets,
-      runOptions: { now: () => 1716000000000 },
+      runOptions: { startTime: 1715999999000, now: () => 1716000000000 },
     },
     module,
   );
@@ -1117,7 +1158,7 @@ test('createOpenTuiDashboard renders timestamps in recent events panel', async (
   const eventsBox = boxes.find((b) => b.title === 'Recent Events');
   assert.ok(eventsBox, 'Recent Events box should exist');
   const eventsContent = eventsBox.children.map((c) => c.content).join('\n');
-  assert.match(eventsContent, /^\d{2}:\d{2}:\d{2} 001: run completed$/m);
+  assert.match(eventsContent, /^0h 0m 1s 001: run completed$/m);
 
   view?.done();
 });
@@ -1195,7 +1236,7 @@ test('createOpenTuiDashboard flattens multiline event messages', async () => {
     {
       stdout,
       selectedTickets: tickets,
-      runOptions: { now: () => 1716000000000 },
+      runOptions: { startTime: 1715999999000, now: () => 1716000000000 },
     },
     module,
   );
@@ -1426,6 +1467,31 @@ test('createOpenTuiDashboard stops timer when all tickets are terminal', async (
     callbacks[0]?.();
 
     assert.equal(cleared, true);
+    view?.done();
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+  }
+});
+
+test('createOpenTuiDashboard keeps timer running before replay creates tickets', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  let cleared = false;
+
+  global.setInterval = ((_callback: () => void, _delay: number) => {
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof global.setInterval;
+  global.clearInterval = () => {
+    cleared = true;
+  };
+
+  try {
+    const stdout = fakeStdout(true);
+    const { module } = makeFakeTextModule();
+    const view = await createOpenTuiDashboard({ stdout, selectedTickets: [] }, module);
+    assert.ok(view);
+    assert.equal(cleared, false);
     view?.done();
   } finally {
     global.setInterval = origSetInterval;
@@ -2923,6 +2989,58 @@ test('DashboardProxy waitForQuit delegates to dashboard when present', async () 
 
   proxy.done();
 
+  await quitPromise;
+  assert.equal(resolved, true);
+});
+
+test('DashboardProxy waitForQuit waits for dashboard startup before delegating', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+  let resolveCreate!: () => void;
+  let resolveQuit!: () => void;
+  const createGate = new Promise<void>((resolve) => {
+    resolveCreate = resolve;
+  });
+  const quitGate = new Promise<void>((resolve) => {
+    resolveQuit = resolve;
+  });
+  const dashboard: LiveRunView = {
+    update() {},
+    done() {
+      resolveQuit();
+    },
+    cleanup() {
+      resolveQuit();
+    },
+    waitForQuit() {
+      return quitGate;
+    },
+    killRequested() {
+      return false;
+    },
+  };
+
+  const proxy = new DashboardProxy(stdout, {}, { stdout, selectedTickets: sampleTickets }, async () => {
+    await createGate;
+    return dashboard;
+  });
+
+  const startPromise = proxy.start();
+  const quitPromise = proxy.waitForQuit();
+  let resolved = false;
+  quitPromise.then(() => {
+    resolved = true;
+  });
+
+  await Promise.resolve();
+  assert.equal(resolved, false);
+
+  resolveCreate();
+  await startPromise;
+  await Promise.resolve();
+  assert.equal(resolved, false);
+
+  resolveQuit();
   await quitPromise;
   assert.equal(resolved, true);
 });

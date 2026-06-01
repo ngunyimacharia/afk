@@ -78,6 +78,31 @@ test('normal progress events move ticket to running then complete', () => {
   assert.equal(snap.aggregate.running, 0);
 });
 
+test('progress events create placeholder tickets when attaching without launch plan', () => {
+  const state = new RunDashboardState({ runId: 'run-1' });
+
+  state.ingest({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
+
+  const snap = state.snapshot();
+  assert.equal(snap.tickets.length, 1);
+  assert.equal(snap.tickets[0]?.label, 'feat-a/001');
+  assert.equal(snap.tickets[0]?.feature, 'feat-a');
+  assert.equal(snap.tickets[0]?.issueName, '001');
+  assert.equal(snap.tickets[0]?.runtimeState, 'running');
+  assert.equal(snap.selectedTicket?.label, 'feat-a/001');
+  assert.equal(snap.aggregate.running, 1);
+});
+
+test('run-level replay events do not create placeholder tickets', () => {
+  const state = new RunDashboardState({ runId: 'run-1' });
+
+  state.ingest({ ticketLabel: '__run__', message: 'Recovered stale run run-1' });
+
+  const snap = state.snapshot();
+  assert.equal(snap.tickets.length, 0);
+  assert.equal(snap.recentEvents.length, 0);
+});
+
 test('permission events create action-needed without losing running state', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.ingest({ ticketLabel: 'feat-a/001', message: 'starting ticket run' });
@@ -360,6 +385,15 @@ test('elapsed time uses injected now function', () => {
   assert.equal(state.snapshot().elapsedMs, 500);
   tick = 1500;
   assert.equal(state.snapshot().elapsedMs, 1000);
+});
+
+test('elapsed time stops when run is completed', () => {
+  let tick = 1000;
+  const state = new RunDashboardState({ startTime: 500, now: () => tick }, makeTickets());
+  state.completeRun();
+  assert.equal(state.snapshot().elapsedMs, 500);
+  tick = 5000;
+  assert.equal(state.snapshot().elapsedMs, 500);
 });
 
 test('terminal state is preserved through subsequent non-terminal events', () => {

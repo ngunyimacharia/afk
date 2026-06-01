@@ -51,20 +51,12 @@ export interface OpenTuiDashboardModule {
   ) => TextRenderable;
 }
 
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
+export function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  if (minutes > 0) return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-  return `${seconds}s`;
-}
-
-function formatTime(timestamp: number): string {
-  const d = new Date(timestamp);
-  const hours = d.getHours().toString().padStart(2, '0');
-  const minutes = d.getMinutes().toString().padStart(2, '0');
-  const seconds = d.getSeconds().toString().padStart(2, '0');
-  return `${hours}:${minutes}:${seconds}`;
+  return `${hours}h ${minutes}m ${seconds}s`;
 }
 
 function joinStyledTexts(items: StyledText[], separator: string): StyledText {
@@ -119,7 +111,7 @@ function formatPath(targetPath: string, repoRoot: string): string {
 }
 
 function formatHeader(snap: DashboardSnapshot, runComplete: boolean, repoRoot: string): StyledText {
-  const elapsed = formatElapsed(snap.elapsedMs);
+  const elapsed = formatDuration(snap.elapsedMs);
   const parts: StyledText[] = [];
   parts.push(t`${dim('Repo:')} ${repoRoot}`);
   if (snap.runId) parts.push(t`${dim('Run:')} ${bold(snap.runId)}`);
@@ -180,7 +172,7 @@ function formatActionNeeded(snap: DashboardSnapshot): StyledText {
 function formatEvents(snap: DashboardSnapshot): StyledText {
   if (snap.recentEvents.length === 0) return stringToStyledText('No events yet');
   const parts = snap.recentEvents.slice(-10).map((e) => {
-    const time = e.timestamp ? formatTime(e.timestamp) : '--:--:--';
+    const time = e.timestamp ? formatDuration(e.timestamp - snap.startTime) : '--';
     return t`${dim(time)} ${stripFeaturePrefix(e.ticketLabel)}: ${formatSingleLine(e.message, 80)}`;
   });
   return joinStyledTexts(parts, '\n');
@@ -213,7 +205,7 @@ function formatDetails(snap: DashboardSnapshot, repoRoot: string): StyledText {
   if (details.phaseHistory.length > 0) {
     lines.push(t`${dim('Phases:')}`);
     for (const phase of details.phaseHistory.slice(-5)) {
-      lines.push(t`  ${phase.name} ${dim(`${phase.durationMs}ms`)}`);
+      lines.push(t`  ${phase.name} ${dim(formatDuration(phase.durationMs))}`);
     }
   }
 
@@ -354,15 +346,14 @@ class OpenTuiDashboard implements LiveRunView {
 
   private maybeStopTimer(snap: DashboardSnapshot): void {
     if (this.timer === null) return;
-    const allTerminal =
-      snap.tickets.length === 0 ||
-      snap.tickets.every(
-        (t) =>
-          t.runtimeState === 'complete' ||
-          t.runtimeState === 'failed' ||
-          t.runtimeState === 'blocked' ||
-          t.runtimeState === 'skipped',
-      );
+    if (snap.tickets.length === 0) return;
+    const allTerminal = snap.tickets.every(
+      (t) =>
+        t.runtimeState === 'complete' ||
+        t.runtimeState === 'failed' ||
+        t.runtimeState === 'blocked' ||
+        t.runtimeState === 'skipped',
+    );
     if (allTerminal) {
       this.stopTimer();
     }
@@ -515,11 +506,32 @@ class OpenTuiDashboard implements LiveRunView {
     if (this.destroyed) return;
     this.state.ingest(event);
     this.refresh();
+    this.checkForCompletion();
+  }
+
+  updateMany(events: AgentExecutionProgressEvent[]): void {
+    if (this.destroyed || events.length === 0) return;
+    for (const event of events) {
+      this.state.ingest(event);
+    }
+    this.refresh();
+    this.checkForCompletion();
+  }
+
+  private checkForCompletion(): void {
     const snap = this.state.snapshot();
     if (!this.runComplete && this.checkRunComplete(snap)) {
       this.runComplete = true;
+      this.state.completeRun();
       this.refresh();
     }
+  }
+
+  completeRun(): void {
+    if (this.destroyed) return;
+    this.runComplete = true;
+    this.state.completeRun();
+    this.refresh();
   }
 
   private refresh(): void {
@@ -616,6 +628,7 @@ export class DashboardProxy implements LiveRunView {
   private readonly buffer: AgentExecutionProgressEvent[] = [];
   private starting = false;
   private finalized = false;
+  private startPromise: Promise<void> | null = null;
 
   constructor(
     readonly stdout: NodeJS.WriteStream,
@@ -626,7 +639,14 @@ export class DashboardProxy implements LiveRunView {
     this.fallback = createProgressLine(stdout, options);
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    if (this.startPromise) return this.startPromise;
+    if (this.finalized) return Promise.resolve();
+    this.startPromise = this.startDashboard();
+    return this.startPromise;
+  }
+
+  private async startDashboard(): Promise<void> {
     if (this.starting || this.finalized) return;
     this.starting = true;
     let dashboard: LiveRunView | null = null;
@@ -665,6 +685,19 @@ export class DashboardProxy implements LiveRunView {
     }
   }
 
+  updateMany(events: AgentExecutionProgressEvent[]): void {
+    if (events.length === 0) return;
+    if (this.dashboard && 'updateMany' in this.dashboard) {
+      (this.dashboard as unknown as { updateMany(events: AgentExecutionProgressEvent[]): void }).updateMany(events);
+    } else if (this.dashboard) {
+      for (const event of events) this.dashboard.update(event);
+    } else if (this.starting && !this.finalized) {
+      this.buffer.push(...events);
+    } else {
+      for (const event of events) this.fallback.update(event);
+    }
+  }
+
   healthCheck(activeSessionIds: Set<string>): void {
     if (this.dashboard && 'healthCheck' in this.dashboard) {
       (this.dashboard as unknown as { healthCheck(ids: Set<string>): void }).healthCheck(activeSessionIds);
@@ -674,6 +707,12 @@ export class DashboardProxy implements LiveRunView {
   setRunState(state: 'running' | 'paused'): void {
     if (this.dashboard && 'setRunState' in this.dashboard) {
       (this.dashboard as unknown as { setRunState(s: 'running' | 'paused'): void }).setRunState(state);
+    }
+  }
+
+  completeRun(): void {
+    if (this.dashboard && 'completeRun' in this.dashboard) {
+      (this.dashboard as unknown as { completeRun(): void }).completeRun();
     }
   }
 
@@ -702,7 +741,9 @@ export class DashboardProxy implements LiveRunView {
   }
 
   waitForQuit(): Promise<void> {
-    return this.dashboard?.waitForQuit() ?? this.fallback.waitForQuit();
+    if (this.dashboard) return this.dashboard.waitForQuit();
+    if (!this.startPromise) return this.fallback.waitForQuit();
+    return this.startPromise.then(() => this.dashboard?.waitForQuit() ?? this.fallback.waitForQuit());
   }
 
   killRequested(): boolean {

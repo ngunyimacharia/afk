@@ -85,6 +85,7 @@ export interface RunDashboardStateOptions {
   reviewerHarness?: string;
   concurrency?: number;
   startTime?: number;
+  endTime?: number;
   now?: () => number;
 }
 
@@ -133,6 +134,19 @@ function initialRuntimeState(ticket: TicketRecord): DashboardTicketRuntimeState 
   return 'ready';
 }
 
+function ticketRecordFromLabel(label: string): TicketRecord {
+  const separator = label.indexOf('/');
+  const feature = separator === -1 ? label : label.slice(0, separator);
+  const issueName = separator === -1 ? label : label.slice(separator + 1);
+  return {
+    path: '',
+    feature,
+    issueName,
+    label,
+    executorAfk: true,
+  };
+}
+
 export class RunDashboardState {
   private readonly tickets = new Map<string, InternalTicketState>();
   private readonly actionNeeded = new Map<string, ActionNeededSnapshot>();
@@ -140,13 +154,17 @@ export class RunDashboardState {
   private readonly options: RunDashboardStateOptions;
   private readonly startTime: number;
   private readonly now: () => number;
+  private completedAt: number | null = null;
+  private readonly allowPlaceholderTickets: boolean;
   private selectedTicketLabel: string | null = null;
   private runState: 'running' | 'paused' = 'running';
 
   constructor(options: RunDashboardStateOptions = {}, selectedTickets: TicketRecord[] = []) {
     this.options = options;
-    this.startTime = options.startTime ?? Date.now();
     this.now = options.now ?? Date.now;
+    this.startTime = options.startTime ?? this.now();
+    this.completedAt = options.endTime ?? null;
+    this.allowPlaceholderTickets = selectedTickets.length === 0;
     for (const ticket of selectedTickets) {
       this.tickets.set(ticket.label, {
         record: ticket,
@@ -168,12 +186,31 @@ export class RunDashboardState {
     this.runState = state;
   }
 
+  completeRun(): void {
+    this.completedAt ??= this.now();
+  }
+
   ingest(event: AgentExecutionProgressEvent): void {
     const eventWithTimestamp: AgentExecutionProgressEvent = {
       ...event,
       timestamp: event.timestamp ?? this.now(),
     };
-    const ticket = this.tickets.get(event.ticketLabel);
+    let ticket = this.tickets.get(event.ticketLabel);
+    if (!ticket && this.allowPlaceholderTickets && event.ticketLabel !== '__run__') {
+      const record = ticketRecordFromLabel(event.ticketLabel);
+      ticket = {
+        record,
+        latestMessage: '',
+        sessionId: null,
+        hasPermission: false,
+        hasFailure: false,
+        runtimeState: initialRuntimeState(record),
+        actionNeededKeys: new Set(),
+        metadata: {},
+      };
+      this.tickets.set(event.ticketLabel, ticket);
+      this.selectedTicketLabel ??= event.ticketLabel;
+    }
     if (ticket) {
       this.recentEvents.push(eventWithTimestamp);
       if (this.recentEvents.length > MAX_RECENT_EVENTS) {
@@ -407,7 +444,7 @@ export class RunDashboardState {
       concurrency: this.options.concurrency,
       runState: this.runState,
       startTime: this.startTime,
-      elapsedMs: this.now() - this.startTime,
+      elapsedMs: Math.max(0, (this.completedAt ?? this.now()) - this.startTime),
       features,
       tickets: ticketSnapshots,
       actionNeeded: Array.from(this.actionNeeded.values()).map((a) => structuredClone(a)),
