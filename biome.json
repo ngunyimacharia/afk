@@ -23,6 +23,7 @@
       "**/*.{ts,js,json}",
       "!dist",
       "!node_modules",
+      "!.scratch",
       "!.test-tmp",
       "!.worktree",
       "!bun.lock",
