@@ -190,7 +190,13 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
         const promptResult = await waitForPromptOrStale({
           prompt: sdk.client.session.prompt({
             path: { id: sessionId },
-            body: buildPromptBody({ providerID, modelID, agent: input.agent, prompt: promptText, directory: input.workDir }),
+            body: buildPromptBody({
+              providerID,
+              modelID,
+              agent: input.agent,
+              prompt: promptText,
+              directory: input.workDir,
+            }),
           }),
           staleProgressTimeoutMs,
           activeToolStaleTimeoutMs,
