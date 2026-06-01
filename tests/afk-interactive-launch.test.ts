@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -446,10 +446,13 @@ test('attaches to active run when healthy active-run.json exists', async () => {
     'utf8',
   );
 
+  const activeRunPath = path.join(logsDir, 'active-run.json');
+  const clearActiveRun = setTimeout(() => rmSync(activeRunPath, { force: true }), 10);
   const result = await runAfk(repoRoot, {
     io: { stdin: { isTTY: true } as never, stdout: { isTTY: true } as never },
     env: { ...process.env, CI: '' },
   });
+  clearTimeout(clearActiveRun);
 
   assert.equal(result.code, 0);
   assert.match(result.message, /Attached to active run/);

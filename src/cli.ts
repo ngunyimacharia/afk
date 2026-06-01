@@ -697,6 +697,7 @@ export async function runAfk(
       throw error;
     }
     if (commandPollInterval) clearInterval(commandPollInterval);
+    view.completeRun?.();
     await view.waitForQuit();
     return {
       code: 0,
@@ -743,10 +744,12 @@ async function attachToActiveRun(
   runId: string,
   controlPlane: ActiveRunControlPlane,
 ): Promise<{ code: number; message: string }> {
+  const initialActiveRun = controlPlane.read();
+  const parsedStartTime = initialActiveRun ? Date.parse(initialActiveRun.startedAt) : Number.NaN;
   const view = createLiveRunView({
     kind: io.stdout.isTTY ? 'dashboard' : 'text',
     stdout: io.stdout,
-    runOptions: { runId },
+    runOptions: { runId, startTime: Number.isFinite(parsedStartTime) ? parsedStartTime : undefined },
     repoRoot,
     onPauseResume: () => {
       const active = controlPlane.read();
@@ -760,7 +763,7 @@ async function attachToActiveRun(
   const stream = new ActiveRunEventStream(repoRoot, runId);
   let offset = 0;
   let quit = false;
-  let lastRunState = controlPlane.read()?.state ?? 'running';
+  let lastRunState = initialActiveRun?.state ?? 'running';
   view.setRunState?.(lastRunState === 'paused' ? 'paused' : 'running');
   let killed = false;
   const quitPromise = view.waitForQuit().then(() => {
@@ -780,7 +783,8 @@ async function attachToActiveRun(
     const active = controlPlane.read();
     const { events, nextOffset } = stream.readFromOffset(offset);
     offset = nextOffset;
-    for (const event of events) view.update(event);
+    if (view.updateMany) view.updateMany(events);
+    else for (const event of events) view.update(event);
     if (active && active.state !== lastRunState) {
       lastRunState = active.state;
       view.setRunState?.(active.state === 'paused' ? 'paused' : 'running');
@@ -791,6 +795,7 @@ async function attachToActiveRun(
       view.update(event);
     }
     if (!active || active.runId !== runId) {
+      view.completeRun?.();
       view.done();
       break;
     }
@@ -1175,11 +1180,11 @@ function providerNameFromHarness(harness: 'OpenCode' | 'Claude-Kimi'): string {
   return 'opencode';
 }
 
-function getDaemonSpawnCommand(contextPath: string): { command: string; args: string[] } {
+export function getDaemonSpawnCommand(contextPath: string): { command: string; args: string[] } {
   const script = process.argv[1];
   const isCompiled = !script || (!script.endsWith('.ts') && !script.endsWith('.js'));
   if (isCompiled) {
-    return { command: process.argv[0], args: ['__daemon', contextPath] };
+    return { command: process.execPath || process.argv[0], args: ['__daemon', contextPath] };
   }
   return { command: process.argv[0], args: [script, '__daemon', contextPath] };
 }

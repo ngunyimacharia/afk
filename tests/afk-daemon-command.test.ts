@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { runAfk } from '../src/cli.js';
+import { getDaemonSpawnCommand, runAfk } from '../src/cli.js';
 import { buildLaunchPlan } from '../src/launch-context-builder.js';
 
 function writeMinimalAfkConfig(repoRoot: string): void {
@@ -177,4 +177,24 @@ test('__daemon command errors when context path is missing', async () => {
 
   assert.equal(result.code, 1);
   assert.match(result.message, /Daemon context path required/);
+});
+
+test('compiled daemon spawn uses execPath instead of bun argv[0]', () => {
+  const originalArgv = [...process.argv];
+  const originalExecPath = process.execPath;
+
+  try {
+    Object.defineProperty(process, 'execPath', { value: '/opt/homebrew/bin/afk', configurable: true });
+    process.argv = ['/opt/homebrew/bin/bun', '/opt/homebrew/bin/afk'];
+
+    const command = getDaemonSpawnCommand('/tmp/context.json');
+
+    assert.deepEqual(command, {
+      command: '/opt/homebrew/bin/afk',
+      args: ['__daemon', '/tmp/context.json'],
+    });
+  } finally {
+    process.argv = originalArgv;
+    Object.defineProperty(process, 'execPath', { value: originalExecPath, configurable: true });
+  }
 });
