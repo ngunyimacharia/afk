@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -179,13 +179,37 @@ test('__daemon command errors when context path is missing', async () => {
   assert.match(result.message, /Daemon context path required/);
 });
 
-test('compiled daemon spawn uses execPath instead of bun argv[0]', () => {
+test('compiled daemon spawn uses binary argv instead of bun execPath', () => {
+  const originalArgv = [...process.argv];
+  const originalExecPath = process.execPath;
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-daemon-self-'));
+  const binaryPath = path.join(repoRoot, 'afk');
+  writeFileSync(binaryPath, '');
+  chmodSync(binaryPath, 0o755);
+
+  try {
+    Object.defineProperty(process, 'execPath', { value: '/opt/homebrew/bin/bun', configurable: true });
+    process.argv = ['/opt/homebrew/bin/bun', binaryPath];
+
+    const command = getDaemonSpawnCommand('/tmp/context.json');
+
+    assert.deepEqual(command, {
+      command: binaryPath,
+      args: ['__daemon', '/tmp/context.json'],
+    });
+  } finally {
+    process.argv = originalArgv;
+    Object.defineProperty(process, 'execPath', { value: originalExecPath, configurable: true });
+  }
+});
+
+test('compiled daemon spawn skips bun virtual filesystem path', () => {
   const originalArgv = [...process.argv];
   const originalExecPath = process.execPath;
 
   try {
-    Object.defineProperty(process, 'execPath', { value: '/opt/homebrew/bin/afk', configurable: true });
-    process.argv = ['/opt/homebrew/bin/bun', '/opt/homebrew/bin/afk'];
+    Object.defineProperty(process, 'execPath', { value: '/opt/homebrew/bin/bun', configurable: true });
+    process.argv = ['/opt/homebrew/bin/bun', '/$bunfs/root/afk'];
 
     const command = getDaemonSpawnCommand('/tmp/context.json');
 

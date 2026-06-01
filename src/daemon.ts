@@ -109,7 +109,12 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     featureLockProvider: {
       isLocked: (feature: string) => gitLockProvider.isLocked(feature) || mergeBackCoordinator.isLocked(feature),
     },
-    onWaveComplete: async (feature: string, wave: number, issueNames: string[]) => {
+    onWaveComplete: async (
+      feature: string,
+      wave: number,
+      issueNames: string[],
+      issueWorktreePaths: Record<string, string>,
+    ) => {
       const featureCheckout = checkoutsByFeature[feature];
       if (!featureCheckout) return;
       const tickets = issueNames.map((issueName) => {
@@ -119,7 +124,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
           feature,
           issueName,
           branchName: `afk/${feature}/${issueName}`,
-          worktreePath: ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
+          worktreePath: issueWorktreePaths[issueName] ?? ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
           dependsOn: ticketRecord?.dependsOn,
           metadataPath: path.join(
             repoRoot,

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
@@ -13,7 +13,12 @@ import {
 import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import { type DaemonLaunchContext, runDaemon } from './daemon.js';
-import { logResolvedExecutables, RequiredExecutableError, resolveExecutables } from './executable-resolution.js';
+import {
+  logResolvedExecutables,
+  RequiredExecutableError,
+  resolveExecutable,
+  resolveExecutables,
+} from './executable-resolution.js';
 import { type FeatureBaseMergeResult, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
@@ -582,7 +587,12 @@ export async function runAfk(
       featureLockProvider: {
         isLocked: (feature: string) => gitLockProvider.isLocked(feature) || mergeBackCoordinator.isLocked(feature),
       },
-      onWaveComplete: async (feature: string, wave: number, issueNames: string[]) => {
+      onWaveComplete: async (
+        feature: string,
+        wave: number,
+        issueNames: string[],
+        issueWorktreePaths: Record<string, string>,
+      ) => {
         const featureCheckout = checkoutsByFeature[feature];
         if (!featureCheckout) return;
         const tickets = issueNames.map((issueName) => {
@@ -592,7 +602,7 @@ export async function runAfk(
             feature,
             issueName,
             branchName: `afk/${feature}/${issueName}`,
-            worktreePath: ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
+            worktreePath: issueWorktreePaths[issueName] ?? ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
             dependsOn: ticketRecord?.dependsOn,
             metadataPath: path.join(
               repoRoot,
@@ -1184,9 +1194,22 @@ export function getDaemonSpawnCommand(contextPath: string): { command: string; a
   const script = process.argv[1];
   const isCompiled = !script || (!script.endsWith('.ts') && !script.endsWith('.js'));
   if (isCompiled) {
-    return { command: process.execPath || process.argv[0], args: ['__daemon', contextPath] };
+    return { command: resolveCompiledSelfCommand(), args: ['__daemon', contextPath] };
   }
   return { command: process.argv[0], args: [script, '__daemon', contextPath] };
+}
+
+function resolveCompiledSelfCommand(): string {
+  for (const candidate of [process.argv[1], process.argv[0], process.execPath]) {
+    if (!candidate || candidate.startsWith('/$bunfs/') || path.basename(candidate) === 'bun') continue;
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {}
+  }
+  try {
+    return resolveExecutable('afk');
+  } catch {}
+  return process.argv[0];
 }
 
 function defaultSpawnDaemon(context: DaemonLaunchContext): SpawnDaemonHandle {
