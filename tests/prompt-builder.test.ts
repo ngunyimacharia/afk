@@ -71,6 +71,7 @@ test('afk prompt includes budget, handoff guardrails, and worktree disappearance
   assert.match(source, /Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation/);
   assert.match(source, /Do not continue execution in the repo root/);
   assert.match(source, /Stop once the ticket is satisfied/);
+  assert.match(source, /Do not add `Co-Authored-By`, `Generated-By`, or similar attribution trailers/);
   assert.match(source, /do not rerun the same passing tests again/);
   assert.match(source, /Scratch Artifact Completion Checklist/);
   assert.match(source, /Verification Budget/);
@@ -157,6 +158,7 @@ test('generated prompt includes scratch artifact completion checklist', () => {
   assert.match(prompt, /`status` field is updated to `done`/);
   assert.match(prompt, /scratch artifacts created are local-only under `\.scratch\//);
   assert.match(prompt, /Source code changes are committed using conventional commits/);
+  assert.match(prompt, /Commit messages contain no AI, model, Claude, opencode/);
   assert.match(prompt, /The PRD or feature spec is updated only if the ticket explicitly requires it/);
 });
 

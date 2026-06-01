@@ -44,7 +44,7 @@ Before exiting, confirm ALL of the following:
 
 ## Commit and Summary Rules
 
-1. Commit ticket-owned changes using conventional commits. Never commit `.scratch/` and never attribute AI or opencode in commit messages.
+1. Commit ticket-owned changes using conventional commits. Never commit `.scratch/` and never attribute AI, models, Claude, opencode, or other tools in commit messages. Do not add `Co-Authored-By`, `Generated-By`, or similar attribution trailers.
 2. Update the ticket YAML frontmatter `status` field to `done` when complete, or `ready-for-human` only when human input or implementation is required.
 3. Append or update `## AFK Summary` with timestamp, session/run ID, status, outcome, commits, changed areas, verification, blockers/errors, and next action.
 4. Do not read or edit `.scratch/` except the provided ticket file and scheduler-generated status files explicitly named by the launcher.

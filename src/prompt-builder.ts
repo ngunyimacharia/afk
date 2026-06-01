@@ -59,6 +59,7 @@ export function buildPrompt(input: PromptInput): string {
     '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
     '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
     '- [ ] Source code changes are committed using conventional commits.',
+    '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
     '- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.',
     '',
     '## Verification Budget',

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
 import { validateSelectedTicketPath } from './path-validation.js';
@@ -120,6 +120,7 @@ export class SingleTicketRunner {
     if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
     const contextMismatch = this.validateLaunchContext(plan, ticket.label);
     if (contextMismatch) return this.handoffForLauncherContextMismatch(ticket.label, record, options, contextMismatch);
+    installCommitMessageSanitizer(plan.checkout.worktreePath);
     let prompt = buildPrompt({
       checkout: plan.checkout,
       ticket,
@@ -1254,6 +1255,29 @@ export class SingleTicketRunner {
         readinessSourcePath: snapshot.readiness?.sourcePath ?? null,
       },
     });
+  }
+}
+
+function installCommitMessageSanitizer(worktreePath: string): void {
+  try {
+    const rawHookPath = runGit(worktreePath, ['rev-parse', '--git-path', 'hooks/commit-msg']).trim();
+    const hookPath = path.isAbsolute(rawHookPath) ? rawHookPath : path.resolve(worktreePath, rawHookPath);
+    mkdirSync(path.dirname(hookPath), { recursive: true });
+    writeFileSync(
+      hookPath,
+      [
+        '#!/bin/sh',
+        'message_file="$1"',
+        'tmp_file="$1.afk-sanitized"',
+        'grep -viE \'^(co-authored-by:|generated-by:|ai-generated-by:|opencode:)\' "$message_file" > "$tmp_file"',
+        'mv "$tmp_file" "$message_file"',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    chmodSync(hookPath, 0o755);
+  } catch {
+    // Non-git test doubles and invalid worktrees are handled by existing launch validation paths.
   }
 }
 

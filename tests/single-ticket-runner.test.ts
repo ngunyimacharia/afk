@@ -1,13 +1,21 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
+import { resolveExecutable } from '../src/executable-resolution.js';
 import { resolveReviewerPromptTemplate } from '../src/reviewer-prompt-catalog.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
 import { SingleTicketRunner } from '../src/single-ticket-runner.js';
+
+const GIT_PATH = resolveExecutable('git');
+
+function git(repoRoot: string, args: string[]): string {
+  return execFileSync(GIT_PATH, args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+}
 
 test('launches one ticket and writes runtime artifacts before exit', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-'));
@@ -94,6 +102,66 @@ test('emits progress while launching a ticket', async () => {
   });
 
   assert.deepEqual(progress, ['feat/progress: starting ticket run', 'feat/progress: run completed']);
+});
+
+test('installs commit hook that strips AI attribution trailers', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-commit-hook-'));
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'base\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '001.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Ticket\n');
+
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: 'review-session',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      writeFileSync(path.join(repoRoot, 'marker.txt'), 'marker\n');
+      writeFileSync(ticketPath, '---\nstatus: done\n---\n\n## Ticket\n\n## AFK Summary\n\n### Reviewer Notes\nDone.\n');
+      git(repoRoot, ['add', 'marker.txt']);
+      git(repoRoot, ['add', '-f', ticketPath]);
+      git(repoRoot, [
+        'commit',
+        '-m',
+        'feat: add marker',
+        '-m',
+        'Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>',
+      ]);
+      return { status: 'completed', sessionId: 'execution-session', removable: true };
+    },
+  });
+
+  const result = await runner.launch({
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: repoRoot,
+    },
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.doesNotMatch(git(repoRoot, ['log', '-1', '--format=%B']), /Co-Authored-By/i);
 });
 
 test('persists provider session id as soon as progress observes it', async () => {
