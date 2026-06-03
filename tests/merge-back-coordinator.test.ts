@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 import { resolveExecutable } from '../src/executable-resolution.js';
-import { mergeCompletedFeaturesToBase } from '../src/feature-base-merge.js';
+import { BaseMergeLock, mergeCompletedFeaturesToBase } from '../src/feature-base-merge.js';
 import { MergeBackCoordinator } from '../src/merge-back-coordinator.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
@@ -616,4 +616,236 @@ test('skips deletion when issue worktree has uncommitted changes', async () => {
   assert.equal(result.cleanupResults[0].deletedBranch, false);
   assert.equal(result.cleanupResults[0].deletedWorktree, false);
   assert.equal(result.cleanupResults[0].warning?.includes('uncommitted changes'), true);
+});
+
+test('serializes concurrent base merge invocations for the same repo', async () => {
+  const repoRoot = createRepo('concurrent-base-merge-');
+  const featureA = 'feat-a';
+  const featureB = 'feat-b';
+  const featureWorktreePathA = createFeatureWorktree(repoRoot, featureA);
+  const featureWorktreePathB = createFeatureWorktree(repoRoot, featureB);
+
+  writeFileSync(path.join(featureWorktreePathA, 'a.txt'), 'a\n');
+  git(featureWorktreePathA, ['add', 'a.txt']);
+  git(featureWorktreePathA, ['commit', '-m', 'feature-a work']);
+
+  writeFileSync(path.join(featureWorktreePathB, 'b.txt'), 'b\n');
+  git(featureWorktreePathB, ['add', 'b.txt']);
+  git(featureWorktreePathB, ['commit', '-m', 'feature-b work']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const activeMerges = new Set<string>();
+  let overlap = false;
+
+  const originalMerge = coordinator.mergeFeatureBranchToBase.bind(coordinator);
+  coordinator.mergeFeatureBranchToBase = async (input) => {
+    if (activeMerges.size > 0) overlap = true;
+    activeMerges.add(input.feature);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const result = await originalMerge(input);
+    activeMerges.delete(input.feature);
+    return result;
+  };
+
+  const lock = new BaseMergeLock();
+
+  const promiseA = mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureA],
+    checkoutsByFeature: {
+      [featureA]: {
+        featureSlug: featureA,
+        defaultWorktreeName: featureA,
+        effectiveWorktreeName: featureA,
+        defaultBranchName: featureA,
+        effectiveBranchName: featureA,
+        worktreePath: featureWorktreePathA,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+    baseMergeLock: lock,
+  });
+
+  const promiseB = mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureB],
+    checkoutsByFeature: {
+      [featureB]: {
+        featureSlug: featureB,
+        defaultWorktreeName: featureB,
+        effectiveWorktreeName: featureB,
+        defaultBranchName: featureB,
+        effectiveBranchName: featureB,
+        worktreePath: featureWorktreePathB,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+    baseMergeLock: lock,
+  });
+
+  await Promise.all([promiseA, promiseB]);
+  assert.equal(overlap, false, 'base merge invocations overlapped');
+});
+
+test('emits waiting progress when a feature is queued for base merge', async () => {
+  const repoRoot = createRepo('base-merge-waiting-msg-');
+  const featureA = 'feat-a';
+  const featureB = 'feat-b';
+  const featureWorktreePathA = createFeatureWorktree(repoRoot, featureA);
+  const featureWorktreePathB = createFeatureWorktree(repoRoot, featureB);
+
+  writeFileSync(path.join(featureWorktreePathA, 'a.txt'), 'a\n');
+  git(featureWorktreePathA, ['add', 'a.txt']);
+  git(featureWorktreePathA, ['commit', '-m', 'feature-a work']);
+
+  writeFileSync(path.join(featureWorktreePathB, 'b.txt'), 'b\n');
+  git(featureWorktreePathB, ['add', 'b.txt']);
+  git(featureWorktreePathB, ['commit', '-m', 'feature-b work']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const progressEvents: Array<{ ticketLabel: string; message: string }> = [];
+
+  const originalMerge = coordinator.mergeFeatureBranchToBase.bind(coordinator);
+  coordinator.mergeFeatureBranchToBase = async (input) => {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return originalMerge(input);
+  };
+
+  const lock = new BaseMergeLock();
+
+  const promiseA = mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureA],
+    checkoutsByFeature: {
+      [featureA]: {
+        featureSlug: featureA,
+        defaultWorktreeName: featureA,
+        effectiveWorktreeName: featureA,
+        defaultBranchName: featureA,
+        effectiveBranchName: featureA,
+        worktreePath: featureWorktreePathA,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+    baseMergeLock: lock,
+    onProgress: (event) => progressEvents.push({ ticketLabel: event.ticketLabel, message: event.message }),
+  });
+
+  const promiseB = mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureB],
+    checkoutsByFeature: {
+      [featureB]: {
+        featureSlug: featureB,
+        defaultWorktreeName: featureB,
+        effectiveWorktreeName: featureB,
+        defaultBranchName: featureB,
+        effectiveBranchName: featureB,
+        worktreePath: featureWorktreePathB,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+    baseMergeLock: lock,
+    onProgress: (event) => progressEvents.push({ ticketLabel: event.ticketLabel, message: event.message }),
+  });
+
+  await Promise.all([promiseA, promiseB]);
+
+  const waitingEvent = progressEvents.find(
+    (e) => e.message.includes('waiting for another feature') && e.ticketLabel === `${featureB}/base-merge`,
+  );
+  assert.ok(waitingEvent, 'Expected waiting progress event for second feature');
+});
+
+test('default module lock serializes concurrent base merges when no lock is provided', async () => {
+  const repoRoot = createRepo('default-lock-base-merge-');
+  const featureA = 'feat-a';
+  const featureB = 'feat-b';
+  const featureWorktreePathA = createFeatureWorktree(repoRoot, featureA);
+  const featureWorktreePathB = createFeatureWorktree(repoRoot, featureB);
+
+  writeFileSync(path.join(featureWorktreePathA, 'a.txt'), 'a\n');
+  git(featureWorktreePathA, ['add', 'a.txt']);
+  git(featureWorktreePathA, ['commit', '-m', 'feature-a work']);
+
+  writeFileSync(path.join(featureWorktreePathB, 'b.txt'), 'b\n');
+  git(featureWorktreePathB, ['add', 'b.txt']);
+  git(featureWorktreePathB, ['commit', '-m', 'feature-b work']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const activeMerges = new Set<string>();
+  let overlap = false;
+
+  const originalMerge = coordinator.mergeFeatureBranchToBase.bind(coordinator);
+  coordinator.mergeFeatureBranchToBase = async (input) => {
+    if (activeMerges.size > 0) overlap = true;
+    activeMerges.add(input.feature);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const result = await originalMerge(input);
+    activeMerges.delete(input.feature);
+    return result;
+  };
+
+  // Do not pass baseMergeLock — should use module-level default
+  const promiseA = mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureA],
+    checkoutsByFeature: {
+      [featureA]: {
+        featureSlug: featureA,
+        defaultWorktreeName: featureA,
+        effectiveWorktreeName: featureA,
+        defaultBranchName: featureA,
+        effectiveBranchName: featureA,
+        worktreePath: featureWorktreePathA,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+  });
+
+  const promiseB = mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureB],
+    checkoutsByFeature: {
+      [featureB]: {
+        featureSlug: featureB,
+        defaultWorktreeName: featureB,
+        effectiveWorktreeName: featureB,
+        defaultBranchName: featureB,
+        effectiveBranchName: featureB,
+        worktreePath: featureWorktreePathB,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+  });
+
+  await Promise.all([promiseA, promiseB]);
+  assert.equal(overlap, false, 'default module lock failed to serialize base merges');
 });

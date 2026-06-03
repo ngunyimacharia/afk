@@ -2,6 +2,41 @@ import type { MergeBackCoordinator } from './merge-back-coordinator.js';
 import type { AgentExecutionProgressCallback, CheckoutContext, LaunchModel, ReviewerPromptTemplate } from './types.js';
 import { runGit } from './worktree-preparation-service.js';
 
+export class BaseMergeLock {
+  private running = new Set<string>();
+  private queues = new Map<string, Array<(release: () => void) => void>>();
+
+  isHeld(repoRoot: string): boolean {
+    return this.running.has(repoRoot);
+  }
+
+  async acquire(repoRoot: string): Promise<{ release: () => void; waited: boolean }> {
+    if (!this.running.has(repoRoot)) {
+      this.running.add(repoRoot);
+      return { release: () => this.release(repoRoot), waited: false };
+    }
+
+    return new Promise((resolve) => {
+      const queue = this.queues.get(repoRoot) ?? [];
+      queue.push((release: () => void) => resolve({ release, waited: true }));
+      this.queues.set(repoRoot, queue);
+    });
+  }
+
+  private release(repoRoot: string): void {
+    const queue = this.queues.get(repoRoot);
+    const next = queue?.shift();
+    if (next) {
+      next(() => this.release(repoRoot));
+    } else {
+      this.running.delete(repoRoot);
+      this.queues.delete(repoRoot);
+    }
+  }
+}
+
+const defaultBaseMergeLock = new BaseMergeLock();
+
 export interface FeatureBaseMergeInput {
   repoRoot: string;
   baseBranch: string;
@@ -12,6 +47,7 @@ export interface FeatureBaseMergeInput {
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   onProgress?: AgentExecutionProgressCallback;
+  baseMergeLock?: BaseMergeLock;
 }
 
 export interface FeatureBaseMergeResult {
@@ -25,6 +61,7 @@ export interface FeatureBaseMergeResult {
 
 export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput): Promise<FeatureBaseMergeResult[]> {
   const results: FeatureBaseMergeResult[] = [];
+  const lock = input.baseMergeLock ?? defaultBaseMergeLock;
   for (const feature of input.features) {
     const checkout = input.checkoutsByFeature[feature];
     if (!checkout) continue;
@@ -36,49 +73,60 @@ export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput)
       continue;
     }
 
-    input.onProgress?.({
-      ticketLabel,
-      message: `merging ${branchName} into ${input.baseBranch}`,
-    });
-
-    const merge = await input.coordinator.mergeFeatureBranchToBase({
-      repoRoot: input.repoRoot,
-      baseBranch: input.baseBranch,
-      featureBranch: branchName,
-      feature,
-      model: input.model,
-      reviewerModel: input.reviewerModel,
-      reviewerPrompt: input.reviewerPrompt,
-      onProgress: input.onProgress,
-    });
-
-    if (!merge.success) {
-      results.push({
-        feature,
-        branchName,
-        success: false,
-        deletedBranch: false,
-        deletedWorktree: false,
-        reason: merge.reason,
-      });
+    const { release, waited } = await lock.acquire(input.repoRoot);
+    if (waited) {
       input.onProgress?.({
         ticketLabel,
-        message: `base merge failed for ${branchName}: ${merge.reason}`,
-        kind: 'failure',
+        message: `waiting for another feature's base merge to finish before merging ${branchName} into ${input.baseBranch}`,
       });
-      break;
     }
+    try {
+      input.onProgress?.({
+        ticketLabel,
+        message: `merging ${branchName} into ${input.baseBranch}`,
+      });
 
-    const cleanup = cleanupMergedFeatureBranch(input.repoRoot, input.baseBranch, checkout);
-    results.push({ feature, branchName, ...cleanup });
-    input.onProgress?.({
-      ticketLabel,
-      message: cleanup.success
-        ? `merged ${branchName} into ${input.baseBranch} and cleaned up feature branch`
-        : `merged ${branchName} into ${input.baseBranch}; cleanup skipped: ${cleanup.reason ?? 'unknown error'}`,
-      kind: cleanup.success ? 'message' : 'failure',
-    });
-    if (!cleanup.success) break;
+      const merge = await input.coordinator.mergeFeatureBranchToBase({
+        repoRoot: input.repoRoot,
+        baseBranch: input.baseBranch,
+        featureBranch: branchName,
+        feature,
+        model: input.model,
+        reviewerModel: input.reviewerModel,
+        reviewerPrompt: input.reviewerPrompt,
+        onProgress: input.onProgress,
+      });
+
+      if (!merge.success) {
+        results.push({
+          feature,
+          branchName,
+          success: false,
+          deletedBranch: false,
+          deletedWorktree: false,
+          reason: merge.reason,
+        });
+        input.onProgress?.({
+          ticketLabel,
+          message: `base merge failed for ${branchName}: ${merge.reason}`,
+          kind: 'failure',
+        });
+        break;
+      }
+
+      const cleanup = cleanupMergedFeatureBranch(input.repoRoot, input.baseBranch, checkout);
+      results.push({ feature, branchName, ...cleanup });
+      input.onProgress?.({
+        ticketLabel,
+        message: cleanup.success
+          ? `merged ${branchName} into ${input.baseBranch} and cleaned up feature branch`
+          : `merged ${branchName} into ${input.baseBranch}; cleanup skipped: ${cleanup.reason ?? 'unknown error'}`,
+        kind: cleanup.success ? 'message' : 'failure',
+      });
+      if (!cleanup.success) break;
+    } finally {
+      release();
+    }
   }
   return results;
 }
