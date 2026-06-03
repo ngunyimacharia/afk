@@ -418,6 +418,7 @@ export async function runAfk(
       featureDependencies,
       harness,
     );
+    writeRunPlan(repoRoot, runId, plan.tickets);
 
     if (!runtime.inlineLaunch) {
       const context: DaemonLaunchContext = {
@@ -756,9 +757,11 @@ async function attachToActiveRun(
 ): Promise<{ code: number; message: string }> {
   const initialActiveRun = controlPlane.read();
   const parsedStartTime = initialActiveRun ? Date.parse(initialActiveRun.startedAt) : Number.NaN;
+  const runPlanTickets = readRunPlan(repoRoot, runId);
   const view = createLiveRunView({
     kind: io.stdout.isTTY ? 'dashboard' : 'text',
     stdout: io.stdout,
+    selectedTickets: runPlanTickets ?? [],
     runOptions: { runId, startTime: Number.isFinite(parsedStartTime) ? parsedStartTime : undefined },
     repoRoot,
     onPauseResume: () => {

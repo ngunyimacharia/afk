@@ -54,6 +54,59 @@ test('afk tui attaches to an active run', async () => {
   assert.match(result.message, /existing-run/);
 });
 
+test('afk tui attaches to an active run with run plan tickets', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-tui-plan-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  const runId = 'plan-run-123';
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId,
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  const tickets = [
+    {
+      path: '/tmp/feat/ticket1.md',
+      feature: 'feat',
+      issueName: 'ticket1',
+      label: 'feat/ticket1',
+      status: 'in-progress',
+      executorAfk: true,
+    },
+    {
+      path: '/tmp/feat/ticket2.md',
+      feature: 'feat',
+      issueName: 'ticket2',
+      label: 'feat/ticket2',
+      status: 'in-progress',
+      executorAfk: true,
+    },
+  ];
+  writeRunPlan(repoRoot, runId, tickets);
+
+  const originalArg = process.argv[2];
+  process.argv[2] = 'tui';
+  const result = await runAfk(repoRoot, {
+    io: { stdin: { isTTY: false } as never, stdout: { isTTY: false } as never },
+  });
+  process.argv[2] = originalArg;
+  assert.equal(result.code, 0);
+  assert.match(result.message, /Attached to active run/);
+  assert.match(result.message, new RegExp(runId));
+});
+
 test('afk stop with no active run prints error and exits 1', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-no-run-'));
   const originalArg = process.argv[2];
