@@ -62,6 +62,11 @@ async function tryAcquireLock(lockDir: string): Promise<boolean> {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
       return false;
     }
+    // If the directory was removed after mkdir but before writeFile,
+    // treat as not acquired and let the caller retry.
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return false;
+    }
     throw error;
   }
 }
@@ -78,8 +83,22 @@ async function isStaleLock(lockDir: string): Promise<boolean> {
     }
     return !isProcessAlive(pid);
   } catch {
-    // If we can't read the pid file, assume stale
-    return true;
+    // The pid file may not exist yet because the lock is being created.
+    // Wait briefly and check again before declaring it stale.
+    await sleep(50);
+    try {
+      const pidText = await readFile(path.join(lockDir, 'pid'), { encoding: 'utf8' });
+      const pid = Number(pidText.trim());
+      if (!Number.isFinite(pid) || pid <= 0) {
+        return true;
+      }
+      if (pid === process.pid) {
+        return false;
+      }
+      return !isProcessAlive(pid);
+    } catch {
+      return true;
+    }
   }
 }
 

@@ -617,3 +617,247 @@ test('skips deletion when issue worktree has uncommitted changes', async () => {
   assert.equal(result.cleanupResults[0].deletedWorktree, false);
   assert.equal(result.cleanupResults[0].warning?.includes('uncommitted changes'), true);
 });
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+test('two concurrent mergeWave calls into same feature branch serialize', async () => {
+  const repoRoot = createRepo('merge-wave-concurrent-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'add-shared']);
+
+  const scratch1 = createScratchWorktree(repoRoot, feature, '001', feature);
+  writeFileSync(path.join(scratch1.worktreePath, 'shared.txt'), 'base\nbranch1\n');
+  git(scratch1.worktreePath, ['add', 'shared.txt']);
+  git(scratch1.worktreePath, ['commit', '-m', 'ticket-001']);
+
+  const scratch2 = createScratchWorktree(repoRoot, feature, '002', feature);
+  writeFileSync(path.join(scratch2.worktreePath, 'shared.txt'), 'base\nbranch2\n');
+  git(scratch2.worktreePath, ['add', 'shared.txt']);
+  git(scratch2.worktreePath, ['commit', '-m', 'ticket-002']);
+
+  // Modify feature branch after creating scratch branches so every merge conflicts
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature-update']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const meta1 = setupTicketMetadata(store, feature, '001');
+  const meta2 = setupTicketMetadata(store, feature, '002');
+
+  const order: string[] = [];
+  let callCount = 0;
+
+  const agentProvider = new FakeAgentExecutionProvider(async () => {
+    callCount++;
+    const id = callCount === 1 ? 'first' : 'second';
+    order.push(`${id}-start`);
+    await sleep(100);
+    order.push(`${id}-end`);
+    writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature\nbranch1\nbranch2\n');
+    git(featureWorktreePath, ['add', 'shared.txt']);
+    return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: store,
+    conflictResolutionBudget: 2,
+  });
+
+  const p1 = coordinator.mergeWave({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    wave: 0,
+    tickets: [
+      { feature, issueName: '001', branchName: scratch1.branchName, worktreePath: scratch1.worktreePath, ...meta1 },
+    ],
+    model: { id: 'model-1' },
+  });
+
+  const p2 = coordinator.mergeWave({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    wave: 1,
+    tickets: [
+      { feature, issueName: '002', branchName: scratch2.branchName, worktreePath: scratch2.worktreePath, ...meta2 },
+    ],
+    model: { id: 'model-1' },
+  });
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  assert.equal(r1.success, true);
+  assert.equal(r2.success, true);
+
+  // With serialization, agent calls must not interleave.
+  assert.equal(order.length, 4);
+  assert.equal(order[0], 'first-start');
+  assert.equal(order[1], 'first-end');
+  assert.equal(order[2], 'second-start');
+  assert.equal(order[3], 'second-end');
+});
+
+test('two concurrent mergeFeatureBranchToBase calls into same base branch serialize', async () => {
+  const repoRoot = createRepo('feature-base-concurrent-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature work']);
+
+  // main diverges from feature so merge will conflict
+  writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nmain\n');
+  git(repoRoot, ['add', 'shared.txt']);
+  git(repoRoot, ['commit', '-m', 'main work']);
+
+  const agentCalls: string[] = [];
+
+  const agentProvider = new FakeAgentExecutionProvider(async () => {
+    agentCalls.push('agent');
+    await sleep(100);
+    writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nfeature\nmain\n');
+    git(repoRoot, ['add', 'shared.txt']);
+    return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: new RuntimeStore({ repoRoot }),
+    conflictResolutionBudget: 2,
+  });
+
+  const p1 = coordinator.mergeFeatureBranchToBase({
+    repoRoot,
+    baseBranch: 'main',
+    featureBranch: feature,
+    feature,
+    model: { id: 'model-1' },
+  });
+
+  const p2 = coordinator.mergeFeatureBranchToBase({
+    repoRoot,
+    baseBranch: 'main',
+    featureBranch: feature,
+    feature,
+    model: { id: 'model-1' },
+  });
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  // One should succeed, the other should see already-merged state
+  assert.ok(r1.success || r2.success);
+
+  // With serialization, the agent is invoked at most once because the second
+  // caller blocks until the first finishes the merge, then finds the branch
+  // already merged into base.
+  assert.equal(agentCalls.length <= 1, true);
+});
+
+test('mergeWave and mergeFeatureBranchToBase targeting same branch name serialize', async () => {
+  const repoRoot = createRepo('cross-lock-concurrent-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  // Set up feature worktree
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'add-shared']);
+
+  const scratch = createScratchWorktree(repoRoot, feature, '001', feature);
+  writeFileSync(path.join(scratch.worktreePath, 'shared.txt'), 'base\nticket\n');
+  git(scratch.worktreePath, ['add', 'shared.txt']);
+  git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
+
+  // Diverge feature worktree after creating scratch so mergeWave will conflict
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature-update']);
+
+  // Diverge main after creating feature branch so base merge will conflict
+  writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nmain\n');
+  git(repoRoot, ['add', 'shared.txt']);
+  git(repoRoot, ['commit', '-m', 'main work']);
+
+  const baseFeature = 'feat-base';
+  const baseFeatureWorktreePath = createFeatureWorktree(repoRoot, baseFeature);
+  writeFileSync(path.join(baseFeatureWorktreePath, 'shared.txt'), 'base\nbase-feature\n');
+  git(baseFeatureWorktreePath, ['add', 'shared.txt']);
+  git(baseFeatureWorktreePath, ['commit', '-m', 'base feature work']);
+
+  // Diverge main after creating feat-base so the merge will conflict
+  writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nmain-update\n');
+  git(repoRoot, ['add', 'shared.txt']);
+  git(repoRoot, ['commit', '-m', 'main-update']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const meta = setupTicketMetadata(store, feature, '001');
+
+  const order: string[] = [];
+  let callCount = 0;
+
+  const agentProvider = new FakeAgentExecutionProvider(async () => {
+    callCount++;
+    const id = callCount === 1 ? 'first' : 'second';
+    order.push(`${id}-start`);
+    await sleep(100);
+    order.push(`${id}-end`);
+    const featureStatus = git(featureWorktreePath, ['status', '--porcelain']);
+    if (featureStatus.includes('shared.txt')) {
+      writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature\nticket\n');
+      git(featureWorktreePath, ['add', 'shared.txt']);
+    } else {
+      writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nmain\nbase-feature\n');
+      git(repoRoot, ['add', 'shared.txt']);
+    }
+    return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: store,
+    conflictResolutionBudget: 2,
+  });
+
+  const p1 = coordinator.mergeWave({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: 'main',
+    wave: 0,
+    tickets: [
+      { feature, issueName: '001', branchName: scratch.branchName, worktreePath: scratch.worktreePath, ...meta },
+    ],
+    model: { id: 'model-1' },
+  });
+
+  const p2 = coordinator.mergeFeatureBranchToBase({
+    repoRoot,
+    baseBranch: 'main',
+    featureBranch: baseFeature,
+    feature: baseFeature,
+    model: { id: 'model-1' },
+  });
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  assert.equal(r1.success, true);
+  assert.equal(r2.success, true);
+
+  // With serialization, agent calls must not interleave.
+  assert.equal(order.length, 4);
+  assert.equal(order[0], 'first-start');
+  assert.equal(order[1], 'first-end');
+  assert.equal(order[2], 'second-start');
+  assert.equal(order[3], 'second-end');
+});
