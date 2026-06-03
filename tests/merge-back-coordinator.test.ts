@@ -617,3 +617,110 @@ test('skips deletion when issue worktree has uncommitted changes', async () => {
   assert.equal(result.cleanupResults[0].deletedWorktree, false);
   assert.equal(result.cleanupResults[0].warning?.includes('uncommitted changes'), true);
 });
+
+test('reports branch deletion failure as warning debt when merge proof succeeded', async () => {
+  const repoRoot = createRepo('merge-back-branch-delete-warning-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  const scratch = createScratchWorktree(repoRoot, feature, '001', feature);
+  writeFileSync(path.join(scratch.worktreePath, 'a.txt'), 'a\n');
+  git(scratch.worktreePath, ['add', 'a.txt']);
+  git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
+
+  // Create a second worktree for the same branch to block branch deletion
+  const scratch2WorktreePath = path.join(repoRoot, '.worktree', `${feature}-001-copy`);
+  git(repoRoot, ['worktree', 'add', '--force', scratch2WorktreePath, scratch.branchName]);
+
+  const store = new RuntimeStore({ repoRoot });
+  const meta = setupTicketMetadata(store, feature, '001');
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const result = await coordinator.mergeWave({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    wave: 0,
+    tickets: [
+      { feature, issueName: '001', branchName: scratch.branchName, worktreePath: scratch.worktreePath, ...meta },
+    ],
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.failedTickets.length, 0);
+  assert.equal(result.cleanupResults.length, 1);
+  assert.equal(result.cleanupResults[0].success, false);
+  assert.equal(result.cleanupResults[0].deletedWorktree, true);
+  assert.equal(result.cleanupResults[0].deletedBranch, false);
+  assert.ok(result.cleanupResults[0].error);
+  assert.ok(
+    result.cleanupResults[0].error?.includes('branch delete failed') ||
+      result.cleanupResults[0].error?.includes('cannot delete branch'),
+  );
+
+  // Verify the warning was persisted for later visibility
+  const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
+  const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as Array<{ issueName: string; error?: string }>;
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0]?.issueName, '001');
+  assert.ok(pending[0]?.error);
+});
+
+test('merges feature to base and reports cleanup warning when branch deletion fails', async () => {
+  const repoRoot = createRepo('feature-base-merge-cleanup-warning-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+  writeFileSync(path.join(featureWorktreePath, 'feature.txt'), 'feature\n');
+  git(featureWorktreePath, ['add', 'feature.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature work']);
+
+  // Create a second worktree checked out on the feature branch to block branch deletion
+  const secondWorktreePath = path.join(repoRoot, '.worktree', `${feature}-copy`);
+  git(repoRoot, ['worktree', 'add', '--force', secondWorktreePath, feature]);
+
+  const store = new RuntimeStore({ repoRoot });
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: store,
+  });
+
+  const results = await mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [feature],
+    checkoutsByFeature: {
+      [feature]: {
+        featureSlug: feature,
+        defaultWorktreeName: feature,
+        effectiveWorktreeName: feature,
+        defaultBranchName: feature,
+        effectiveBranchName: feature,
+        worktreePath: featureWorktreePath,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.feature, feature);
+  assert.equal(results[0]?.branchName, feature);
+  assert.equal(results[0]?.success, true);
+  assert.equal(results[0]?.deletedWorktree, true);
+  assert.equal(results[0]?.deletedBranch, false);
+  assert.ok(results[0]?.warning);
+  assert.ok(
+    results[0]?.warning?.includes('branch delete failed') || results[0]?.warning?.includes('cannot delete branch'),
+  );
+  assert.equal(git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
+  assert.equal(readFileSync(path.join(repoRoot, 'feature.txt'), 'utf8'), 'feature\n');
+  assert.equal(existsSync(featureWorktreePath), false);
+  // Feature branch should still exist because deletion was blocked
+  assert.doesNotThrow(() => git(repoRoot, ['rev-parse', '--verify', feature]));
+});

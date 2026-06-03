@@ -741,10 +741,17 @@ function formatFeatureBaseMergeResultLines(results: FeatureBaseMergeResult[]): s
   if (!results.length) return [];
   return [
     'Feature base merge results',
-    ...results.map(
-      (result) =>
-        `- ${result.feature}: ${result.success ? 'merged and cleaned up' : `failed (${result.reason ?? 'unknown error'})`}`,
-    ),
+    ...results.map((result) => {
+      let status: string;
+      if (result.success && !result.warning) {
+        status = 'merged and cleaned up';
+      } else if (result.warning) {
+        status = `merged with cleanup warnings (${result.warning})`;
+      } else {
+        status = `failed (${result.reason ?? 'unknown error'})`;
+      }
+      return `- ${result.feature}: ${status}`;
+    }),
   ];
 }
 

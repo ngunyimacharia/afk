@@ -131,6 +131,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
               failedAt: new Date().toISOString(),
             });
           }
+          const cleanupStatus = cleanupResult.success ? 'success' : cleanupResult.error ? 'warning' : 'failed';
           this.deps.runtimeStore.appendLog(
             ticket.logPath,
             JSON.stringify({
@@ -138,7 +139,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
               issue: ticket.issueName,
               branch: ticket.branchName,
               worktreePath: ticket.worktreePath,
-              status: cleanupResult.success ? 'success' : 'failed',
+              status: cleanupStatus,
               deletedBranch: cleanupResult.deletedBranch,
               deletedWorktree: cleanupResult.deletedWorktree,
               warning: cleanupResult.warning ?? null,
@@ -149,8 +150,10 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             ticketLabel: `${ticket.feature}/${ticket.issueName}`,
             message: cleanupResult.success
               ? `post-merge cleanup succeeded for ${ticket.branchName}`
-              : `post-merge cleanup skipped for ${ticket.branchName}: ${cleanupResult.warning ?? cleanupResult.error ?? 'unknown error'}`,
-            kind: cleanupResult.success ? 'message' : 'message',
+              : cleanupResult.error
+                ? `post-merge cleanup warning for ${ticket.branchName}: ${cleanupResult.error}`
+                : `post-merge cleanup skipped for ${ticket.branchName}: ${cleanupResult.warning ?? 'unknown error'}`,
+            kind: 'message',
           });
         } else {
           failedTickets.push({
