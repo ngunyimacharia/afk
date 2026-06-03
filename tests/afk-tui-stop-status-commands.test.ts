@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { runAfk } from '../src/cli.js';
+import { readRunPlan, runAfk, writeRunPlan } from '../src/cli.js';
 
 function writeMinimalAfkConfig(repoRoot: string): void {
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));
@@ -253,4 +253,38 @@ test('afk status includes model, harness, and ticket count from runtime metadata
   assert.match(result.message, /Model:\s+claude-sonnet-4/);
   assert.match(result.message, /Harness:\s+OpenCode/);
   assert.match(result.message, /Tickets:\s+2/);
+});
+
+test('writeRunPlan round-trips tickets through readRunPlan', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-plan-roundtrip-'));
+  const tickets = [
+    {
+      path: '/tmp/feat/ticket1.md',
+      feature: 'feat',
+      issueName: 'ticket1',
+      label: 'feat/ticket1',
+      status: 'in-progress',
+      executorAfk: true,
+      dependsOn: ['ticket0'],
+    },
+    {
+      path: '/tmp/feat/ticket2.md',
+      feature: 'feat',
+      issueName: 'ticket2',
+      label: 'feat/ticket2',
+      executorAfk: false,
+    },
+  ];
+  writeRunPlan(repoRoot, 'run-123', tickets);
+  const read = readRunPlan(repoRoot, 'run-123');
+  assert.ok(read);
+  assert.equal(read.length, 2);
+  assert.deepStrictEqual(read[0], tickets[0]);
+  assert.deepStrictEqual(read[1], tickets[1]);
+});
+
+test('readRunPlan returns null for missing plan file', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-plan-missing-'));
+  const read = readRunPlan(repoRoot, 'nonexistent-run');
+  assert.equal(read, null);
 });

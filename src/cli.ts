@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
@@ -872,6 +872,53 @@ function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
   }
 
   return { modelId, harness, ticketCount };
+}
+
+export interface RunPlan {
+  tickets: TicketRecord[];
+}
+
+export function runPlanPath(repoRoot: string, runId: string): string {
+  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'run-plans', `${runId}.json`);
+}
+
+export function writeRunPlan(repoRoot: string, runId: string, tickets: TicketRecord[]): void {
+  const filePath = runPlanPath(repoRoot, runId);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  const plan: RunPlan = { tickets };
+  writeFileSync(filePath, JSON.stringify(plan, null, 2), 'utf8');
+}
+
+export function readRunPlan(repoRoot: string, runId: string): TicketRecord[] | null {
+  const filePath = runPlanPath(repoRoot, runId);
+  if (!existsSync(filePath)) return null;
+  try {
+    const content = readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(content) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const plan = parsed as Record<string, unknown>;
+    if (!Array.isArray(plan.tickets)) return null;
+    const tickets = plan.tickets as unknown[];
+    for (const ticket of tickets) {
+      if (!ticket || typeof ticket !== 'object') return null;
+      const t = ticket as Record<string, unknown>;
+      if (typeof t.path !== 'string') return null;
+      if (typeof t.feature !== 'string') return null;
+      if (typeof t.issueName !== 'string') return null;
+      if (typeof t.label !== 'string') return null;
+      if (t.status !== undefined && typeof t.status !== 'string') return null;
+      if (typeof t.executorAfk !== 'boolean') return null;
+      if (t.dependsOn !== undefined && !Array.isArray(t.dependsOn)) return null;
+      if (Array.isArray(t.dependsOn)) {
+        for (const dep of t.dependsOn) {
+          if (typeof dep !== 'string') return null;
+        }
+      }
+    }
+    return plan.tickets as TicketRecord[];
+  } catch {
+    return null;
+  }
 }
 
 function formatTicketMetadataError(error: unknown): string {
