@@ -56,7 +56,44 @@ export function formatDuration(ms: number): string {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  return `${hours}h ${minutes}m ${seconds}s`;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0) parts.push(`${seconds}s`);
+  if (parts.length === 0) return '0s';
+  return parts.join(' ');
+}
+
+function getOrdinalSuffix(day: number): string {
+  if (day >= 11 && day <= 13) {
+    return 'th';
+  }
+  switch (day % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
+}
+
+export function formatEventTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weekday = weekdays[date.getDay()];
+  const day = date.getDate();
+  const suffix = getOrdinalSuffix(day);
+
+  let hours = date.getHours();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours === 0 ? 12 : hours;
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+
+  return `${weekday}, ${day}${suffix} ${hours}:${minutes}${ampm}`;
 }
 
 function joinStyledTexts(items: StyledText[], separator: string): StyledText {
@@ -172,7 +209,7 @@ function formatActionNeeded(snap: DashboardSnapshot): StyledText {
 function formatEvents(snap: DashboardSnapshot): StyledText {
   if (snap.recentEvents.length === 0) return stringToStyledText('No events yet');
   const parts = snap.recentEvents.slice(-10).map((e) => {
-    const time = e.timestamp ? formatDuration(e.timestamp - snap.startTime) : '--';
+    const time = e.timestamp ? formatEventTime(e.timestamp) : '--';
     return t`${dim(time)} ${stripFeaturePrefix(e.ticketLabel)}: ${formatSingleLine(e.message, 80)}`;
   });
   return joinStyledTexts(parts, '\n');

@@ -30,6 +30,7 @@ import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
+import { formatDuration } from './opentui-dashboard.js';
 import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
@@ -824,14 +825,7 @@ async function attachToActiveRun(
 }
 
 function formatHeartbeatAge(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0)
-    return `${hours}h ${(minutes % 60).toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
-  if (minutes > 0) return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-  return `${seconds}s`;
+  return formatDuration(ms);
 }
 
 interface RunMetadata {
