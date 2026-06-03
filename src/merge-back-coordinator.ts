@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
+import { withBranchMergeLock } from './branch-merge-lock.js';
 import { persistFailedPostMergeCleanupItem } from './cleanup.js';
 import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { runReadinessCommands } from './readiness-service.js';
@@ -92,87 +93,88 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
   }
 
   async mergeWave(input: MergeWaveInput): Promise<MergeWaveResult> {
-    const { feature, wave, tickets } = input;
+    const { feature, tickets } = input;
     if (tickets.length === 0) {
       return { success: true, mergedTickets: [], failedTickets: [], cleanupResults: [] };
     }
 
     this.lockedFeatures.add(feature);
-
     try {
-      const sorted = sortTicketsByDependencies(tickets);
-      const mergedTickets: string[] = [];
-      const failedTickets: Array<{ issueName: string; reason: string; conflictPaths?: string[] }> = [];
-      const cleanupResults: MergeBackCleanupResult[] = [];
+      return await withBranchMergeLock(input.repoRoot, input.featureBranchName, async () => {
+        const { wave } = input;
+        const sorted = sortTicketsByDependencies(tickets);
+        const mergedTickets: string[] = [];
+        const failedTickets: Array<{ issueName: string; reason: string; conflictPaths?: string[] }> = [];
+        const cleanupResults: MergeBackCleanupResult[] = [];
 
-      for (const ticket of sorted) {
-        const result = await this.mergeSingleTicket(input, ticket);
-        if (result.success) {
-          mergedTickets.push(ticket.issueName);
-          const cleanupResult = cleanupMergedIssueResources({
-            repoRoot: input.repoRoot,
-            featureWorktreePath: input.featureWorktreePath,
-            featureBranchName: input.featureBranchName,
-            ticket,
-            mergedIssueTip: resolveBranchTip(input.featureWorktreePath, ticket.branchName),
-          });
-          cleanupResults.push(cleanupResult);
-          if (!cleanupResult.success) {
-            persistFailedPostMergeCleanupItem(input.repoRoot, {
-              feature: cleanupResult.feature,
-              issueName: cleanupResult.issueName,
-              branchName: cleanupResult.branchName,
-              worktreePath: cleanupResult.worktreePath,
-              featureWorktreePath: cleanupResult.featureWorktreePath,
-              featureBranchName: cleanupResult.featureBranchName,
-              mergedIssueTip: cleanupResult.mergedIssueTip,
-              warning: cleanupResult.warning,
-              error: cleanupResult.error,
-              failedAt: new Date().toISOString(),
+        for (const ticket of sorted) {
+          const result = await this.mergeSingleTicket(input, ticket);
+          if (result.success) {
+            mergedTickets.push(ticket.issueName);
+            const cleanupResult = cleanupMergedIssueResources({
+              repoRoot: input.repoRoot,
+              featureWorktreePath: input.featureWorktreePath,
+              featureBranchName: input.featureBranchName,
+              ticket,
+              mergedIssueTip: resolveBranchTip(input.featureWorktreePath, ticket.branchName),
             });
+            cleanupResults.push(cleanupResult);
+            if (!cleanupResult.success) {
+              persistFailedPostMergeCleanupItem(input.repoRoot, {
+                feature: cleanupResult.feature,
+                issueName: cleanupResult.issueName,
+                branchName: cleanupResult.branchName,
+                worktreePath: cleanupResult.worktreePath,
+                featureWorktreePath: cleanupResult.featureWorktreePath,
+                featureBranchName: cleanupResult.featureBranchName,
+                mergedIssueTip: cleanupResult.mergedIssueTip,
+                warning: cleanupResult.warning,
+                error: cleanupResult.error,
+                failedAt: new Date().toISOString(),
+              });
+            }
+            this.deps.runtimeStore.appendLog(
+              ticket.logPath,
+              JSON.stringify({
+                event: 'post-merge-cleanup',
+                issue: ticket.issueName,
+                branch: ticket.branchName,
+                worktreePath: ticket.worktreePath,
+                status: cleanupResult.success ? 'success' : cleanupResult.error ? 'warning' : 'failed',
+                deletedBranch: cleanupResult.deletedBranch,
+                deletedWorktree: cleanupResult.deletedWorktree,
+                warning: cleanupResult.warning ?? null,
+                error: cleanupResult.error ?? null,
+              }),
+            );
+            input.onProgress?.({
+              ticketLabel: `${ticket.feature}/${ticket.issueName}`,
+              message: cleanupResult.success
+                ? `post-merge cleanup succeeded for ${ticket.branchName}`
+                : cleanupResult.error
+                  ? `post-merge cleanup warning for ${ticket.branchName}: ${cleanupResult.error}`
+                  : `post-merge cleanup skipped for ${ticket.branchName}: ${cleanupResult.warning ?? 'unknown error'}`,
+              kind: 'message',
+            });
+          } else {
+            failedTickets.push({
+              issueName: ticket.issueName,
+              reason: result.reason,
+              conflictPaths: result.conflictPaths,
+            });
+            break;
           }
-          const cleanupStatus = cleanupResult.success ? 'success' : cleanupResult.error ? 'warning' : 'failed';
-          this.deps.runtimeStore.appendLog(
-            ticket.logPath,
-            JSON.stringify({
-              event: 'post-merge-cleanup',
-              issue: ticket.issueName,
-              branch: ticket.branchName,
-              worktreePath: ticket.worktreePath,
-              status: cleanupStatus,
-              deletedBranch: cleanupResult.deletedBranch,
-              deletedWorktree: cleanupResult.deletedWorktree,
-              warning: cleanupResult.warning ?? null,
-              error: cleanupResult.error ?? null,
-            }),
-          );
-          input.onProgress?.({
-            ticketLabel: `${ticket.feature}/${ticket.issueName}`,
-            message: cleanupResult.success
-              ? `post-merge cleanup succeeded for ${ticket.branchName}`
-              : cleanupResult.error
-                ? `post-merge cleanup warning for ${ticket.branchName}: ${cleanupResult.error}`
-                : `post-merge cleanup skipped for ${ticket.branchName}: ${cleanupResult.warning ?? 'unknown error'}`,
-            kind: 'message',
-          });
-        } else {
-          failedTickets.push({
-            issueName: ticket.issueName,
-            reason: result.reason,
-            conflictPaths: result.conflictPaths,
-          });
-          break;
         }
-      }
 
-      const success = failedTickets.length === 0 && mergedTickets.length === tickets.length;
-      if (success) {
-        const featureWaves = this.mergedWaves.get(feature) ?? new Set<number>();
-        featureWaves.add(wave);
-        this.mergedWaves.set(feature, featureWaves);
-      }
+        const success = failedTickets.length === 0 && mergedTickets.length === tickets.length;
+        if (success) {
+          const featureWaves = this.mergedWaves.get(feature) ?? new Set<number>();
+          featureWaves.add(wave);
+          this.mergedWaves.set(feature, featureWaves);
+        }
 
-      return { success, mergedTickets, failedTickets, cleanupResults };
+        return { success, mergedTickets, failedTickets, cleanupResults };
+      });
     } finally {
       this.lockedFeatures.delete(feature);
     }
@@ -188,75 +190,87 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
     reviewerPrompt?: { id: string; label: string; path: string; content?: string };
     onProgress?: AgentExecutionProgressCallback;
   }): Promise<{ success: boolean; reason: string; conflictPaths?: string[] }> {
-    const { repoRoot, baseBranch, featureBranch, feature } = input;
+    return withBranchMergeLock(input.repoRoot, input.baseBranch, async () => {
+      const { repoRoot, baseBranch, featureBranch, feature } = input;
 
-    const status = runGit(repoRoot, ['status', '--porcelain']);
-    const hasChanges = status.trim().length > 0;
-    let stashed = false;
-    if (hasChanges) {
-      try {
-        runGit(repoRoot, ['stash', 'push', '-m', 'AFK auto-merge-back stash']);
-        stashed = true;
-      } catch {
-        return { success: false, reason: 'Base branch has uncommitted changes and stash failed' };
-      }
-    }
-
-    try {
-      const currentBranch = runGit(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
-      if (currentBranch !== baseBranch) {
+      const status = runGit(repoRoot, ['status', '--porcelain']);
+      const hasChanges = status.trim().length > 0;
+      let stashed = false;
+      if (hasChanges) {
         try {
-          runGit(repoRoot, ['checkout', baseBranch]);
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : `Failed to checkout ${baseBranch}`;
-          return { success: false, reason };
+          runGit(repoRoot, ['stash', 'push', '-m', 'AFK auto-merge-back stash']);
+          stashed = true;
+        } catch {
+          return { success: false, reason: 'Base branch has uncommitted changes and stash failed' };
         }
       }
 
-      const mergeResult = tryMerge(repoRoot, featureBranch);
+      try {
+        const currentBranch = runGit(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
+        if (currentBranch !== baseBranch) {
+          try {
+            runGit(repoRoot, ['checkout', baseBranch]);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : `Failed to checkout ${baseBranch}`;
+            return { success: false, reason };
+          }
+        }
 
-      if (mergeResult.success) {
-        return { success: true, reason: '' };
-      }
+        const mergeResult = tryMerge(repoRoot, featureBranch);
 
-      const conflictPaths = getConflictPaths(repoRoot);
-      const budget = this.deps.conflictResolutionBudget ?? 3;
+        if (mergeResult.success) {
+          return { success: true, reason: '' };
+        }
 
-      for (let attempt = 1; attempt <= budget; attempt++) {
-        const ticket: MergeBackTicket = {
-          feature,
-          issueName: 'base-merge',
-          branchName: featureBranch,
-          worktreePath: repoRoot,
-          metadataPath: '',
-          logPath: '',
-        };
-        const prompt = buildConflictResolutionPrompt(ticket, conflictPaths, attempt, budget);
-        const agentResult = await this.invokeReviewerAgentForBaseMerge(input, prompt);
+        const conflictPaths = getConflictPaths(repoRoot);
+        const budget = this.deps.conflictResolutionBudget ?? 3;
 
-        if (agentResult.status === 'completed') {
-          const remainingConflicts = getConflictPaths(repoRoot);
-          const markersRemain = hasConflictMarkers(repoRoot);
+        for (let attempt = 1; attempt <= budget; attempt++) {
+          const ticket: MergeBackTicket = {
+            feature,
+            issueName: 'base-merge',
+            branchName: featureBranch,
+            worktreePath: repoRoot,
+            metadataPath: '',
+            logPath: '',
+          };
+          const prompt = buildConflictResolutionPrompt(ticket, conflictPaths, attempt, budget);
+          const agentResult = await this.invokeReviewerAgentForBaseMerge(input, prompt);
 
-          if (remainingConflicts.length === 0 && !markersRemain) {
-            const readiness = runReadinessCommands({
-              cwd: repoRoot,
-              executor: this.deps.readinessExecutor,
-            });
-            const failed = [...readiness.staticStyleChecks, readiness.smoke].find((r) => r.status === 'failed');
-            if (!failed) {
-              if (isMergeInProgress(repoRoot)) {
-                commitMerge(repoRoot, `Merge ${featureBranch} into ${baseBranch}`);
+          if (agentResult.status === 'completed') {
+            const remainingConflicts = getConflictPaths(repoRoot);
+            const markersRemain = hasConflictMarkers(repoRoot);
+
+            if (remainingConflicts.length === 0 && !markersRemain) {
+              const readiness = runReadinessCommands({
+                cwd: repoRoot,
+                executor: this.deps.readinessExecutor,
+              });
+              const failed = [...readiness.staticStyleChecks, readiness.smoke].find((r) => r.status === 'failed');
+              if (!failed) {
+                if (isMergeInProgress(repoRoot)) {
+                  commitMerge(repoRoot, `Merge ${featureBranch} into ${baseBranch}`);
+                }
+                return { success: true, reason: '' };
               }
-              return { success: true, reason: '' };
+
+              if (attempt === budget) {
+                abortMerge(repoRoot);
+                return {
+                  success: false,
+                  reason: `Readiness checks failed after conflict resolution: ${failed.command}`,
+                  conflictPaths,
+                };
+              }
+              continue;
             }
 
             if (attempt === budget) {
               abortMerge(repoRoot);
               return {
                 success: false,
-                reason: `Readiness checks failed after conflict resolution: ${failed.command}`,
-                conflictPaths,
+                reason: `Conflicts remain after ${budget} resolution attempts`,
+                conflictPaths: remainingConflicts,
               };
             }
             continue;
@@ -266,34 +280,24 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             abortMerge(repoRoot);
             return {
               success: false,
-              reason: `Conflicts remain after ${budget} resolution attempts`,
-              conflictPaths: remainingConflicts,
+              reason: `Reviewer agent failed to resolve conflicts after ${budget} attempts`,
+              conflictPaths,
             };
           }
-          continue;
         }
 
-        if (attempt === budget) {
-          abortMerge(repoRoot);
-          return {
-            success: false,
-            reason: `Reviewer agent failed to resolve conflicts after ${budget} attempts`,
-            conflictPaths,
-          };
+        abortMerge(repoRoot);
+        return { success: false, reason: 'Unexpected merge failure', conflictPaths };
+      } finally {
+        if (stashed) {
+          try {
+            runGit(repoRoot, ['stash', 'pop']);
+          } catch {
+            // Best effort
+          }
         }
       }
-
-      abortMerge(repoRoot);
-      return { success: false, reason: 'Unexpected merge failure', conflictPaths };
-    } finally {
-      if (stashed) {
-        try {
-          runGit(repoRoot, ['stash', 'pop']);
-        } catch {
-          // Best effort
-        }
-      }
-    }
+    });
   }
 
   private async mergeSingleTicket(
