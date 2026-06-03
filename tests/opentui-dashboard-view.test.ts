@@ -8,6 +8,7 @@ import {
   createOpenTuiDashboard,
   DashboardProxy,
   formatDuration,
+  formatEventTime,
   type OpenTuiDashboardModule,
 } from '../src/opentui-dashboard.js';
 import { OpenTUIDashboardView } from '../src/opentui-dashboard-view.js';
@@ -66,6 +67,44 @@ test('formatDuration renders h m s consistently', () => {
   assert.equal(formatDuration(0), '0s');
   assert.equal(formatDuration(65_000), '1m 5s');
   assert.equal(formatDuration(3_725_000), '1h 2m 5s');
+});
+
+test('formatEventTime renders weekday, ordinal day, and 12-hour time', () => {
+  const ts = new Date(2024, 4, 18, 6, 34).getTime();
+  const result = formatEventTime(ts);
+  assert.match(result, /, 18th /);
+  assert.match(result, /6:34AM$/);
+});
+
+test('formatEventTime handles ordinal suffixes correctly', () => {
+  assert.match(formatEventTime(new Date(2024, 4, 1, 12, 0).getTime()), /, 1st /);
+  assert.match(formatEventTime(new Date(2024, 4, 2, 12, 0).getTime()), /, 2nd /);
+  assert.match(formatEventTime(new Date(2024, 4, 3, 12, 0).getTime()), /, 3rd /);
+  assert.match(formatEventTime(new Date(2024, 4, 4, 12, 0).getTime()), /, 4th /);
+  assert.match(formatEventTime(new Date(2024, 4, 11, 12, 0).getTime()), /, 11th /);
+  assert.match(formatEventTime(new Date(2024, 4, 12, 12, 0).getTime()), /, 12th /);
+  assert.match(formatEventTime(new Date(2024, 4, 13, 12, 0).getTime()), /, 13th /);
+  assert.match(formatEventTime(new Date(2024, 4, 21, 12, 0).getTime()), /, 21st /);
+  assert.match(formatEventTime(new Date(2024, 4, 22, 12, 0).getTime()), /, 22nd /);
+  assert.match(formatEventTime(new Date(2024, 4, 23, 12, 0).getTime()), /, 23rd /);
+});
+
+test('formatEventTime handles PM correctly', () => {
+  const ts = new Date(2024, 4, 18, 18, 34).getTime();
+  const result = formatEventTime(ts);
+  assert.match(result, /6:34PM$/);
+});
+
+test('formatEventTime handles noon as 12PM', () => {
+  const ts = new Date(2024, 4, 18, 12, 0).getTime();
+  const result = formatEventTime(ts);
+  assert.match(result, /12:00PM$/);
+});
+
+test('formatEventTime handles midnight as 12AM', () => {
+  const ts = new Date(2024, 4, 18, 0, 0).getTime();
+  const result = formatEventTime(ts);
+  assert.match(result, /12:00AM$/);
 });
 
 test('dashboard view sets supported capability when renderer advertises notifications', () => {
@@ -1158,7 +1197,7 @@ test('createOpenTuiDashboard renders timestamps in recent events panel', async (
   const eventsBox = boxes.find((b) => b.title === 'Recent Events');
   assert.ok(eventsBox, 'Recent Events box should exist');
   const eventsContent = eventsBox.children.map((c) => c.content).join('\n');
-  assert.match(eventsContent, /^1s 001: run completed$/m);
+  assert.match(eventsContent, /^[A-Z][a-z]{2}, \d{1,2}(st|nd|rd|th) \d{1,2}:\d{2}(AM|PM) 001: run completed$/m);
 
   view?.done();
 });
