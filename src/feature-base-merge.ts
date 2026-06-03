@@ -21,6 +21,7 @@ export interface FeatureBaseMergeResult {
   deletedBranch: boolean;
   deletedWorktree: boolean;
   reason?: string;
+  warning?: string;
 }
 
 export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput): Promise<FeatureBaseMergeResult[]> {
@@ -73,9 +74,12 @@ export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput)
     results.push({ feature, branchName, ...cleanup });
     input.onProgress?.({
       ticketLabel,
-      message: cleanup.success
-        ? `merged ${branchName} into ${input.baseBranch} and cleaned up feature branch`
-        : `merged ${branchName} into ${input.baseBranch}; cleanup skipped: ${cleanup.reason ?? 'unknown error'}`,
+      message:
+        cleanup.success && !cleanup.warning
+          ? `merged ${branchName} into ${input.baseBranch} and cleaned up feature branch`
+          : cleanup.warning
+            ? `merged ${branchName} into ${input.baseBranch}; cleanup warning: ${cleanup.warning}`
+            : `merged ${branchName} into ${input.baseBranch}; cleanup skipped: ${cleanup.reason ?? 'unknown error'}`,
       kind: cleanup.success ? 'message' : 'failure',
     });
     if (!cleanup.success) break;
@@ -116,10 +120,18 @@ function cleanupMergedFeatureBranch(
     errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
+  if (errors.length > 0) {
+    return {
+      success: true,
+      deletedBranch,
+      deletedWorktree,
+      warning: errors.join(' | '),
+    };
+  }
+
   return {
-    success: deletedWorktree && deletedBranch,
-    deletedBranch,
-    deletedWorktree,
-    reason: errors.length > 0 ? errors.join(' | ') : undefined,
+    success: true,
+    deletedBranch: true,
+    deletedWorktree: true,
   };
 }
