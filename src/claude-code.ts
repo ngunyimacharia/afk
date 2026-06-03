@@ -410,6 +410,7 @@ function updateActiveToolState(
 }
 
 function formatDuration(ms: number): string {
+  if (ms === 0) return '0s';
   if (ms % 60_000 === 0) return `${ms / 60_000}m`;
   if (ms % 1_000 === 0) return `${ms / 1_000}s`;
   return `${ms}ms`;

@@ -63,8 +63,8 @@ function samplePayload(overrides: Partial<NotificationPayload> = {}): Notificati
 }
 
 test('formatDuration renders h m s consistently', () => {
-  assert.equal(formatDuration(0), '0h 0m 0s');
-  assert.equal(formatDuration(65_000), '0h 1m 5s');
+  assert.equal(formatDuration(0), '0s');
+  assert.equal(formatDuration(65_000), '1m 5s');
   assert.equal(formatDuration(3_725_000), '1h 2m 5s');
 });
 
@@ -866,7 +866,7 @@ test('createOpenTuiDashboard renders metadata in selected ticket details panel',
   assert.match(detailsContent, /Harness: opencode/);
   assert.match(detailsContent, /Review: approved \(clean\)/);
   assert.match(detailsContent, /Phases:/);
-  assert.match(detailsContent, /execution 0h 1m 0s/);
+  assert.match(detailsContent, /execution 1m/);
   assert.doesNotMatch(detailsContent, /Recent events:/);
 
   view?.done();
@@ -1158,7 +1158,7 @@ test('createOpenTuiDashboard renders timestamps in recent events panel', async (
   const eventsBox = boxes.find((b) => b.title === 'Recent Events');
   assert.ok(eventsBox, 'Recent Events box should exist');
   const eventsContent = eventsBox.children.map((c) => c.content).join('\n');
-  assert.match(eventsContent, /^0h 0m 1s 001: run completed$/m);
+  assert.match(eventsContent, /^1s 001: run completed$/m);
 
   view?.done();
 });

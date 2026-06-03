@@ -56,7 +56,12 @@ export function formatDuration(ms: number): string {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  return `${hours}h ${minutes}m ${seconds}s`;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0) parts.push(`${seconds}s`);
+  if (parts.length === 0) return '0s';
+  return parts.join(' ');
 }
 
 function joinStyledTexts(items: StyledText[], separator: string): StyledText {
