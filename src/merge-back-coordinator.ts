@@ -743,7 +743,7 @@ ${conflictSection}
 4. Remove ALL conflict markers (<<<<<<<, =======, >>>>>>>).
 5. Ensure the merged code is syntactically valid and semantically coherent.
 6. Run any available smoke tests or static checks to verify correctness.
-7. Do NOT change git branch state, push, or modify files outside the conflicted paths.
+7. You MAY run local Git state commands needed for resolution, including \`git status\`, conflict-stage inspection, \`git add\` for resolved paths, and \`git merge --continue\` or \`git commit\` to complete the merge when appropriate. Do NOT push, force-reset unrelated work, change unrelated branches, or edit unrelated files.
 
 ${promptTemplate.content ?? ''}
 `;

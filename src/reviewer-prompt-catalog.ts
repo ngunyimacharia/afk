@@ -72,8 +72,9 @@ You are resolving merge conflicts in a feature worktree. Two or more parallel ti
 4. If one change should clearly supersede the other, choose the stronger version and document your reasoning.
 5. Remove ALL conflict markers (<<<<<<<, =======, >>>>>>>). No conflict markers may remain.
 6. After editing, verify the feature still compiles and tests pass.
-7. Do NOT create new files, delete files, or change git state (branch, merge, push) except by editing file contents.
-8. Do NOT modify \`.scratch/\` artifacts.
+7. You MAY run local Git state commands needed for resolution, including \`git status\`, conflict-stage inspection, \`git add\` for resolved paths, and \`git merge --continue\` or \`git commit\` to complete the merge when appropriate.
+8. Do NOT push, force-reset unrelated work, change unrelated branches, or edit unrelated files.
+9. Do NOT create new files, delete files, or modify \`.scratch/\` artifacts.
 
 ## Conflict Resolution Completion Criteria
 

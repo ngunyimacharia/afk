@@ -4,6 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  CONFLICT_RESOLUTION_PROMPT_ID,
   LIGHTWEIGHT_REVIEWER_PROMPT_ID,
   resolveReviewerPrompt,
   resolveReviewerPromptTemplate,
@@ -107,4 +108,43 @@ test('lightweight reviewer prompt does not require static check result inspectio
   assert.doesNotMatch(source, /Static check results are inspected/i);
   assert.doesNotMatch(source, /If all passed, confirm this/i);
   assert.doesNotMatch(source, /If any failed/i);
+});
+
+test('conflict resolution prompt is resolvable and has expected schema', () => {
+  const template = resolveReviewerPrompt({ repoRoot: '/tmp', override: CONFLICT_RESOLUTION_PROMPT_ID });
+  assert.equal(template.id, CONFLICT_RESOLUTION_PROMPT_ID);
+  assert.equal(template.path, 'builtin:reviewer-conflict-resolution');
+  assert.match(template.content ?? '', /# Conflict Resolution Prompt/);
+  assert.match(template.content ?? '', /"done":boolean/);
+  assert.match(template.content ?? '', /"summary"\s*:\s*"string"/);
+  assert.match(template.content ?? '', /"conflictPaths"/);
+  assert.match(template.content ?? '', /"findings"\s*:\s*\[/);
+  assert.match(template.content ?? '', /minor\|major\|blocker/);
+});
+
+test('conflict resolution prompt allows git state commands needed for resolution', () => {
+  const source = readFileSync(promptPath('conflict-resolution.md'), 'utf8');
+  assert.match(source, /You MAY run local Git state commands needed for resolution/);
+  assert.match(source, /git status/);
+  assert.match(source, /conflict-stage inspection/);
+  assert.match(source, /git add/);
+  assert.match(source, /git merge --continue/);
+  assert.match(source, /git commit/);
+});
+
+test('conflict resolution prompt forbids dangerous or unrelated operations', () => {
+  const source = readFileSync(promptPath('conflict-resolution.md'), 'utf8');
+  assert.match(source, /Do NOT push/);
+  assert.match(source, /force-reset unrelated work/);
+  assert.match(source, /change unrelated branches/);
+  assert.match(source, /edit unrelated files/);
+  assert.match(source, /Do NOT create new files/);
+  assert.match(source, /delete files/);
+  assert.ok(source.includes('modify `.scratch/` artifacts'));
+});
+
+test('conflict resolution prompt matches the markdown prompt source', () => {
+  const source = readFileSync(promptPath('conflict-resolution.md'), 'utf8');
+  const template = resolveReviewerPrompt({ repoRoot: '/tmp', override: CONFLICT_RESOLUTION_PROMPT_ID });
+  assert.equal(template.content, source);
 });
