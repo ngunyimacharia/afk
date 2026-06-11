@@ -14,11 +14,13 @@ const DEFAULT_AFK_INSTRUCTIONS = [
   '',
   'You are running in fully autonomous AFK mode. Implement the provided ticket without human intervention.',
   '',
-  'Before exiting, update the provided ticket file with the final tracker status and append a structured `## AFK Summary` block that includes a `### Reviewer Notes` subsection.',
+  'Before exiting, update the local run result artifact named by Runtime Context with final tracker status and reviewer-ready summary details.',
 ].join('\n');
 
 export function buildPrompt(input: PromptInput): string {
   const snapshotLines = buildSnapshotLines(input.snapshot);
+  const updateContractLines = buildTicketUpdateContractLines(input.ticket);
+  const completionChecklistLines = buildCompletionChecklistLines(input.ticket);
   return [
     input.afkInstructions?.trim() || DEFAULT_AFK_INSTRUCTIONS,
     '',
@@ -42,26 +44,10 @@ export function buildPrompt(input: PromptInput): string {
     '',
     ...snapshotLines,
     '',
-    '## Ticket Update Contract',
+    ...updateContractLines,
     '',
-    `Ticket file to update: ${input.ticket.path}`,
-    `Issue reference: ${input.ticket.label}`,
-    '',
-    'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
-    'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
-    'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
-    '',
-    '## Scratch Artifact Completion Checklist',
-    '',
-    'Before exiting, confirm ALL of the following:',
-    '- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).',
-    '- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.',
-    '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
-    '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
-    '- [ ] Source code changes are committed using conventional commits.',
-    '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
-    '- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.',
-    '',
+    ...completionChecklistLines,
+    ...(completionChecklistLines.length ? [''] : []),
     '## Verification Budget',
     '',
     '1. Run the verification commands listed in the ticket.',
@@ -78,6 +64,56 @@ export function buildPrompt(input: PromptInput): string {
     input.ticketContent.trimEnd(),
     '```',
   ].join('\n');
+}
+
+function buildCompletionChecklistLines(ticket: TicketRecord): string[] {
+  if ((ticket.provider?.kind ?? 'scratch') !== 'scratch') return [];
+  return [
+    '## Scratch Artifact Completion Checklist',
+    '',
+    'Before exiting, confirm ALL of the following:',
+    '- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).',
+    '- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.',
+    '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
+    '- [ ] Source code changes are committed using conventional commits.',
+    '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
+    '- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.',
+  ];
+}
+
+function buildTicketUpdateContractLines(ticket: TicketRecord): string[] {
+  const providerKind = ticket.provider?.kind ?? 'scratch';
+  if (providerKind === 'scratch') {
+    return [
+      '## Ticket Update Contract',
+      '',
+      `Ticket file to update: ${ticket.path}`,
+      `Issue reference: ${ticket.label}`,
+      '',
+      'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
+      'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
+      'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    ];
+  }
+
+  const mirrorPath = ticket.provider?.materializedFiles?.ticketPath ?? ticket.path;
+  const summaryPath = ticket.provider?.materializedFiles?.runSummaryPath;
+  return [
+    '## Provider Result Contract',
+    '',
+    `Source tracker provider: ${providerKind}`,
+    `Issue reference: ${ticket.label}`,
+    ...(ticket.provider?.displayId ? [`Provider display ID: ${ticket.provider.displayId}`] : []),
+    ...(ticket.provider?.url ? [`Provider URL: ${ticket.provider.url}`] : []),
+    ...(mirrorPath ? [`Managed local mirror: ${mirrorPath}`] : []),
+    ...(summaryPath ? [`Run summary artifact: ${summaryPath}`] : []),
+    '',
+    'Before exiting, update the managed local mirror or run summary artifact with the final status and reviewer-ready AFK summary details.',
+    'AFK will sync the local run result back to the source tracker after completion; do not attempt to call the source tracker directly.',
+    'The local result MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    ...(ticket.provider?.runResultInstructions?.length ? ['', ...ticket.provider.runResultInstructions] : []),
+  ];
 }
 
 function buildSnapshotLines(snapshot?: AfkStateSnapshot): string[] {

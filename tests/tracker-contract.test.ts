@@ -42,6 +42,12 @@ test('converts provider work items to scheduler ticket records', () => {
     status: 'ready-for-agent',
     executorAfk: false,
     dependsOn: ['tracker-provider-contract/00-prereq', 'other-feature/02-external'],
+    provider: {
+      kind: 'linear-graphql',
+      id: 'LIN-42',
+      displayId: 'LIN-42',
+      url: 'https://linear.app/team/issue/LIN-42',
+    },
   });
 });
 

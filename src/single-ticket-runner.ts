@@ -321,7 +321,7 @@ export class SingleTicketRunner {
         if (!latestExecutionResult)
           return { scheduled: false, message: 'No execution result available for review', outcome: 'not-scheduled' };
         const executionForReview = latestExecutionResult;
-        const updatedTicketContent = this.readTicketContent(ticket.path);
+        const updatedTicketContent = this.readRunResultContent(ticket, latestExecutionResult);
         if (updatedTicketContent === null) {
           return this.handoffForTicketReadFailure(ticket.label, record, options, sessionId);
         }
@@ -989,11 +989,52 @@ export class SingleTicketRunner {
   }
 
   private readTicketContent(ticketPath: string): string | null {
+    if (!ticketPath) return null;
     try {
       return readFileSync(ticketPath, 'utf8');
     } catch {
       return null;
     }
+  }
+
+  private readRunResultContent(
+    ticket: LaunchPlan['tickets'][number],
+    executionResult: AgentExecutionResult,
+  ): string | null {
+    if ((ticket.provider?.kind ?? 'scratch') === 'scratch') return this.readTicketContent(ticket.path);
+    const runSummaryPath = ticket.provider?.materializedFiles?.runSummaryPath;
+    const runSummaryContent = this.readTicketContent(runSummaryPath ?? '');
+    if (runSummaryContent !== null)
+      return this.buildProviderRunResultContent(ticket, [
+        runSummaryPath ? `Run summary artifact: ${runSummaryPath}` : undefined,
+        '',
+        runSummaryContent.trimEnd(),
+      ]);
+    const mirrorPath = ticket.provider?.materializedFiles?.ticketPath ?? ticket.path;
+    const updatedTicketContent = this.readTicketContent(mirrorPath);
+    if (updatedTicketContent !== null)
+      return this.buildProviderRunResultContent(ticket, [
+        mirrorPath ? `Managed local mirror: ${mirrorPath}` : undefined,
+        '',
+        updatedTicketContent.trimEnd(),
+      ]);
+    const output = executionResult.output?.join('\n').trim();
+    return this.buildProviderRunResultContent(ticket, [output ? `\n## Execution Output\n\n${output}` : undefined]);
+  }
+
+  private buildProviderRunResultContent(
+    ticket: LaunchPlan['tickets'][number],
+    contentLines: Array<string | undefined>,
+  ): string {
+    return [
+      `Provider-backed ticket: ${ticket.label}`,
+      `Provider: ${ticket.provider?.kind ?? 'unknown'}`,
+      ticket.provider?.displayId ? `Provider display ID: ${ticket.provider.displayId}` : undefined,
+      ticket.provider?.url ? `Provider URL: ${ticket.provider.url}` : undefined,
+      ...contentLines,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
   }
 
   private readAfkInstructions(repoRoot: string): string | undefined {
