@@ -145,8 +145,14 @@ export function linearFeaturesToTicketRecords(features: LinearParentFeature[]): 
           label: `${feature.featureSlug}/${issueName}`,
           status: 'ready-for-agent',
           executorAfk: true,
-          dependsOn: item.dependsOn.map(linearIssueSlug).filter(Boolean),
+          dependsOn: (item.dependsOn ?? []).map(linearIssueSlug).filter(Boolean),
           source: 'linear' as const,
+          linear: {
+            parentKey: feature.key,
+            issueKey: item.key,
+            parentBranchName: feature.branchName,
+            issueBranchName: item.branchName,
+          },
           content: linearTicketContent(feature, item),
           providerIdentity: {
             provider: 'linear' as const,
@@ -571,9 +577,12 @@ export async function runAfk(
     try {
       checkouts = checkoutFeatures.map((feature) => {
         const stackParent = workspaceGraph.features[feature]?.stackParent;
+        const linearTicket = selectedTickets.find((ticket) => ticket.feature === feature && ticket.source === 'linear');
         return worktreePreparationService.prepare({
           repoRoot,
           featureSlug: feature,
+          linearIssueKey: linearTicket?.linear?.parentKey,
+          linearIssueBranchName: linearTicket?.linear?.parentBranchName,
           baseRef: stackParent ? stackParent : undefined,
           selectedTicketPaths: selectedTickets
             .filter((ticket) => ticket.feature === feature && !isLinearTicket(ticket))
@@ -778,6 +787,7 @@ export async function runAfk(
         wave: number,
         issueNames: string[],
         issueWorktreePaths: Record<string, string>,
+        issueCheckouts: Record<string, ReturnType<ScratchWorktreeService['createScratchWorktree']>>,
       ) => {
         const featureCheckout = checkoutsByFeature[feature];
         if (!featureCheckout) return;
@@ -787,7 +797,10 @@ export async function runAfk(
           return {
             feature,
             issueName,
-            branchName: `afk/${feature}/${issueName}`,
+            branchName:
+              issueCheckouts[issueName]?.effectiveBranchName ??
+              ticketSnapshot?.branchName ??
+              `afk/${feature}/${issueName}`,
             worktreePath: issueWorktreePaths[issueName] ?? ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
             dependsOn: ticketRecord?.dependsOn,
             metadataPath: path.join(

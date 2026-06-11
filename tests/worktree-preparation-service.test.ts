@@ -83,6 +83,37 @@ test('creates or reuses a persistent local worktree and branch', () => {
   );
 });
 
+test('prefers safe Linear branch names for feature checkouts', () => {
+  const repoRoot = createRepo('afk-worktree-linear-branch-');
+
+  const result = new WorktreePreparationService().prepare({
+    repoRoot,
+    featureSlug: 'eng-100',
+    linearIssueKey: 'ENG-100',
+    linearIssueBranchName: 'raven/eng-100-parent-feature',
+  });
+
+  assert.equal(result.defaultBranchName, 'afk/eng-100');
+  assert.equal(result.effectiveBranchName, 'raven/eng-100-parent-feature');
+  assert.equal(result.effectiveWorktreeName, 'raven-eng-100-parent-feature');
+  assert.match(git(repoRoot, ['branch', '--list', 'raven/eng-100-parent-feature']), /raven\/eng-100-parent-feature/);
+});
+
+test('falls back to Linear issue key when provided feature branch name is unsafe', () => {
+  const repoRoot = createRepo('afk-worktree-linear-unsafe-');
+
+  const result = new WorktreePreparationService().prepare({
+    repoRoot,
+    featureSlug: 'eng-200',
+    linearIssueKey: 'ENG-200',
+    linearIssueBranchName: '../unsafe branch',
+  });
+
+  assert.equal(result.effectiveBranchName, 'afk/eng-200');
+  assert.equal(result.effectiveWorktreeName, 'afk-eng-200');
+  assert.match(git(repoRoot, ['branch', '--list', 'afk/eng-200']), /afk\/eng-200/);
+});
+
 test('fails clearly when git rejects the requested branch state', () => {
   const repoRoot = createRepo('afk-worktree-fail-');
   git(repoRoot, ['branch', 'conflict']);

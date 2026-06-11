@@ -26,6 +26,7 @@ export interface LinearIssueSummary {
   identifier: string;
   url: string;
   title: string;
+  branchName?: string | null;
   description?: string | null;
   state: LinearIssueState;
   labels: LinearIssueLabel[];
@@ -54,6 +55,7 @@ export interface LinearParentFeature {
   title: string;
   status: string;
   featureSlug: string;
+  branchName?: string | null;
   workItems: LinearProviderWorkItem[];
 }
 
@@ -65,16 +67,18 @@ export interface LinearProviderWorkItem {
   title: string;
   body: string;
   status: string;
+  branchName?: string | null;
   parent: {
     id: string;
     key: string;
     url: string;
     title: string;
     featureSlug: string;
+    branchName?: string | null;
   };
   labels: LinearIssueLabel[];
   afkLabel: LinearIssueLabel;
-  dependsOn: string[];
+  dependsOn?: string[];
 }
 
 export interface LinearConfigClient {
@@ -85,6 +89,23 @@ export interface LinearConfigClient {
 
 export interface LinearDiscoveryClient {
   findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]>;
+}
+
+interface LinearIssueGraphqlNode {
+  id: string;
+  identifier: string;
+  url: string;
+  title: string;
+  branchName?: string | null;
+  description?: string | null;
+  state: LinearIssueState;
+  labels: { nodes: LinearIssueLabel[] };
+  relations?: { nodes: LinearIssueRelation[] };
+  inverseRelations?: { nodes: LinearIssueRelation[] };
+}
+
+interface LinearParentIssueGraphqlNode extends LinearIssueGraphqlNode {
+  children: { nodes: LinearIssueGraphqlNode[] };
 }
 
 export interface ResolvedLinearConfig {
@@ -165,34 +186,22 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
   }
 
   async findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]> {
+    try {
+      return await this.findAfkParentIssuesWithBranchNames(input, true);
+    } catch (error) {
+      if (!isMissingBranchNameGraphqlError(error)) throw error;
+      return this.findAfkParentIssuesWithBranchNames(input, false);
+    }
+  }
+
+  private async findAfkParentIssuesWithBranchNames(
+    input: { teamId: string; labelId: string },
+    includeBranchNames: boolean,
+  ): Promise<LinearParentIssue[]> {
+    const branchNameField = includeBranchNames ? 'branchName' : '';
     const result = await this.request<{
       issues: {
-        nodes: Array<{
-          id: string;
-          identifier: string;
-          url: string;
-          title: string;
-          description?: string | null;
-          state: LinearIssueState;
-          labels: { nodes: LinearIssueLabel[] };
-          children: {
-            nodes: Array<{
-              id: string;
-              identifier: string;
-              url: string;
-              title: string;
-              description?: string | null;
-              state: LinearIssueState;
-              labels: { nodes: LinearIssueLabel[] };
-              relations: {
-                nodes: LinearIssueRelation[];
-              };
-              inverseRelations: {
-                nodes: LinearIssueRelation[];
-              };
-            }>;
-          };
-        }>;
+        nodes: LinearParentIssueGraphqlNode[];
       };
     }>(
       `query AfkDiscoverLinearIssues($teamId: String!, $labelId: String!) {
@@ -209,6 +218,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
             identifier
             url
             title
+            ${branchNameField}
             description
             state { id name }
             labels { nodes { id name } }
@@ -218,6 +228,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
                 identifier
                 url
                 title
+                ${branchNameField}
                 description
                 state { id name }
                 labels { nodes { id name } }
@@ -242,13 +253,19 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
     );
 
     return result.issues.nodes.map((issue) => ({
-      ...issue,
+      id: issue.id,
+      identifier: issue.identifier,
+      url: issue.url,
+      title: issue.title,
+      ...(issue.branchName ? { branchName: issue.branchName } : {}),
+      description: issue.description,
+      state: issue.state,
       labels: issue.labels.nodes,
       children: issue.children.nodes.map((child) => ({
         ...child,
         labels: child.labels.nodes,
-        relations: child.relations.nodes,
-        inverseRelations: child.inverseRelations.nodes,
+        relations: child.relations?.nodes ?? [],
+        inverseRelations: child.inverseRelations?.nodes ?? [],
       })),
     }));
   }
@@ -277,6 +294,12 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
 
     return payload.data;
   }
+}
+
+function isMissingBranchNameGraphqlError(error: unknown): boolean {
+  return (
+    error instanceof Error && /branchName/.test(error.message) && /Cannot query field|Unknown field/.test(error.message)
+  );
 }
 
 export async function resolveLinearConfig(options: ResolveLinearConfigOptions): Promise<ResolvedLinearConfig> {
@@ -350,6 +373,7 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
       title: parent.title,
       status: parent.state.name,
       featureSlug,
+      ...(parent.branchName ? { branchName: parent.branchName } : {}),
       workItems: eligibleChildren.map((child) => {
         const afkLabel = child.labels.find((label) => label.id === options.resolvedConfig.labelId);
         if (!afkLabel) throw new Error(`Linear issue ${child.identifier} did not include the configured AFK label.`);
@@ -373,12 +397,14 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
           title: child.title,
           body: child.description ?? '',
           status: child.state.name,
+          ...(child.branchName ? { branchName: child.branchName } : {}),
           parent: {
             id: parent.id,
             key: parent.identifier,
             url: parent.url,
             title: parent.title,
             featureSlug,
+            ...(parent.branchName ? { branchName: parent.branchName } : {}),
           },
           labels: child.labels,
           afkLabel,

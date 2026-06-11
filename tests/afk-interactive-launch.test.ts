@@ -107,6 +107,7 @@ test('converts Linear parent work items into selectable launch tickets', () => {
       label: ticket.label,
       source: ticket.source,
       status: ticket.status,
+      linear: ticket.linear,
     })),
     [
       {
@@ -116,6 +117,12 @@ test('converts Linear parent work items into selectable launch tickets', () => {
         label: 'eng-100/eng-101',
         source: 'linear',
         status: 'ready-for-agent',
+        linear: {
+          parentKey: 'ENG-100',
+          issueKey: 'ENG-101',
+          parentBranchName: undefined,
+          issueBranchName: undefined,
+        },
       },
     ],
   );

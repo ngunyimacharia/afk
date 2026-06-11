@@ -9,6 +9,12 @@ export interface TicketRecord {
   executorAfk: boolean;
   dependsOn?: string[];
   source?: 'scratch' | 'linear';
+  linear?: {
+    parentKey: string;
+    issueKey: string;
+    parentBranchName?: string | null;
+    issueBranchName?: string | null;
+  };
   content?: string;
   providerIdentity?: LinearProviderIdentity;
 }
