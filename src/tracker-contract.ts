@@ -40,6 +40,8 @@ export interface TrackerCapabilities {
   appendComment: boolean;
   materialize: boolean;
   applyRunResult: boolean;
+  summarize: boolean;
+  cleanupIssues: boolean;
   parentChildIssues: boolean;
 }
 

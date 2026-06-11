@@ -103,6 +103,8 @@ test('tracker provider contract exposes operations needed by external issue prov
       appendComment: true,
       materialize: true,
       applyRunResult: true,
+      summarize: true,
+      cleanupIssues: true,
       parentChildIssues: true,
     },
   } satisfies Pick<TrackerProvider, 'kind' | 'capabilities'>;
@@ -110,4 +112,6 @@ test('tracker provider contract exposes operations needed by external issue prov
   assert.equal(provider.kind, 'linear-graphql');
   assert.equal(provider.capabilities.parentChildIssues, true);
   assert.equal(provider.capabilities.materialize, true);
+  assert.equal(provider.capabilities.summarize, true);
+  assert.equal(provider.capabilities.cleanupIssues, true);
 });

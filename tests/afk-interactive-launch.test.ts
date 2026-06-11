@@ -544,6 +544,8 @@ function makeFakeTrackerProvider(items: TrackerWorkItem[]): TrackerProvider {
       appendComment: false,
       materialize: false,
       applyRunResult: false,
+      summarize: true,
+      cleanupIssues: false,
       parentChildIssues: true,
     },
     async list() {

@@ -25,6 +25,8 @@ export class ScratchTrackerProvider implements TrackerProvider {
     appendComment: false,
     materialize: true,
     applyRunResult: false,
+    summarize: true,
+    cleanupIssues: true,
     parentChildIssues: false,
   };
 

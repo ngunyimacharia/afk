@@ -34,6 +34,30 @@ test('pairs terminal tickets with attributable runtime artifacts only', () => {
   assert.equal(plan.terminalTargets[0]?.metadataPath?.endsWith('feat-done.json'), true);
 });
 
+test('plans scratch issue deletion separately from runtime artifact cleanup', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  mkdirSync(issuesDir, { recursive: true });
+  mkdirSync(metadataDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, 'done.md'), '---\nstatus: done\n---\n');
+  writeFileSync(path.join(logsDir, 'feat-done.log'), 'log');
+  writeFileSync(path.join(metadataDir, 'feat-done.json'), '{}');
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+
+  assert.deepEqual(
+    plan.issueDeletionTargets.map((item) => path.basename(item.issuePath)),
+    ['done.md'],
+  );
+  assert.deepEqual(
+    plan.runtimeArtifactTargets.map((item) => path.basename(item.logPath ?? '')),
+    ['feat-done.log'],
+  );
+  assert.equal(plan.terminalTargets.length, 1);
+});
+
 test('preserves handoff tickets with runtime metadata RUN_STATUS handoff', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');

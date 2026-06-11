@@ -24,6 +24,8 @@ test('executes only approved cleanup targets', () => {
   const result = new CleanupExecutor().execute(
     {
       terminalTargets: [{ feature: 'feat', issueName: 'done', issuePath, logPath, reason: 'done' }],
+      issueDeletionTargets: [{ feature: 'feat', issueName: 'done', issuePath, reason: 'done' }],
+      runtimeArtifactTargets: [{ feature: 'feat', issueName: 'done', logPath }],
       pendingPostMergeCleanupTargets: [],
       preservedIssues: [],
       preservedArtifacts: [],
