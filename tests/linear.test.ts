@@ -426,6 +426,51 @@ test('records Linear sync failures without deleting local mirrors', async () => 
   assert.match(metadata.LINEAR_SYNC_FAILURES?.[0] ?? '', /synthetic Linear failure/);
 });
 
+test('syncs terminal Linear status when reviewer configuration is missing', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-missing-reviewer-sync-'));
+  const store = new RuntimeStore({ repoRoot });
+  const mirrorPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors', 'eng-200-eng-201.md');
+  mkdirSync(path.dirname(mirrorPath), { recursive: true });
+  writeFileSync(mirrorPath, '# Linear mirror\n');
+  const client = new FakeLinearRunSyncClient();
+  const runner = new SingleTicketRunner(
+    store,
+    { execute: async () => ({ status: 'completed' }) },
+    {},
+    { resolvedConfig: resolvedLinearConfig(), client },
+  );
+
+  const result = await runner.launch({
+    repoRoot,
+    model: { id: 'model-1' },
+    tickets: [{ ...linearTicket(), path: mirrorPath, content: undefined }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'eng-200',
+      defaultWorktreeName: 'eng-200',
+      effectiveWorktreeName: 'eng-200',
+      defaultBranchName: 'eng-200',
+      effectiveBranchName: 'eng-200',
+      worktreePath: repoRoot,
+    },
+  });
+
+  assert.equal(result.outcome, 'blocked');
+  assert.deepEqual(client.stateUpdates, [
+    { issueId: 'child-one-eligible', stateId: 'state-running' },
+    { issueId: 'child-one-eligible', stateId: 'state-handoff' },
+  ]);
+  assert.match(client.comments[0]?.body ?? '', /Outcome: blocked/);
+  assert.match(client.comments[0]?.body ?? '', /Next action: configure reviewer model and prompt/);
+  const metadata = JSON.parse(
+    readFileSync(
+      path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'eng-200-eng-201.json'),
+      'utf8',
+    ),
+  ) as { LINEAR_SYNC_STATUS?: string };
+  assert.equal(metadata.LINEAR_SYNC_STATUS, 'terminal-synced');
+});
+
 class FakeLinearClient implements LinearConfigClient {
   private readonly team: LinearTeam = { id: 'team-1', key: 'ENG', name: 'Engineering' };
   private readonly label: LinearEntity = { id: 'label-1', name: 'AFK' };

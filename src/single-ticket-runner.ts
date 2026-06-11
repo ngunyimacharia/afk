@@ -113,6 +113,10 @@ export class SingleTicketRunner {
       });
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, reason);
+      await this.syncLinearTerminal(ticket, record, 'blocked', {
+        nextAction: 'configure reviewer model and prompt',
+        reviewerNotes: reason,
+      });
       this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel: ticket.label, message: reason });
       return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
     }
@@ -136,7 +140,7 @@ export class SingleTicketRunner {
     const snapshot = plan.snapshots?.[ticket.label];
     if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
     const contextMismatch = this.validateLaunchContext(plan, ticket.label);
-    if (contextMismatch) return this.handoffForLauncherContextMismatch(ticket.label, record, options, contextMismatch);
+    if (contextMismatch) return this.handoffForLauncherContextMismatch(ticket, record, options, contextMismatch);
     installCommitMessageSanitizer(plan.checkout.worktreePath);
     let prompt = buildPrompt({
       checkout: plan.checkout,
@@ -181,10 +185,10 @@ export class SingleTicketRunner {
           return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
         }
         const ticketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
-        if (ticketBudget) return this.handoffForBudget(ticket.label, record, options, ticketBudget, sessionId);
+        if (ticketBudget) return this.handoffForBudget(ticket, record, options, ticketBudget, sessionId);
         if (executeBeforeReview && fixupCycles >= budgets.fixupCycleLimit && reviewCycle > 0) {
           return this.handoffForBudget(
-            ticket.label,
+            ticket,
             record,
             options,
             {
@@ -221,7 +225,7 @@ export class SingleTicketRunner {
             this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
             const executionBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'execution', reviewCycle + 1);
             if (executionBudget)
-              return this.handoffForBudget(ticket.label, record, options, executionBudget, sessionId);
+              return this.handoffForBudget(ticket, record, options, executionBudget, sessionId);
             if (executionResult.status !== 'completed') {
               return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
                 this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -357,7 +361,7 @@ export class SingleTicketRunner {
         const executionForReview = latestExecutionResult;
         const updatedTicketContent = this.readTicketContent(ticket);
         if (updatedTicketContent === null) {
-          return this.handoffForTicketReadFailure(ticket.label, record, options, sessionId);
+          return this.handoffForTicketReadFailure(ticket, record, options, sessionId);
         }
 
         const reviewResult = await this.runtimeStore.runPhase(
@@ -394,10 +398,10 @@ export class SingleTicketRunner {
         );
         useReviewerRepairPrompt = false;
         const reviewBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'review', reviewCycle + 1);
-        if (reviewBudget) return this.handoffForBudget(ticket.label, record, options, reviewBudget, sessionId);
+        if (reviewBudget) return this.handoffForBudget(ticket, record, options, reviewBudget, sessionId);
         const afterReviewTicketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
         if (afterReviewTicketBudget)
-          return this.handoffForBudget(ticket.label, record, options, afterReviewTicketBudget, sessionId);
+          return this.handoffForBudget(ticket, record, options, afterReviewTicketBudget, sessionId);
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         if (reviewResult.status !== 'completed') {
           providerFailureCount += 1;
@@ -532,8 +536,8 @@ export class SingleTicketRunner {
             continue;
           }
           return rawReviewOutput.trim()
-            ? this.handoffForMalformedReview(ticket.label, record, options, review.raw, reviewCycle + 1, sessionId)
-            : this.handoffForEmptyReview(ticket.label, record, options, reviewCycle + 1, sessionId);
+            ? this.handoffForMalformedReview(ticket, record, options, review.raw, reviewCycle + 1, sessionId)
+            : this.handoffForEmptyReview(ticket, record, options, reviewCycle + 1, sessionId);
         }
 
         malformedAttempts = 0;
@@ -548,7 +552,7 @@ export class SingleTicketRunner {
         );
 
         if (decision.targetMismatch) {
-          return this.handoffForReviewTargetMismatch(ticket.label, record, options, reviewCycle + 1, sessionId);
+          return this.handoffForReviewTargetMismatch(ticket, record, options, reviewCycle + 1, sessionId);
         }
 
         if (decision.decision === 'approve') {
@@ -664,7 +668,7 @@ export class SingleTicketRunner {
         );
         sessionId = null;
         const fixupBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'fixup', reviewCycle);
-        if (fixupBudget) return this.handoffForBudget(ticket.label, record, options, fixupBudget, sessionId);
+        if (fixupBudget) return this.handoffForBudget(ticket, record, options, fixupBudget, sessionId);
         executeBeforeReview = true;
       }
     } catch (error) {
@@ -690,6 +694,10 @@ export class SingleTicketRunner {
       });
       this.runtimeStore.markFailed(record, 'failed');
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+      await this.syncLinearTerminal(ticket, record, 'failed', {
+        nextAction: 'investigate failed run',
+        reviewerNotes: message,
+      });
       this.emitProgress(record.metadataPath, options.onProgress, {
         ticketLabel: ticket.label,
         message: `run failed: ${message}`,
@@ -748,14 +756,8 @@ export class SingleTicketRunner {
   }
 
   private handoffForBudget(
-    ticketLabel: string,
-    record: {
-      metadataPath: string;
-      logPath: string;
-      doneSentinelPath: string;
-      failedSentinelPath: string;
-      handoffSentinelPath: string;
-    },
+    ticket: TicketRecord,
+    record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     event: BudgetExceededEvent,
     sessionId: string | null,
@@ -781,7 +783,7 @@ export class SingleTicketRunner {
         classification: event.budgetName === 'fixup-cycle-cap' ? 'real-finding-handoff' : undefined,
       }),
     );
-    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
       if (implementationCompleted) {
         this.runtimeStore.markHandoff(record, reason);
       } else {
@@ -789,28 +791,26 @@ export class SingleTicketRunner {
       }
       this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${reason}`);
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      await this.syncLinearTerminal(ticket, record, implementationCompleted ? 'handoff' : 'blocked', {
+        nextAction: 'human review required',
+        reviewerNotes: reason,
+      });
       this.emitProgress(record.metadataPath, options.onProgress, {
-        ticketLabel,
+        ticketLabel: ticket.label,
         message: `budget handoff: ${reason}`,
         sessionId,
       });
       return {
         scheduled: true,
-        message: `Scheduled ${ticketLabel}`,
+        message: `Scheduled ${ticket.label}`,
         outcome: implementationCompleted ? 'handoff' : 'blocked',
       };
     });
   }
 
   private handoffForMalformedReview(
-    ticketLabel: string,
-    record: {
-      metadataPath: string;
-      logPath: string;
-      doneSentinelPath: string;
-      failedSentinelPath: string;
-      handoffSentinelPath: string;
-    },
+    ticket: TicketRecord,
+    record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     raw: string,
     cycle: number,
@@ -847,28 +847,26 @@ export class SingleTicketRunner {
         malformedOutputSnippet,
       }),
     );
-    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      await this.syncLinearTerminal(ticket, record, 'blocked', {
+        nextAction: 'human review required',
+        reviewerNotes: malformedHandoffReason,
+      });
       this.emitProgress(record.metadataPath, options.onProgress, {
-        ticketLabel,
+        ticketLabel: ticket.label,
         message: 'malformed reviewer output handoff',
         sessionId,
       });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
+      return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
     });
   }
 
   private handoffForEmptyReview(
-    ticketLabel: string,
-    record: {
-      metadataPath: string;
-      logPath: string;
-      doneSentinelPath: string;
-      failedSentinelPath: string;
-      handoffSentinelPath: string;
-    },
+    ticket: TicketRecord,
+    record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     cycle: number,
     sessionId: string | null,
@@ -903,28 +901,26 @@ export class SingleTicketRunner {
         malformedOutputSnippet: '',
       }),
     );
-    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'empty reviewer output handoff: reviewer-empty-output');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      await this.syncLinearTerminal(ticket, record, 'blocked', {
+        nextAction: 'human review required',
+        reviewerNotes: reason,
+      });
       this.emitProgress(record.metadataPath, options.onProgress, {
-        ticketLabel,
+        ticketLabel: ticket.label,
         message: 'empty reviewer output handoff',
         sessionId,
       });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
+      return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
     });
   }
 
   private handoffForReviewTargetMismatch(
-    ticketLabel: string,
-    record: {
-      metadataPath: string;
-      logPath: string;
-      doneSentinelPath: string;
-      failedSentinelPath: string;
-      handoffSentinelPath: string;
-    },
+    ticket: TicketRecord,
+    record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     cycle: number,
     sessionId: string | null,
@@ -957,28 +953,26 @@ export class SingleTicketRunner {
         findings: [],
       }),
     );
-    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'review target mismatch handoff: review-target-mismatch');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
+      await this.syncLinearTerminal(ticket, record, 'blocked', {
+        nextAction: 'human review required',
+        reviewerNotes: reason,
+      });
       this.emitProgress(record.metadataPath, options.onProgress, {
-        ticketLabel,
+        ticketLabel: ticket.label,
         message: 'review target mismatch handoff',
         sessionId,
       });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
+      return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
     });
   }
 
   private handoffForLauncherContextMismatch(
-    ticketLabel: string,
-    record: {
-      metadataPath: string;
-      logPath: string;
-      doneSentinelPath: string;
-      failedSentinelPath: string;
-      handoffSentinelPath: string;
-    },
+    ticket: TicketRecord,
+    record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     reason: string,
   ): Promise<SingleTicketRunResult> {
@@ -988,24 +982,25 @@ export class SingleTicketRunner {
       FAILURE_KIND: LAUNCHER_CONTEXT_MISMATCH_FAILURE_KIND,
       RUN_STATUS: 'blocked',
     });
-    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, `launcher context mismatch: ${reason}`);
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
-      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: 'launcher context mismatch' });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
+      await this.syncLinearTerminal(ticket, record, 'blocked', {
+        nextAction: 'human review required',
+        reviewerNotes: reason,
+      });
+      this.emitProgress(record.metadataPath, options.onProgress, {
+        ticketLabel: ticket.label,
+        message: 'launcher context mismatch',
+      });
+      return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
     });
   }
 
   private handoffForTicketReadFailure(
-    ticketLabel: string,
-    record: {
-      metadataPath: string;
-      logPath: string;
-      doneSentinelPath: string;
-      failedSentinelPath: string;
-      handoffSentinelPath: string;
-    },
+    ticket: TicketRecord,
+    record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     sessionId: string | null,
   ): Promise<SingleTicketRunResult> {
@@ -1016,11 +1011,15 @@ export class SingleTicketRunner {
       FAILURE_KIND: TICKET_READ_FAILURE_KIND,
       RUN_STATUS: 'blocked',
     });
-    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+    return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, `ticket read failure: ${reason}`);
-      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel, message: reason, sessionId });
-      return { scheduled: true, message: `Scheduled ${ticketLabel}`, outcome: 'blocked' };
+      await this.syncLinearTerminal(ticket, record, 'blocked', {
+        nextAction: 'human review required',
+        reviewerNotes: reason,
+      });
+      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel: ticket.label, message: reason, sessionId });
+      return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
     });
   }
 
