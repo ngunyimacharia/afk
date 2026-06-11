@@ -20,6 +20,7 @@ const DEFAULT_AFK_INSTRUCTIONS = [
 export function buildPrompt(input: PromptInput): string {
   const snapshotLines = buildSnapshotLines(input.snapshot);
   const updateContractLines = buildTicketUpdateContractLines(input.ticket);
+  const completionChecklistLines = buildCompletionChecklistLines(input.ticket);
   return [
     input.afkInstructions?.trim() || DEFAULT_AFK_INSTRUCTIONS,
     '',
@@ -45,17 +46,8 @@ export function buildPrompt(input: PromptInput): string {
     '',
     ...updateContractLines,
     '',
-    '## Scratch Artifact Completion Checklist',
-    '',
-    'Before exiting, confirm ALL of the following:',
-    '- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).',
-    '- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.',
-    '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
-    '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
-    '- [ ] Source code changes are committed using conventional commits.',
-    '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
-    '- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.',
-    '',
+    ...completionChecklistLines,
+    ...(completionChecklistLines.length ? [''] : []),
     '## Verification Budget',
     '',
     '1. Run the verification commands listed in the ticket.',
@@ -72,6 +64,22 @@ export function buildPrompt(input: PromptInput): string {
     input.ticketContent.trimEnd(),
     '```',
   ].join('\n');
+}
+
+function buildCompletionChecklistLines(ticket: TicketRecord): string[] {
+  if ((ticket.provider?.kind ?? 'scratch') !== 'scratch') return [];
+  return [
+    '## Scratch Artifact Completion Checklist',
+    '',
+    'Before exiting, confirm ALL of the following:',
+    '- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).',
+    '- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.',
+    '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
+    '- [ ] Source code changes are committed using conventional commits.',
+    '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
+    '- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.',
+  ];
 }
 
 function buildTicketUpdateContractLines(ticket: TicketRecord): string[] {

@@ -275,6 +275,7 @@ test('sends ticket file summary instructions to the execution provider', async (
 
 test('validates external-provider completion without scratch issue file', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-external-provider-'));
+  const runSummaryPath = path.join(repoRoot, '.scratch', 'feat', 'provider-results', 'LIN-42.md');
   const store = new RuntimeStore({ repoRoot });
   const modes: string[] = [];
   const runner = new SingleTicketRunner(store, {
@@ -282,7 +283,11 @@ test('validates external-provider completion without scratch issue file', async 
       modes.push(invocationMode ?? 'execution');
       if (invocationMode === 'reviewer') {
         assert.match(prompt, /Provider-backed ticket: feat\/LIN-42/);
-        assert.match(prompt, /Implementation completed and local provider result recorded/);
+        assert.match(
+          prompt,
+          new RegExp(`Run summary artifact: ${runSummaryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+        );
+        assert.match(prompt, /Run summary from provider materialization/);
         return {
           status: 'completed',
           sessionId: 'session-review',
@@ -292,6 +297,11 @@ test('validates external-provider completion without scratch issue file', async 
       }
       assert.match(prompt, /## Provider Result Contract/);
       assert.match(prompt, /AFK will sync the local run result back to the source tracker/);
+      mkdirSync(path.dirname(runSummaryPath), { recursive: true });
+      writeFileSync(
+        runSummaryPath,
+        '## AFK Summary\n\n### Reviewer Notes\n\nRun summary from provider materialization.\n',
+      );
       return {
         status: 'completed',
         sessionId: 'session-external',
@@ -317,7 +327,7 @@ test('validates external-provider completion without scratch issue file', async 
           id: 'LIN-42',
           displayId: 'LIN-42',
           materializedFiles: {
-            runSummaryPath: path.join(repoRoot, '.scratch', 'feat', 'provider-results', 'LIN-42.md'),
+            runSummaryPath,
           },
         },
       },

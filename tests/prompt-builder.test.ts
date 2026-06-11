@@ -99,6 +99,8 @@ test('external-provider prompt uses managed mirror result contract', () => {
   assert.match(prompt, /AFK will sync the local run result back to the source tracker/);
   assert.match(prompt, /Record the provider run result for later sync/);
   assert.doesNotMatch(prompt, /Ticket file to update:/);
+  assert.doesNotMatch(prompt, /## Scratch Artifact Completion Checklist/);
+  assert.doesNotMatch(prompt, /ticket YAML frontmatter `status` field is updated to `done`/);
 });
 
 test('afk prompt includes budget, handoff guardrails, and worktree disappearance rule', () => {

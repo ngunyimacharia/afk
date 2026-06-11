@@ -1001,16 +1001,31 @@ export class SingleTicketRunner {
     ticket: LaunchPlan['tickets'][number],
     executionResult: AgentExecutionResult,
   ): string | null {
+    if ((ticket.provider?.kind ?? 'scratch') === 'scratch') return this.readTicketContent(ticket.path);
+    const runSummaryPath = ticket.provider?.materializedFiles?.runSummaryPath;
+    const runSummaryContent = this.readTicketContent(runSummaryPath ?? '');
+    if (runSummaryContent !== null)
+      return this.buildProviderRunResultContent(ticket, [
+        runSummaryPath ? `Run summary artifact: ${runSummaryPath}` : undefined,
+        '',
+        runSummaryContent.trimEnd(),
+      ]);
     const updatedTicketContent = this.readTicketContent(ticket.path);
     if (updatedTicketContent !== null) return updatedTicketContent;
-    if ((ticket.provider?.kind ?? 'scratch') === 'scratch') return null;
     const output = executionResult.output?.join('\n').trim();
+    return this.buildProviderRunResultContent(ticket, [output ? `\n## Execution Output\n\n${output}` : undefined]);
+  }
+
+  private buildProviderRunResultContent(
+    ticket: LaunchPlan['tickets'][number],
+    contentLines: Array<string | undefined>,
+  ): string {
     return [
       `Provider-backed ticket: ${ticket.label}`,
       `Provider: ${ticket.provider?.kind ?? 'unknown'}`,
       ticket.provider?.displayId ? `Provider display ID: ${ticket.provider.displayId}` : undefined,
       ticket.provider?.url ? `Provider URL: ${ticket.provider.url}` : undefined,
-      output ? `\n## Execution Output\n\n${output}` : undefined,
+      ...contentLines,
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n');
