@@ -230,7 +230,20 @@ test('linear-plan command returns machine-readable created issue output', async 
   const manifestPath = path.join(repoRoot, 'manifest.json');
   writeFileSync(
     path.join(repoRoot, 'afk.json'),
-    JSON.stringify({ testsEnabled: false, staticCheckCommands: [], linear: { teamId: 'team-1' } }),
+    JSON.stringify({
+      testsEnabled: false,
+      staticCheckCommands: [],
+      linear: {
+        teamId: 'team-1',
+        labelName: 'AFK',
+        workflowStates: {
+          ready: 'Ready for AFK',
+          running: 'AFK Running',
+          done: 'Done',
+          handoff: 'Needs Human',
+        },
+      },
+    }),
   );
   writeFileSync(manifestPath, JSON.stringify(validManifest));
   const originalArgv = process.argv;
