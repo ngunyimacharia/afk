@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   ClaudeKimiAgentExecutionProvider,
+  CodexAgentExecutionProvider,
   decideAfkPermission,
   FakeAgentExecutionProvider,
   OpenCodeAgentExecutionProvider,
@@ -65,6 +66,22 @@ test('opencode provider maps successful execution to completed result', async ()
     'feat/01: created opencode session session-42',
     'feat/01: opencode session completed',
   ]);
+});
+
+test('codex provider marks successful sessions as not removable', async () => {
+  const provider = new CodexAgentExecutionProvider({
+    run: async () => ({ sessionId: 'codex-thread', output: ['done'], finalMessageText: 'done' }),
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'codex/default' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'run',
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.sessionId, 'codex-thread');
+  assert.equal(result.removable, false);
 });
 
 test('opencode reviewer invocation does not force the silent review agent', async () => {
