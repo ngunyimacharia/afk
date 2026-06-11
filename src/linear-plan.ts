@@ -130,6 +130,7 @@ export function createLinearProviderFromConfig(
   const config = loadAfkProjectConfig(repoRoot);
   if (!config.config) return { errors: config.errors };
   if (!config.config.linear) return { errors: ['Linear config missing: add linear.teamId to afk.json.'] };
+  if (!config.config.linear.teamId) return { errors: ['Linear team ID missing: add linear.teamId to afk.json.'] };
   const apiKeyEnv = config.config.linear.apiKeyEnv ?? 'LINEAR_API_KEY';
   const apiKey = env[apiKeyEnv];
   if (!apiKey) return { errors: [`Linear API key missing: set ${apiKeyEnv}.`] };
