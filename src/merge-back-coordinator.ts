@@ -71,6 +71,14 @@ export interface MergeBackCleanupResult {
   error?: string;
 }
 
+interface MergeConflictDiagnostics {
+  conflictPaths: string[];
+  statusShort: string;
+  markersRemain: boolean;
+  unmergedIndexPaths: string[];
+  summary: string;
+}
+
 export interface MergeBackCoordinatorDependencies {
   agentExecutionProvider: AgentExecutionProvider;
   runtimeStore: RuntimeStore;
@@ -222,10 +230,12 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
           return { success: true, reason: '' };
         }
 
-        const conflictPaths = getConflictPaths(repoRoot);
         const budget = this.deps.conflictResolutionBudget ?? 3;
+        let finalDiagnostics = getMergeConflictDiagnostics(repoRoot);
 
         for (let attempt = 1; attempt <= budget; attempt++) {
+          const diagnostics = getMergeConflictDiagnostics(repoRoot);
+          finalDiagnostics = diagnostics;
           const ticket: MergeBackTicket = {
             feature,
             issueName: 'base-merge',
@@ -234,14 +244,14 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             metadataPath: '',
             logPath: '',
           };
-          const prompt = buildConflictResolutionPrompt(ticket, conflictPaths, attempt, budget);
+          const prompt = buildConflictResolutionPrompt(ticket, diagnostics, attempt, budget);
           const agentResult = await this.invokeReviewerAgentForBaseMerge(input, prompt);
 
           if (agentResult.status === 'completed') {
-            const remainingConflicts = getConflictPaths(repoRoot);
-            const markersRemain = hasConflictMarkers(repoRoot);
+            const remainingDiagnostics = getMergeConflictDiagnostics(repoRoot);
+            finalDiagnostics = remainingDiagnostics;
 
-            if (remainingConflicts.length === 0 && !markersRemain) {
+            if (remainingDiagnostics.conflictPaths.length === 0 && !remainingDiagnostics.markersRemain) {
               const readiness = runReadinessCommands({
                 cwd: repoRoot,
                 executor: this.deps.readinessExecutor,
@@ -259,7 +269,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
                 return {
                   success: false,
                   reason: `Readiness checks failed after conflict resolution: ${failed.command}`,
-                  conflictPaths,
+                  conflictPaths: remainingDiagnostics.conflictPaths,
                 };
               }
               continue;
@@ -270,7 +280,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
               return {
                 success: false,
                 reason: `Conflicts remain after ${budget} resolution attempts`,
-                conflictPaths: remainingConflicts,
+                conflictPaths: remainingDiagnostics.conflictPaths,
               };
             }
             continue;
@@ -281,13 +291,13 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             return {
               success: false,
               reason: `Reviewer agent failed to resolve conflicts after ${budget} attempts`,
-              conflictPaths,
+              conflictPaths: finalDiagnostics.conflictPaths,
             };
           }
         }
 
         abortMerge(repoRoot);
-        return { success: false, reason: 'Unexpected merge failure', conflictPaths };
+        return { success: false, reason: 'Unexpected merge failure', conflictPaths: finalDiagnostics.conflictPaths };
       } finally {
         if (stashed) {
           try {
@@ -312,6 +322,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
       this.deps.runtimeStore.updateMetadata(ticket.metadataPath, {
         MERGE_STATUS: 'failed',
         MERGE_CONFLICT_PATHS: null,
+        MERGE_FINAL_DIAGNOSTICS: null,
         MERGE_RESOLUTION_OUTPUT: null,
       });
       this.deps.runtimeStore.appendLog(
@@ -328,6 +339,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
       this.deps.runtimeStore.updateMetadata(ticket.metadataPath, {
         MERGE_STATUS: 'merged',
         MERGE_CONFLICT_PATHS: null,
+        MERGE_FINAL_DIAGNOSTICS: null,
         MERGE_RESOLUTION_OUTPUT: null,
       });
       this.deps.runtimeStore.appendLog(
@@ -337,18 +349,20 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
       return { success: true, reason: '' };
     }
 
-    const conflictPaths = getConflictPaths(input.featureWorktreePath);
     const budget = this.deps.conflictResolutionBudget ?? 3;
+    let finalDiagnostics = getMergeConflictDiagnostics(input.featureWorktreePath);
 
     for (let attempt = 1; attempt <= budget; attempt++) {
-      const prompt = buildConflictResolutionPrompt(ticket, conflictPaths, attempt, budget);
+      const diagnostics = getMergeConflictDiagnostics(input.featureWorktreePath);
+      finalDiagnostics = diagnostics;
+      const prompt = buildConflictResolutionPrompt(ticket, diagnostics, attempt, budget);
       const agentResult = await this.invokeReviewerAgent(input, ticket, prompt);
 
       if (agentResult.status === 'completed') {
-        const remainingConflicts = getConflictPaths(input.featureWorktreePath);
-        const markersRemain = hasConflictMarkers(input.featureWorktreePath);
+        const remainingDiagnostics = getMergeConflictDiagnostics(input.featureWorktreePath);
+        finalDiagnostics = remainingDiagnostics;
 
-        if (remainingConflicts.length === 0 && !markersRemain) {
+        if (remainingDiagnostics.conflictPaths.length === 0 && !remainingDiagnostics.markersRemain) {
           const readiness = runReadinessCommands({
             cwd: input.featureWorktreePath,
             executor: this.deps.readinessExecutor,
@@ -361,6 +375,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             this.deps.runtimeStore.updateMetadata(ticket.metadataPath, {
               MERGE_STATUS: 'conflict-resolved',
               MERGE_CONFLICT_PATHS: null,
+              MERGE_FINAL_DIAGNOSTICS: null,
               MERGE_RESOLUTION_OUTPUT: null,
             });
             this.deps.runtimeStore.appendLog(
@@ -379,7 +394,8 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             abortMerge(input.featureWorktreePath);
             this.deps.runtimeStore.updateMetadata(ticket.metadataPath, {
               MERGE_STATUS: 'failed',
-              MERGE_CONFLICT_PATHS: conflictPaths,
+              MERGE_CONFLICT_PATHS: remainingDiagnostics.conflictPaths,
+              MERGE_FINAL_DIAGNOSTICS: remainingDiagnostics,
               MERGE_RESOLUTION_OUTPUT: agentResult.output?.join('\n') ?? null,
             });
             this.deps.runtimeStore.appendLog(
@@ -390,12 +406,13 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
                 branch: ticket.branchName,
                 reason: `Readiness checks failed after conflict resolution: ${failed.command}`,
                 attempt,
+                diagnostics: remainingDiagnostics,
               }),
             );
             return {
               success: false,
               reason: `Readiness checks failed after conflict resolution: ${failed.command}`,
-              conflictPaths,
+              conflictPaths: remainingDiagnostics.conflictPaths,
             };
           }
           continue;
@@ -405,7 +422,8 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
           abortMerge(input.featureWorktreePath);
           this.deps.runtimeStore.updateMetadata(ticket.metadataPath, {
             MERGE_STATUS: 'failed',
-            MERGE_CONFLICT_PATHS: remainingConflicts,
+            MERGE_CONFLICT_PATHS: remainingDiagnostics.conflictPaths,
+            MERGE_FINAL_DIAGNOSTICS: remainingDiagnostics,
             MERGE_RESOLUTION_OUTPUT: agentResult.output?.join('\n') ?? null,
           });
           this.deps.runtimeStore.appendLog(
@@ -416,12 +434,13 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
               branch: ticket.branchName,
               reason: `Conflicts remain after ${budget} resolution attempts`,
               attempt,
+              diagnostics: remainingDiagnostics,
             }),
           );
           return {
             success: false,
             reason: `Conflicts remain after ${budget} resolution attempts`,
-            conflictPaths: remainingConflicts,
+            conflictPaths: remainingDiagnostics.conflictPaths,
           };
         }
         continue;
@@ -431,7 +450,8 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
         abortMerge(input.featureWorktreePath);
         this.deps.runtimeStore.updateMetadata(ticket.metadataPath, {
           MERGE_STATUS: 'failed',
-          MERGE_CONFLICT_PATHS: conflictPaths,
+          MERGE_CONFLICT_PATHS: finalDiagnostics.conflictPaths,
+          MERGE_FINAL_DIAGNOSTICS: finalDiagnostics,
           MERGE_RESOLUTION_OUTPUT: agentResult.output?.join('\n') ?? null,
         });
         this.deps.runtimeStore.appendLog(
@@ -442,18 +462,19 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
             branch: ticket.branchName,
             reason: `Reviewer agent failed to resolve conflicts after ${budget} attempts`,
             attempt,
+            diagnostics: finalDiagnostics,
           }),
         );
         return {
           success: false,
           reason: `Reviewer agent failed to resolve conflicts after ${budget} attempts`,
-          conflictPaths,
+          conflictPaths: finalDiagnostics.conflictPaths,
         };
       }
     }
 
     abortMerge(input.featureWorktreePath);
-    return { success: false, reason: 'Unexpected merge failure', conflictPaths };
+    return { success: false, reason: 'Unexpected merge failure', conflictPaths: finalDiagnostics.conflictPaths };
   }
 
   private async invokeReviewerAgent(
@@ -679,6 +700,32 @@ function getConflictPaths(worktreePath: string): string[] {
   }
 }
 
+function getStatusShort(worktreePath: string): string {
+  try {
+    return runGit(worktreePath, ['status', '--short']);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function getMergeConflictDiagnostics(worktreePath: string): MergeConflictDiagnostics {
+  const conflictPaths = getConflictPaths(worktreePath);
+  const markersRemain = hasConflictMarkers(worktreePath);
+  const unmergedIndexPaths = conflictPaths;
+  const statusShort = getStatusShort(worktreePath);
+  const summary = [
+    `Unmerged index entries: ${unmergedIndexPaths.length > 0 ? unmergedIndexPaths.join(', ') : 'none'}`,
+    `Conflict markers remain: ${markersRemain ? 'yes' : 'no'}`,
+    unmergedIndexPaths.length > 0 && !markersRemain
+      ? 'Files with no conflict markers but unmerged index entries remain unresolved Git index state and must still be staged/resolved.'
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return { conflictPaths, statusShort, markersRemain, unmergedIndexPaths, summary };
+}
+
 function hasConflictMarkers(worktreePath: string): boolean {
   try {
     const output = runGit(worktreePath, ['grep', '-l', '^<<<<<<< ']);
@@ -726,13 +773,19 @@ function resolveGitDir(worktreePath: string): string {
 
 function buildConflictResolutionPrompt(
   ticket: MergeBackTicket,
-  conflictPaths: string[],
+  diagnostics: MergeConflictDiagnostics,
   attempt: number,
   budget: number,
 ): string {
   const promptTemplate = resolveReviewerPrompt({ repoRoot: '', override: CONFLICT_RESOLUTION_PROMPT_ID });
+  const { conflictPaths } = diagnostics;
   const conflictSection =
     conflictPaths.length > 0 ? `\n## Conflicting Files\n\n${conflictPaths.map((p) => `- ${p}`).join('\n')}\n` : '';
+  const statusSection = diagnostics.statusShort.trim().length > 0 ? diagnostics.statusShort : '(clean)';
+  const unmergedSection =
+    diagnostics.unmergedIndexPaths.length > 0
+      ? diagnostics.unmergedIndexPaths.map((p) => `- ${p}`).join('\n')
+      : '- none';
   return `# Conflict Resolution Request
 
 Ticket: ${ticket.feature}/${ticket.issueName}
@@ -741,6 +794,22 @@ Attempt: ${attempt} of ${budget}
 
 A merge conflict occurred when merging scratch branch \`${ticket.branchName}\` into the feature worktree.
 ${conflictSection}
+
+## Current Git Diagnostics
+
+Status (git status --short):
+
+\`\`\`
+${statusSection}
+\`\`\`
+
+Unmerged index entries (git diff --name-only --diff-filter=U):
+
+${unmergedSection}
+
+Conflict markers remain: ${diagnostics.markersRemain ? 'yes' : 'no'}
+
+${diagnostics.summary}
 
 ## Instructions
 
