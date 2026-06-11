@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { access } from 'node:fs/promises';
+import { access, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
+import { CodexSyncAdapter } from '../src/sync/adapters/codex.js';
 import { KimiCodeSyncAdapter } from '../src/sync/adapters/kimi-code.js';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 import { formatSyncReport } from '../src/sync/engine.js';
@@ -126,4 +127,51 @@ test('kimi-code sync report renders reviewable counts and actions', () => {
   assert.match(output, /Adapter: kimi-code/);
   assert.match(output, /Created: 1/);
   assert.match(output, /CREATED skills: artifacts\/skills\/a\.md -> ~\/\.kimi-code\/skills\/a\/SKILL\.md/);
+});
+
+test('codex adapter maps skills into user-level skill directories', () => {
+  const categories = CodexSyncAdapter.assetCategories();
+  assert.equal(categories.length, 1);
+  const [skills] = categories;
+  assert.equal(skills.name, 'skills');
+  assert.equal(path.basename(skills.destinationRoot), 'skills');
+  assert.equal(path.basename(path.dirname(skills.destinationRoot)), '.agents');
+  assert.equal(skills.destinationBase, skills.destinationRoot);
+  assert.equal(
+    skills.mapDestination?.('afk-summary.md', skills.destinationRoot),
+    path.join(skills.destinationRoot, 'afk-summary', 'SKILL.md'),
+  );
+});
+
+test('codex adapter maps every vendored AFK skill to SKILL.md', async () => {
+  const [skills] = CodexSyncAdapter.assetCategories();
+  const skillFiles = (await readdir('artifacts/skills')).filter((file) => file.endsWith('.md'));
+  assert.ok(skillFiles.length > 0);
+
+  for (const file of skillFiles) {
+    const skillName = path.basename(file, '.md');
+    assert.equal(
+      skills.mapDestination?.(file, skills.destinationRoot),
+      path.join(skills.destinationRoot, skillName, 'SKILL.md'),
+    );
+  }
+});
+
+test('codex sync report renders reviewable counts and actions', () => {
+  const output = formatSyncReport({
+    adapterId: 'codex',
+    counts: { created: 1, updated: 0, unchanged: 0, skipped: 0 },
+    actions: [
+      {
+        category: 'skills',
+        sourcePath: 'artifacts/skills/afk-summary.md',
+        destinationPath: '~/.agents/skills/afk-summary/SKILL.md',
+        status: 'created',
+      },
+    ],
+  });
+
+  assert.match(output, /Adapter: codex/);
+  assert.match(output, /Created: 1/);
+  assert.match(output, /CREATED skills: artifacts\/skills\/afk-summary\.md -> ~\/\.agents\/skills\/afk-summary\/SKILL\.md/);
 });

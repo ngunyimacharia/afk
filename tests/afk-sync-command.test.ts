@@ -4,9 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
+import { CodexSyncAdapter } from '../src/sync/adapters/codex.js';
 import { KimiCodeSyncAdapter } from '../src/sync/adapters/kimi-code.js';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
 import { AssetSyncEngine, formatSyncReport } from '../src/sync/engine.js';
+import { SyncAdapters } from '../src/sync/runner.js';
 
 async function makeFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'afk-opencode-sync-'));
@@ -126,4 +128,42 @@ test('syncs initial kimi-code asset categories into the destination tree', async
 
   const second = await engine.execute();
   assert.equal(second.counts.unchanged, 1);
+});
+
+async function makeCodexFixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'afk-codex-sync-'));
+  const artifacts = path.join(root, 'artifacts');
+  const codexSkills = path.join(root, '.agents', 'skills');
+  await mkdir(path.join(artifacts, 'skills'), { recursive: true });
+  return { root, artifacts, codexSkills };
+}
+
+test('syncs initial codex skills into the user skills tree', async () => {
+  const { artifacts, codexSkills } = await makeCodexFixture();
+  await writeFile(path.join(artifacts, 'skills', 'afk-summary.md'), '# summary');
+
+  const engine = new AssetSyncEngine({
+    id: 'codex',
+    assetCategories: () =>
+      CodexSyncAdapter.assetCategories().map((category) => ({
+        ...category,
+        sourceRoot: path.join(artifacts, path.basename(category.sourceRoot)),
+        destinationRoot: codexSkills,
+        destinationBase: codexSkills,
+      })),
+  });
+
+  const first = await engine.execute();
+  assert.equal(first.counts.created, 1);
+  assert.equal(await readFile(path.join(codexSkills, 'afk-summary', 'SKILL.md'), 'utf8'), '# summary');
+
+  const second = await engine.execute();
+  assert.equal(second.counts.unchanged, 1);
+});
+
+test('sync runner includes codex report after existing adapters', () => {
+  assert.deepEqual(
+    SyncAdapters.map((adapter) => adapter.id),
+    ['opencode', 'claude-code', 'kimi-code', 'codex'],
+  );
 });
