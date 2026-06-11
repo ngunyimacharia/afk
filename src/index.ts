@@ -13,3 +13,23 @@ export { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-cont
 export { resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
 export { SelectionService } from './selection-service.js';
 export { TicketRepository } from './ticket-repository.js';
+export type {
+  MaterializedTrackerFiles,
+  TrackerCapabilities,
+  TrackerCommentInput,
+  TrackerCreateInput,
+  TrackerProvider,
+  TrackerProviderKind,
+  TrackerProviderRef,
+  TrackerRunResultUpdate,
+  TrackerUpdateInput,
+  TrackerWorkItem,
+  TrackerWorkItemContent,
+  TrackerWorkItemKey,
+} from './tracker-contract.js';
+export {
+  normalizeTrackerWorkItemKey,
+  scratchTrackerWorkItemKey,
+  ticketRecordToTrackerWorkItem,
+  trackerWorkItemToTicketRecord,
+} from './tracker-contract.js';

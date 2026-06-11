@@ -1,0 +1,140 @@
+import type { TicketRecord } from './types.js';
+
+export type TrackerProviderKind = 'scratch' | 'linear-graphql' | 'jira';
+
+export interface TrackerWorkItemKey {
+  provider: TrackerProviderKind;
+  id: string;
+}
+
+export interface TrackerProviderRef {
+  key: TrackerWorkItemKey;
+  displayId?: string;
+  parent?: TrackerWorkItemKey;
+  url?: string;
+}
+
+export interface TrackerWorkItemContent {
+  feature: string;
+  issueName: string;
+  label: string;
+  status: string;
+  dependsOn: string[];
+  title: string;
+  body: string;
+  providerRef: TrackerProviderRef;
+  url?: string;
+}
+
+export interface TrackerWorkItem extends TrackerWorkItemContent {
+  key: TrackerWorkItemKey;
+}
+
+export interface TrackerCapabilities {
+  list: boolean;
+  get: boolean;
+  create: boolean;
+  update: boolean;
+  appendComment: boolean;
+  materialize: boolean;
+  applyRunResult: boolean;
+  parentChildIssues: boolean;
+}
+
+export interface TrackerCommentInput {
+  body: string;
+  createdAt?: string;
+}
+
+export interface TrackerRunResultUpdate {
+  status: string;
+  summary?: string;
+  implementationStatus?: string;
+  reviewStatus?: string;
+  runStatus?: string;
+  commitIds?: string[];
+  logUrl?: string;
+  error?: string;
+}
+
+export interface MaterializedTrackerFiles {
+  ticketPath: string;
+  scratchFeaturePath: string;
+  featurePrdPath?: string;
+  runtimeMetadataPath?: string;
+  logPath?: string;
+}
+
+export interface TrackerCreateInput {
+  feature: string;
+  issueName: string;
+  title: string;
+  body: string;
+  status: string;
+  dependsOn?: string[];
+  parent?: TrackerWorkItemKey;
+}
+
+export interface TrackerUpdateInput {
+  title?: string;
+  body?: string;
+  status?: string;
+  dependsOn?: string[];
+  parent?: TrackerWorkItemKey | null;
+}
+
+export interface TrackerProvider {
+  kind: TrackerProviderKind;
+  capabilities: TrackerCapabilities;
+  list(feature?: string): Promise<TrackerWorkItem[]>;
+  get(key: TrackerWorkItemKey): Promise<TrackerWorkItem | null>;
+  create(input: TrackerCreateInput): Promise<TrackerWorkItem>;
+  update(key: TrackerWorkItemKey, input: TrackerUpdateInput): Promise<TrackerWorkItem>;
+  appendComment(key: TrackerWorkItemKey, input: TrackerCommentInput): Promise<void>;
+  materialize(key: TrackerWorkItemKey): Promise<MaterializedTrackerFiles>;
+  applyRunResult(key: TrackerWorkItemKey, input: TrackerRunResultUpdate): Promise<void>;
+}
+
+export function normalizeTrackerWorkItemKey(key: TrackerWorkItemKey): string {
+  const id = key.id.trim();
+  if (!id) throw new Error('tracker work item key id is required');
+  return `${key.provider}:${id.toLowerCase()}`;
+}
+
+export function trackerWorkItemToTicketRecord(item: TrackerWorkItem, path = ''): TicketRecord {
+  return {
+    path,
+    feature: item.feature,
+    issueName: item.issueName,
+    label: item.label,
+    status: item.status,
+    executorAfk: false,
+    dependsOn: item.dependsOn.map((dependency) => normalizeDependencyKey(item.feature, dependency)),
+  };
+}
+
+export function ticketRecordToTrackerWorkItem(ticket: TicketRecord, body = ''): TrackerWorkItem {
+  const key = scratchTrackerWorkItemKey(ticket.feature, ticket.issueName);
+  return {
+    key,
+    feature: ticket.feature,
+    issueName: ticket.issueName,
+    label: ticket.label,
+    status: ticket.status ?? '',
+    dependsOn: ticket.dependsOn ?? [],
+    title: ticket.label,
+    body,
+    providerRef: { key, displayId: ticket.issueName },
+  };
+}
+
+export function scratchTrackerWorkItemKey(feature: string, issueName: string): TrackerWorkItemKey {
+  return { provider: 'scratch', id: `${feature}/${issueName}` };
+}
+
+function normalizeDependencyKey(feature: string, dependency: string): string {
+  const trimmed = dependency.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.includes('/')) return trimmed;
+  return `${feature}/${trimmed}`;
+}
