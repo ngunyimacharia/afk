@@ -308,6 +308,43 @@ test('afk status includes model, harness, and ticket count from runtime metadata
   assert.match(result.message, /Tickets:\s+2/);
 });
 
+test('afk status falls back to launch preferences when runtime metadata directory is absent', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-launch-prefs-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId: 'prefs-run-789',
+      pid: process.pid,
+      startedAt: new Date(now - 120_000).toISOString(),
+      heartbeatAt: new Date(now - 5_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(logsDir, 'launch-preferences.json'),
+    JSON.stringify({ modelId: 'codex/default', harness: 'Codex', reviewerHarness: 'Codex' }),
+    'utf8',
+  );
+
+  const originalArg = process.argv[2];
+  process.argv[2] = 'status';
+  const result = await runAfk(repoRoot);
+  process.argv[2] = originalArg;
+  assert.equal(result.code, 0);
+  assert.match(result.message, /Run ID:\s+prefs-run-789/);
+  assert.match(result.message, /Model:\s+codex\/default/);
+  assert.match(result.message, /Harness:\s+Codex/);
+  assert.doesNotMatch(result.message, /Tickets:/);
+});
+
 test('writeRunPlan round-trips tickets through readRunPlan', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-plan-roundtrip-'));
   const tickets = [

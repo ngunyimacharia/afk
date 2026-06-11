@@ -831,25 +831,25 @@ interface RunMetadata {
 
 export function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
   const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
-  if (!existsSync(metadataRoot)) return { ticketCount: 0 };
-
   let ticketCount = 0;
   let modelId: string | undefined;
   let harness: string | undefined;
 
-  for (const file of readdirSync(metadataRoot)) {
-    if (!file.endsWith('.json')) continue;
-    try {
-      const content = readFileSync(path.join(metadataRoot, file), 'utf8');
-      const parsed = JSON.parse(content) as Record<string, unknown>;
-      if (parsed.RUN_ID !== runId) continue;
-      ticketCount++;
-      if (!modelId && typeof parsed.EXECUTION_MODEL_ID === 'string') modelId = parsed.EXECUTION_MODEL_ID;
-      if (!harness && typeof parsed.EXECUTION_PROVIDER === 'string') {
-        harness = displayNameForProvider(parsed.EXECUTION_PROVIDER);
+  if (existsSync(metadataRoot)) {
+    for (const file of readdirSync(metadataRoot)) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        const content = readFileSync(path.join(metadataRoot, file), 'utf8');
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        if (parsed.RUN_ID !== runId) continue;
+        ticketCount++;
+        if (!modelId && typeof parsed.EXECUTION_MODEL_ID === 'string') modelId = parsed.EXECUTION_MODEL_ID;
+        if (!harness && typeof parsed.EXECUTION_PROVIDER === 'string') {
+          harness = displayNameForProvider(parsed.EXECUTION_PROVIDER);
+        }
+      } catch {
+        // skip malformed metadata files
       }
-    } catch {
-      // skip malformed metadata files
     }
   }
 
