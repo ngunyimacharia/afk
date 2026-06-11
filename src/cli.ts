@@ -20,7 +20,7 @@ import {
   OpenCodeAgentExecutionProvider,
 } from './agent-execution-provider.js';
 import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
-import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
+import { CleanupExecutor, CleanupPlanner, readPendingPostMergeCleanupItems } from './cleanup.js';
 import { type DaemonLaunchContext, runDaemon } from './daemon.js';
 import {
   logResolvedExecutables,
@@ -214,8 +214,11 @@ export async function runAfk(
   if (command === 'status') {
     const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
     const activeRun = activeRunControlPlane.read();
+    const pendingCleanupCount = readPendingPostMergeCleanupItems(repoRoot).length;
     if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
-      return { code: 0, message: 'No active AFK run' };
+      const lines = ['No active AFK run'];
+      if (pendingCleanupCount > 0) lines.push(`Pending post-merge cleanup debt: ${pendingCleanupCount}`);
+      return { code: 0, message: lines.join('\n') };
     }
     const runMetadata = readRunMetadata(repoRoot, activeRun.runId);
     const heartbeatAgeMs = Date.now() - Date.parse(activeRun.heartbeatAt);
@@ -229,6 +232,7 @@ export async function runAfk(
     if (runMetadata.modelId) lines.push(`Model:     ${runMetadata.modelId}`);
     if (runMetadata.harness) lines.push(`Harness:   ${runMetadata.harness}`);
     if (runMetadata.ticketCount > 0) lines.push(`Tickets:   ${runMetadata.ticketCount}`);
+    if (pendingCleanupCount > 0) lines.push(`Pending post-merge cleanup debt: ${pendingCleanupCount}`);
     return { code: 0, message: lines.join('\n') };
   }
   if (command === '__daemon') {
