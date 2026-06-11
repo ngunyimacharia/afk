@@ -16,6 +16,7 @@ export interface LinearPlanParentManifest {
 
 export interface LinearPlanSubIssueManifest {
   ref: string;
+  aliases?: string[];
   title: string;
   description: string;
   dependsOn?: string[];
@@ -27,6 +28,13 @@ export interface LinearPlanResult {
     ref: string;
     issue: LinearIssueResult;
     subIssues: Array<{ ref: string; issue: LinearIssueResult; dependsOn: string[] }>;
+    dependencyRelations: Array<{
+      issueRef: string;
+      issue: LinearIssueResult;
+      dependsOnRef: string;
+      dependsOnIssue: LinearIssueResult;
+      type: 'blocked-by';
+    }>;
   }>;
   dependencyOrder: string[];
 }
@@ -68,6 +76,11 @@ export function parseLinearPlanManifest(value: unknown): { manifest?: LinearPlan
       }
       const subIssue = rawSubIssue as Record<string, unknown>;
       const subRef = requiredString(subIssue.ref, `parents[${parentIndex}].subIssues[${subIndex}].ref`, errors);
+      const aliases = optionalStringArray(
+        subIssue.aliases,
+        `parents[${parentIndex}].subIssues[${subIndex}].aliases`,
+        errors,
+      );
       const subTitle = requiredString(subIssue.title, `parents[${parentIndex}].subIssues[${subIndex}].title`, errors);
       const subDescription = requiredString(
         subIssue.description,
@@ -90,6 +103,7 @@ export function parseLinearPlanManifest(value: unknown): { manifest?: LinearPlan
       if (subRef && subTitle && subDescription) {
         subIssues.push({
           ref: subRef,
+          ...(aliases?.length ? { aliases } : {}),
           title: subTitle,
           description: subDescription,
           dependsOn,
@@ -97,18 +111,11 @@ export function parseLinearPlanManifest(value: unknown): { manifest?: LinearPlan
         });
       }
     }
-    for (const subIssue of subIssues) {
-      for (const dependency of subIssue.dependsOn ?? []) {
-        if (!subIssueRefs.has(dependency))
-          errors.push(`${subIssue.ref} depends on unknown sub-issue ref ${dependency}.`);
-        if (dependency === subIssue.ref) errors.push(`${subIssue.ref} cannot depend on itself.`);
-      }
-    }
-    const cycle = findDependencyCycle(subIssues);
-    if (cycle) errors.push(`dependency cycle detected: ${cycle.join(' -> ')}.`);
     if (ref && title && description)
       parents.push({ ref, title, description, subIssues, ...(updateIntent ? { updateIntent } : {}) });
   }
+
+  validateAndCanonicalizeDependencies(parents, errors);
 
   return errors.length ? { errors } : { manifest: { parents }, errors: [] };
 }
@@ -151,6 +158,7 @@ export async function createLinearPlan(input: {
     });
     const issueByRef = new Map<string, LinearIssueResult>();
     const subIssues: Array<{ ref: string; issue: LinearIssueResult; dependsOn: string[] }> = [];
+    const dependencyRelations: LinearPlanResult['parents'][number]['dependencyRelations'] = [];
     for (const subIssue of orderSubIssues(parent.subIssues)) {
       const created = await input.provider.createIssue({
         teamId: input.teamId,
@@ -167,11 +175,19 @@ export async function createLinearPlan(input: {
       if (!issue) continue;
       for (const dependencyRef of subIssue.dependsOn ?? []) {
         const dependency = issueByRef.get(dependencyRef);
-        if (dependency)
+        if (dependency) {
           await input.provider.createIssueDependency({ issueId: issue.id, dependsOnIssueId: dependency.id });
+          dependencyRelations.push({
+            issueRef: subIssue.ref,
+            issue,
+            dependsOnRef: dependencyRef,
+            dependsOnIssue: dependency,
+            type: 'blocked-by',
+          });
+        }
       }
     }
-    parents.push({ ref: parent.ref, issue: parentIssue, subIssues });
+    parents.push({ ref: parent.ref, issue: parentIssue, subIssues, dependencyRelations });
   }
   return { parents, dependencyOrder };
 }
@@ -221,6 +237,57 @@ function orderSubIssues(subIssues: LinearPlanSubIssueManifest[]): LinearPlanSubI
   };
   for (const issue of subIssues) visit(issue);
   return ordered;
+}
+
+function validateAndCanonicalizeDependencies(parents: LinearPlanParentManifest[], errors: string[]): void {
+  const ownerByKey = new Map<string, { parentRef: string; subIssueRef: string }>();
+  for (const parent of parents) {
+    const localKeyByRef = new Map<string, string>();
+    for (const subIssue of parent.subIssues) {
+      for (const key of [subIssue.ref, ...(subIssue.aliases ?? [])]) {
+        if (localKeyByRef.has(key)) {
+          errors.push(`${parent.ref} declares duplicate sub-issue key or alias ${key}.`);
+        } else {
+          localKeyByRef.set(key, subIssue.ref);
+        }
+        if (!ownerByKey.has(key)) ownerByKey.set(key, { parentRef: parent.ref, subIssueRef: subIssue.ref });
+      }
+    }
+  }
+
+  for (const parent of parents) {
+    const localKeyByRef = new Map<string, string>();
+    for (const subIssue of parent.subIssues) {
+      for (const key of [subIssue.ref, ...(subIssue.aliases ?? [])]) localKeyByRef.set(key, subIssue.ref);
+    }
+
+    for (const subIssue of parent.subIssues) {
+      const canonicalDependencies: string[] = [];
+      for (const dependency of subIssue.dependsOn ?? []) {
+        const canonicalDependency = localKeyByRef.get(dependency);
+        if (!canonicalDependency) {
+          const owner = ownerByKey.get(dependency);
+          if (owner) {
+            errors.push(
+              `${subIssue.ref} depends on ${dependency}, but it belongs to parent ${owner.parentRef}; dependencies must reference sibling sub-issues only.`,
+            );
+          } else {
+            errors.push(`${subIssue.ref} depends on unknown sub-issue key or alias ${dependency}.`);
+          }
+          continue;
+        }
+        if (canonicalDependency === subIssue.ref) {
+          errors.push(`${subIssue.ref} cannot depend on itself.`);
+          continue;
+        }
+        canonicalDependencies.push(canonicalDependency);
+      }
+      subIssue.dependsOn = canonicalDependencies;
+    }
+
+    const cycle = findDependencyCycle(parent.subIssues);
+    if (cycle) errors.push(`dependency cycle detected in ${parent.ref}: ${cycle.join(' -> ')}.`);
+  }
 }
 
 function findDependencyCycle(subIssues: LinearPlanSubIssueManifest[]): string[] | undefined {
