@@ -26,6 +26,7 @@ export interface LinearIssueSummary {
   identifier: string;
   url: string;
   title: string;
+  branchName?: string | null;
   description?: string | null;
   state: LinearIssueState;
   labels: LinearIssueLabel[];
@@ -43,6 +44,7 @@ export interface LinearParentFeature {
   title: string;
   status: string;
   featureSlug: string;
+  branchName?: string | null;
   workItems: LinearProviderWorkItem[];
 }
 
@@ -54,12 +56,14 @@ export interface LinearProviderWorkItem {
   title: string;
   body: string;
   status: string;
+  branchName?: string | null;
   parent: {
     id: string;
     key: string;
     url: string;
     title: string;
     featureSlug: string;
+    branchName?: string | null;
   };
   labels: LinearIssueLabel[];
   afkLabel: LinearIssueLabel;
@@ -160,6 +164,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
           identifier: string;
           url: string;
           title: string;
+          branchName?: string | null;
           description?: string | null;
           state: LinearIssueState;
           labels: { nodes: LinearIssueLabel[] };
@@ -169,6 +174,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
               identifier: string;
               url: string;
               title: string;
+              branchName?: string | null;
               description?: string | null;
               state: LinearIssueState;
               labels: { nodes: LinearIssueLabel[] };
@@ -191,6 +197,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
             identifier
             url
             title
+            branchName
             description
             state { id name }
             labels { nodes { id name } }
@@ -200,6 +207,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
                 identifier
                 url
                 title
+                branchName
                 description
                 state { id name }
                 labels { nodes { id name } }
@@ -311,6 +319,7 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
       title: parent.title,
       status: parent.state.name,
       featureSlug,
+      ...(parent.branchName ? { branchName: parent.branchName } : {}),
       workItems: parent.children
         .filter((child) => child.labels.some((label) => label.id === options.resolvedConfig.labelId))
         .filter((child) => !terminalStateIds.has(child.state.id))
@@ -325,12 +334,14 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
             title: child.title,
             body: child.description ?? '',
             status: child.state.name,
+            ...(child.branchName ? { branchName: child.branchName } : {}),
             parent: {
               id: parent.id,
               key: parent.identifier,
               url: parent.url,
               title: parent.title,
               featureSlug,
+              ...(parent.branchName ? { branchName: parent.branchName } : {}),
             },
             labels: child.labels,
             afkLabel,

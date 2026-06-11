@@ -102,6 +102,50 @@ test('branches from custom baseRef when provided', () => {
   assert.equal(existsSync(path.join(result.worktreePath, 'feature.txt')), false);
 });
 
+test('prefers safe Linear branch names for ticket checkouts', () => {
+  const repoRoot = createRepo('afk-scratch-linear-branch-');
+  git(repoRoot, ['branch', 'feature-base']);
+
+  const result = new ScratchWorktreeService().createScratchWorktree({
+    repoRoot,
+    featureSlug: 'eng-100',
+    issueName: 'eng-101',
+    linearIssueKey: 'ENG-101',
+    linearIssueBranchName: 'raven/eng-101-child-work',
+    baseRef: 'feature-base',
+  });
+
+  assert.equal(result.defaultBranchName, 'afk/eng-101');
+  assert.equal(result.effectiveBranchName, 'raven/eng-101-child-work');
+  assert.equal(result.effectiveWorktreeName, 'raven-eng-101-child-work');
+  assert.match(git(repoRoot, ['branch', '--list', 'raven/eng-101-child-work']), /raven\/eng-101-child-work/);
+});
+
+test('fallback Linear ticket branches remain unique for duplicate titles', () => {
+  const repoRoot = createRepo('afk-scratch-linear-duplicates-');
+  git(repoRoot, ['branch', 'feature-base']);
+
+  const service = new ScratchWorktreeService();
+  const first = service.createScratchWorktree({
+    repoRoot,
+    featureSlug: 'eng-100',
+    issueName: 'duplicate-title',
+    linearIssueKey: 'ENG-101',
+    baseRef: 'feature-base',
+  });
+  const second = service.createScratchWorktree({
+    repoRoot,
+    featureSlug: 'eng-100',
+    issueName: 'duplicate-title',
+    linearIssueKey: 'ENG-102',
+    baseRef: 'feature-base',
+  });
+
+  assert.equal(first.effectiveBranchName, 'afk/eng-101');
+  assert.equal(second.effectiveBranchName, 'afk/eng-102');
+  assert.notEqual(first.worktreePath, second.worktreePath);
+});
+
 test('copies readiness artifacts into scratch worktree', () => {
   const repoRoot = createRepo('afk-scratch-artifacts-');
   git(repoRoot, ['branch', 'my-feature']);

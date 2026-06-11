@@ -114,6 +114,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
       wave: number,
       issueNames: string[],
       issueWorktreePaths: Record<string, string>,
+      issueCheckouts,
     ) => {
       const featureCheckout = checkoutsByFeature[feature];
       if (!featureCheckout) return;
@@ -123,7 +124,10 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
         return {
           feature,
           issueName,
-          branchName: `afk/${feature}/${issueName}`,
+          branchName:
+            issueCheckouts[issueName]?.effectiveBranchName ??
+            ticketSnapshot?.branchName ??
+            `afk/${feature}/${issueName}`,
           worktreePath: issueWorktreePaths[issueName] ?? ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
           dependsOn: ticketRecord?.dependsOn,
           metadataPath: path.join(

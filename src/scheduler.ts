@@ -1,6 +1,7 @@
 import type { ScratchWorktreeService } from './scratch-worktree-service.js';
 import type { SingleTicketRunner, SingleTicketRunResult } from './single-ticket-runner.js';
 import type { AgentExecutionProgressCallback, LaunchBlockEvidence, LaunchPlan, TicketRecord } from './types.js';
+import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
 
 export interface FeatureLockProvider {
   isLocked(feature: string): boolean;
@@ -35,6 +36,7 @@ export interface SchedulerDependencies {
     wave: number,
     issueNames: string[],
     issueWorktreePaths: Record<string, string>,
+    issueCheckouts: Record<string, PreparedCheckoutContext>,
   ) => Promise<void>;
   concurrencyLimit?: number;
 }
@@ -212,6 +214,8 @@ export class Scheduler {
           repoRoot: plan.repoRoot,
           featureSlug: ticket.feature,
           issueName: ticket.issueName,
+          linearIssueKey: ticket.linear?.issueKey,
+          linearIssueBranchName: ticket.linear?.issueBranchName,
           baseRef: plan.checkouts?.[ticket.feature]?.effectiveBranchName ?? plan.checkout.effectiveBranchName,
         });
         scratchWorktrees.set(ticket.label, scratchCheckout);
@@ -277,7 +281,19 @@ export class Scheduler {
                         return checkout ? [[issueNameFromTicketKey(key), checkout.worktreePath]] : [];
                       }),
                     );
-                    await this.deps.onWaveComplete(ticket.feature, ticketWave, issueNames, issueWorktreePaths);
+                    const issueCheckouts = Object.fromEntries(
+                      waveTicketKeys.flatMap((key) => {
+                        const checkout = scratchWorktrees.get(key);
+                        return checkout ? [[issueNameFromTicketKey(key), checkout]] : [];
+                      }),
+                    );
+                    await this.deps.onWaveComplete(
+                      ticket.feature,
+                      ticketWave,
+                      issueNames,
+                      issueWorktreePaths,
+                      issueCheckouts,
+                    );
                   }
                   // Update merged wave if provider acknowledges merge-back
                   if (this.deps.featureMergeBackProvider) {
