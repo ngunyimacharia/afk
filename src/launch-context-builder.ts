@@ -92,18 +92,22 @@ function buildDependencySnapshots(
   tickets: TicketRecord[],
 ): DependencySnapshot[] {
   return (ticket.dependsOn ?? []).map((dependencyIssue) => {
-    const dependencyTicket = tickets.find(
-      (entry) => entry.feature === ticket.feature && entry.issueName === dependencyIssue,
-    );
+    const dependencyLabel = normalizeDependencyLabel(ticket.feature, dependencyIssue);
+    const dependencyIssueName = dependencyLabel.slice(dependencyLabel.indexOf('/') + 1);
+    const dependencyTicket = tickets.find((entry) => `${entry.feature}/${entry.issueName}` === dependencyLabel);
     return {
-      label: `${ticket.feature}/${dependencyIssue}`,
-      issueName: dependencyIssue,
+      label: dependencyLabel,
+      issueName: dependencyIssueName,
       status: ticketStatus(dependencyTicket),
-      doneSentinel: sentinelState(repoRoot, ticket.feature, dependencyIssue, 'done'),
-      failedSentinel: sentinelState(repoRoot, ticket.feature, dependencyIssue, 'failed'),
-      runtimeStatus: readRuntimeStatus(repoRoot, ticket.feature, dependencyIssue),
+      doneSentinel: sentinelState(repoRoot, ticket.feature, dependencyIssueName, 'done'),
+      failedSentinel: sentinelState(repoRoot, ticket.feature, dependencyIssueName, 'failed'),
+      runtimeStatus: readRuntimeStatus(repoRoot, ticket.feature, dependencyIssueName),
     };
   });
+}
+
+function normalizeDependencyLabel(feature: string, dependency: string): string {
+  return dependency.includes('/') ? dependency : `${feature}/${dependency}`;
 }
 
 function buildSnapshot(

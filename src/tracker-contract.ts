@@ -88,6 +88,7 @@ export interface TrackerProvider {
   kind: TrackerProviderKind;
   capabilities: TrackerCapabilities;
   list(feature?: string): Promise<TrackerWorkItem[]>;
+  isEligible(item: TrackerWorkItem): boolean;
   get(key: TrackerWorkItemKey): Promise<TrackerWorkItem | null>;
   create(input: TrackerCreateInput): Promise<TrackerWorkItem>;
   update(key: TrackerWorkItemKey, input: TrackerUpdateInput): Promise<TrackerWorkItem>;
