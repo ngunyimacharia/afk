@@ -2,6 +2,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { GraphQLLinearProvider, type LinearIssueResult, type LinearProvider } from './linear-provider.js';
 import { loadAfkProjectConfig } from './project-config.js';
 
+export interface LinearExecutionSetup {
+  afkLabelName: string;
+  readyStateName: string;
+  applyAfkLabelToParents?: boolean;
+}
+
 export interface LinearPlanManifest {
   parents: LinearPlanParentManifest[];
 }
@@ -126,28 +132,48 @@ export function loadLinearPlanManifest(filePath: string): { manifest?: LinearPla
 export function createLinearProviderFromConfig(
   repoRoot: string,
   env: NodeJS.ProcessEnv = process.env,
-): { provider?: LinearProvider; teamId?: string; errors: string[] } {
+): { provider?: LinearProvider; teamId?: string; setup?: LinearExecutionSetup; errors: string[] } {
   const config = loadAfkProjectConfig(repoRoot);
   if (!config.config) return { errors: config.errors };
   if (!config.config.linear) return { errors: ['Linear config missing: add linear.teamId to afk.json.'] };
   const apiKeyEnv = config.config.linear.apiKeyEnv ?? 'LINEAR_API_KEY';
   const apiKey = env[apiKeyEnv];
   if (!apiKey) return { errors: [`Linear API key missing: set ${apiKeyEnv}.`] };
-  return { provider: new GraphQLLinearProvider({ apiKey }), teamId: config.config.linear.teamId, errors: [] };
+  return {
+    provider: new GraphQLLinearProvider({ apiKey }),
+    teamId: config.config.linear.teamId,
+    setup: {
+      afkLabelName: config.config.linear.afkLabelName,
+      readyStateName: config.config.linear.readyStateName,
+      ...(config.config.linear.applyAfkLabelToParents !== undefined
+        ? { applyAfkLabelToParents: config.config.linear.applyAfkLabelToParents }
+        : {}),
+    },
+    errors: [],
+  };
 }
 
 export async function createLinearPlan(input: {
   manifest: LinearPlanManifest;
   teamId: string;
   provider: LinearProvider;
+  setup: LinearExecutionSetup;
 }): Promise<LinearPlanResult> {
   const parents: LinearPlanResult['parents'] = [];
   const dependencyOrder: string[] = [];
+  const afkLabelId = await input.provider.resolveIssueLabelId(input.setup.afkLabelName);
+  if (!afkLabelId) throw new Error(`Linear AFK label not found: ${input.setup.afkLabelName}`);
+  const readyStateId = await input.provider.resolveWorkflowStateId({
+    teamId: input.teamId,
+    name: input.setup.readyStateName,
+  });
+  if (!readyStateId) throw new Error(`Linear ready workflow state not found: ${input.setup.readyStateName}`);
   for (const parent of input.manifest.parents) {
     const parentIssue = await input.provider.createIssue({
       teamId: input.teamId,
       title: parent.title,
       description: appendUpdateIntent(parent.description, parent.updateIntent),
+      ...(input.setup.applyAfkLabelToParents ? { labelIds: [afkLabelId] } : {}),
     });
     const issueByRef = new Map<string, LinearIssueResult>();
     const subIssues: Array<{ ref: string; issue: LinearIssueResult; dependsOn: string[] }> = [];
@@ -157,6 +183,8 @@ export async function createLinearPlan(input: {
         title: subIssue.title,
         description: appendUpdateIntent(subIssue.description, subIssue.updateIntent),
         parentId: parentIssue.id,
+        labelIds: [afkLabelId],
+        stateId: readyStateId,
       });
       issueByRef.set(subIssue.ref, created);
       subIssues.push({ ref: subIssue.ref, issue: created, dependsOn: subIssue.dependsOn ?? [] });

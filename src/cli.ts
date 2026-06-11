@@ -204,7 +204,7 @@ export async function runAfk(
   if (command === 'sync') return runSync();
   if (command === 'linear-plan') {
     const providerConfig = createLinearProviderFromConfig(repoRoot, env);
-    if (!providerConfig.provider || !providerConfig.teamId)
+    if (!providerConfig.provider || !providerConfig.teamId || !providerConfig.setup)
       return { code: 1, message: providerConfig.errors.join('\n') };
     const manifestPath = linearPlanManifestPath();
     if (!runtime.linearManifest && !manifestPath) return { code: 1, message: 'Manifest path required.' };
@@ -215,11 +215,17 @@ export async function runAfk(
     if (!manifest) {
       return { code: 1, message: manifestResult.errors.join('\n') };
     }
-    const result = await createLinearPlan({
-      manifest,
-      teamId: providerConfig.teamId,
-      provider: runtime.linearProvider ?? providerConfig.provider,
-    });
+    let result: Awaited<ReturnType<typeof createLinearPlan>>;
+    try {
+      result = await createLinearPlan({
+        manifest,
+        teamId: providerConfig.teamId,
+        provider: runtime.linearProvider ?? providerConfig.provider,
+        setup: providerConfig.setup,
+      });
+    } catch (error) {
+      return { code: 1, message: error instanceof Error ? error.message : String(error) };
+    }
     return { code: 0, message: JSON.stringify(result, null, 2) };
   }
   if (command === 'tui') {

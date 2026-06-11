@@ -14,6 +14,9 @@ export interface AfkProjectConfig {
 export interface AfkLinearProjectConfig {
   teamId: string;
   apiKeyEnv?: string;
+  afkLabelName: string;
+  readyStateName: string;
+  applyAfkLabelToParents?: boolean;
 }
 
 export interface ProjectConfigLoadResult {
@@ -116,11 +119,33 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): AfkLinea
   if (record.apiKeyEnv !== undefined && (typeof record.apiKeyEnv !== 'string' || !record.apiKeyEnv.trim())) {
     errors.push('linear.apiKeyEnv must be a non-empty string when present.');
   }
-  if (typeof record.teamId !== 'string' || !record.teamId.trim()) return undefined;
+  if (typeof record.afkLabelName !== 'string' || !record.afkLabelName.trim()) {
+    errors.push('linear.afkLabelName must be a non-empty string.');
+  }
+  if (typeof record.readyStateName !== 'string' || !record.readyStateName.trim()) {
+    errors.push('linear.readyStateName must be a non-empty string.');
+  }
+  if (record.applyAfkLabelToParents !== undefined && typeof record.applyAfkLabelToParents !== 'boolean') {
+    errors.push('linear.applyAfkLabelToParents must be a boolean when present.');
+  }
+  if (
+    typeof record.teamId !== 'string' ||
+    !record.teamId.trim() ||
+    typeof record.afkLabelName !== 'string' ||
+    !record.afkLabelName.trim() ||
+    typeof record.readyStateName !== 'string' ||
+    !record.readyStateName.trim()
+  )
+    return undefined;
 
   return {
     teamId: record.teamId.trim(),
     ...(typeof record.apiKeyEnv === 'string' && record.apiKeyEnv.trim() ? { apiKeyEnv: record.apiKeyEnv.trim() } : {}),
+    afkLabelName: record.afkLabelName.trim(),
+    readyStateName: record.readyStateName.trim(),
+    ...(typeof record.applyAfkLabelToParents === 'boolean'
+      ? { applyAfkLabelToParents: record.applyAfkLabelToParents }
+      : {}),
   };
 }
 
