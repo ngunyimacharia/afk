@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -13,11 +13,22 @@ import type {
   LinearIssueRelation,
   LinearIssueState,
   LinearParentIssue,
+  LinearRunSyncClient,
   LinearTeam,
   LinearWorkflowState,
 } from '../src/linear.js';
-import { discoverLinearFeatures, LinearGraphqlClient, LinearStartupError, resolveLinearConfig } from '../src/linear.js';
+import {
+  discoverLinearFeatures,
+  LinearGraphqlClient,
+  LinearStartupError,
+  resolveLinearConfig,
+  syncLinearRunStarted,
+  syncLinearRunTerminal,
+} from '../src/linear.js';
 import type { LinearProjectConfig } from '../src/project-config.js';
+import { RuntimeStore } from '../src/runtime-store.js';
+import { SingleTicketRunner } from '../src/single-ticket-runner.js';
+import type { RuntimeMetadataRecord } from '../src/types.js';
 
 const validConfig: LinearProjectConfig = {
   team: 'ENG',
@@ -307,6 +318,114 @@ test('falls back when Linear GraphQL does not expose issue branchName', async ()
   }
 });
 
+test('syncs Linear-backed runs to the running workflow state', async () => {
+  const client = new FakeLinearRunSyncClient();
+
+  await syncLinearRunStarted({
+    ticket: linearTicket(),
+    resolvedConfig: resolvedLinearConfig(),
+    client,
+  });
+
+  assert.deepEqual(client.stateUpdates, [{ issueId: 'child-one-eligible', stateId: 'state-running' }]);
+});
+
+test('syncs completed Linear-backed runs to done with AFK label and summary comment', async () => {
+  const client = new FakeLinearRunSyncClient();
+
+  await syncLinearRunTerminal({
+    summary: {
+      ticket: linearTicket(),
+      metadata: runtimeMetadata('completed'),
+      outcome: 'completed',
+      nextAction: 'none; AFK run approved',
+      reviewerNotes: 'Clean pass',
+      tests: 'bun test tests/linear.test.ts',
+      commits: ['abc1234 feat: sync linear'],
+    },
+    resolvedConfig: resolvedLinearConfig(),
+    client,
+  });
+
+  assert.deepEqual(client.stateUpdates, [{ issueId: 'child-one-eligible', stateId: 'state-done' }]);
+  assert.deepEqual(client.labelAdds, [{ issueId: 'child-one-eligible', labelId: 'label-1' }]);
+  assert.match(client.comments[0]?.body ?? '', /Outcome: completed/);
+  assert.match(client.comments[0]?.body ?? '', /Run ID: run-1/);
+  assert.match(client.comments[0]?.body ?? '', /abc1234 feat: sync linear/);
+});
+
+test('syncs handoff Linear-backed runs to handoff with structured summary comment', async () => {
+  const client = new FakeLinearRunSyncClient();
+
+  await syncLinearRunTerminal({
+    summary: {
+      ticket: linearTicket(),
+      metadata: runtimeMetadata('handoff'),
+      outcome: 'handoff',
+      nextAction: 'human review required',
+      reviewerNotes: 'Reviewer needs a human decision',
+      caveats: 'Budget cap reached',
+    },
+    resolvedConfig: resolvedLinearConfig(),
+    client,
+  });
+
+  assert.deepEqual(client.stateUpdates, [{ issueId: 'child-one-eligible', stateId: 'state-handoff' }]);
+  assert.deepEqual(client.labelAdds, [{ issueId: 'child-one-eligible', labelId: 'label-1' }]);
+  assert.match(client.comments[0]?.body ?? '', /Outcome: handoff/);
+  assert.match(client.comments[0]?.body ?? '', /Next action: human review required/);
+});
+
+test('records Linear sync failures without deleting local mirrors', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-sync-failure-'));
+  const store = new RuntimeStore({ repoRoot });
+  const mirrorPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors', 'eng-200-eng-201.md');
+  const reviewerPromptPath = path.join(repoRoot, 'reviewer.md');
+  mkdirSync(path.dirname(mirrorPath), { recursive: true });
+  writeFileSync(mirrorPath, '# Linear mirror\n\n## AFK Summary\nDone\n');
+  writeFileSync(reviewerPromptPath, 'Review the implementation.\n');
+  const client = new FakeLinearRunSyncClient({ failOnStateUpdate: 2 });
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async ({ invocationMode }) =>
+        invocationMode === 'reviewer'
+          ? { status: 'completed', output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })] }
+          : { status: 'completed', output: ['implemented'] },
+    },
+    {},
+    { resolvedConfig: resolvedLinearConfig(), client },
+  );
+
+  const result = await runner.launch({
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: { id: 'reviewer-default', label: 'Reviewer default', path: reviewerPromptPath },
+    tickets: [{ ...linearTicket(), path: mirrorPath, content: undefined }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'eng-200',
+      defaultWorktreeName: 'eng-200',
+      effectiveWorktreeName: 'eng-200',
+      defaultBranchName: 'eng-200',
+      effectiveBranchName: 'eng-200',
+      worktreePath: repoRoot,
+    },
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(existsSync(mirrorPath), true);
+  const metadata = JSON.parse(
+    readFileSync(
+      path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'eng-200-eng-201.json'),
+      'utf8',
+    ),
+  ) as { LINEAR_SYNC_STATUS?: string; LINEAR_SYNC_FAILURES?: string[] };
+  assert.equal(metadata.LINEAR_SYNC_STATUS, 'failed');
+  assert.match(metadata.LINEAR_SYNC_FAILURES?.[0] ?? '', /synthetic Linear failure/);
+});
+
 class FakeLinearClient implements LinearConfigClient {
   private readonly team: LinearTeam = { id: 'team-1', key: 'ENG', name: 'Engineering' };
   private readonly label: LinearEntity = { id: 'label-1', name: 'AFK' };
@@ -357,6 +476,88 @@ class FakeLinearDiscoveryClient implements LinearDiscoveryClient {
       ]),
     ];
   }
+}
+
+class FakeLinearRunSyncClient implements LinearRunSyncClient {
+  readonly stateUpdates: { issueId: string; stateId: string }[] = [];
+  readonly labelAdds: { issueId: string; labelId: string }[] = [];
+  readonly comments: { issueId: string; body: string }[] = [];
+  private stateUpdateCount = 0;
+
+  constructor(private readonly options: { failOnStateUpdate?: number } = {}) {}
+
+  async updateIssueState(issueId: string, stateId: string): Promise<void> {
+    this.stateUpdateCount += 1;
+    if (this.options.failOnStateUpdate === this.stateUpdateCount) {
+      throw new Error('synthetic Linear failure');
+    }
+    this.stateUpdates.push({ issueId, stateId });
+  }
+
+  async addIssueLabel(issueId: string, labelId: string): Promise<void> {
+    this.labelAdds.push({ issueId, labelId });
+  }
+
+  async createIssueComment(issueId: string, body: string): Promise<void> {
+    this.comments.push({ issueId, body });
+  }
+}
+
+function resolvedLinearConfig() {
+  return {
+    teamId: 'team-1',
+    teamKey: 'ENG',
+    labelId: 'label-1',
+    workflowStateIds: {
+      ready: 'state-ready',
+      running: 'state-running',
+      done: 'state-done',
+      handoff: 'state-handoff',
+    },
+  };
+}
+
+function linearTicket() {
+  return {
+    path: 'linear://ENG-201',
+    feature: 'eng-200',
+    issueName: 'eng-201',
+    label: 'eng-200/eng-201',
+    executorAfk: true,
+    source: 'linear' as const,
+    content: '# One eligible\n',
+    providerIdentity: {
+      provider: 'linear' as const,
+      issueId: 'child-one-eligible',
+      issueKey: 'ENG-201',
+      issueUrl: 'https://linear.app/acme/issue/ENG-201/one-eligible',
+      parentKey: 'ENG-200',
+    },
+  };
+}
+
+function runtimeMetadata(runStatus: 'completed' | 'handoff'): RuntimeMetadataRecord {
+  return {
+    RUN_ID: 'run-1',
+    TICKET_PATH: 'linear://ENG-201',
+    FEATURE_SLUG: 'eng-200',
+    ISSUE_NAME: 'eng-201',
+    LOG_PATH: '/tmp/afk.log',
+    START_TIME: '2026-06-11T00:00:00.000Z',
+    START_EPOCH: 0,
+    DONE_SENTINEL_PATH: '/tmp/done',
+    FAILED_SENTINEL_PATH: '/tmp/failed',
+    STATUS: runStatus === 'completed' ? 'completed' : 'blocked',
+    EXECUTION_PROVIDER: 'opencode',
+    PROVIDER_SESSION_ID: null,
+    PROVIDER_SESSION_REMOVABLE: false,
+    INSPECTION_PROVIDER: null,
+    INSPECTION_TARGET_IDENTIFIER: null,
+    UNSAFE_REASON: null,
+    RUN_STATUS: runStatus,
+    FINAL_REVIEW_OUTCOME: runStatus === 'completed' ? 'approved' : 'needs-human',
+    FINAL_REVIEW_REASON: runStatus === 'completed' ? 'Clean pass' : 'Needs human',
+  };
 }
 
 class StaticLinearDiscoveryClient implements LinearDiscoveryClient {

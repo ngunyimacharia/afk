@@ -1,4 +1,5 @@
 import type { LinearProjectConfig } from './project-config.js';
+import type { RuntimeMetadataRecord, TicketRecord } from './types.js';
 
 export const LINEAR_API_KEY_ENV = 'LINEAR_API_KEY';
 
@@ -91,6 +92,12 @@ export interface LinearDiscoveryClient {
   findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]>;
 }
 
+export interface LinearRunSyncClient {
+  updateIssueState(issueId: string, stateId: string): Promise<void>;
+  addIssueLabel(issueId: string, labelId: string): Promise<void>;
+  createIssueComment(issueId: string, body: string): Promise<void>;
+}
+
 interface LinearIssueGraphqlNode {
   id: string;
   identifier: string;
@@ -126,6 +133,17 @@ export interface DiscoverLinearFeaturesOptions {
   client: LinearDiscoveryClient;
 }
 
+export interface LinearRunTerminalSummaryInput {
+  ticket: TicketRecord;
+  metadata: RuntimeMetadataRecord;
+  outcome: 'completed' | 'blocked' | 'failed' | 'handoff';
+  nextAction: string;
+  reviewerNotes?: string;
+  caveats?: string;
+  tests?: string;
+  commits?: string[];
+}
+
 export class LinearStartupError extends Error {
   constructor(message: string) {
     super(message);
@@ -133,7 +151,7 @@ export class LinearStartupError extends Error {
   }
 }
 
-export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryClient {
+export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryClient, LinearRunSyncClient {
   constructor(
     private readonly apiKey: string,
     private readonly endpoint = 'https://api.linear.app/graphql',
@@ -192,6 +210,33 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
       if (!isMissingBranchNameGraphqlError(error)) throw error;
       return this.findAfkParentIssuesWithBranchNames(input, false);
     }
+  }
+
+  async updateIssueState(issueId: string, stateId: string): Promise<void> {
+    await this.request<{ issueUpdate: { success: boolean } }>(
+      `mutation AfkUpdateLinearIssueState($issueId: String!, $stateId: String!) {
+        issueUpdate(id: $issueId, input: { stateId: $stateId }) { success }
+      }`,
+      { issueId, stateId },
+    );
+  }
+
+  async addIssueLabel(issueId: string, labelId: string): Promise<void> {
+    await this.request<{ issueAddLabel: { success: boolean } }>(
+      `mutation AfkEnsureLinearIssueLabel($issueId: String!, $labelId: String!) {
+        issueAddLabel(id: $issueId, labelId: $labelId) { success }
+      }`,
+      { issueId, labelId },
+    );
+  }
+
+  async createIssueComment(issueId: string, body: string): Promise<void> {
+    await this.request<{ commentCreate: { success: boolean } }>(
+      `mutation AfkCreateLinearIssueComment($issueId: String!, $body: String!) {
+        commentCreate(input: { issueId: $issueId, body: $body }) { success }
+      }`,
+      { issueId, body },
+    );
   }
 
   private async findAfkParentIssuesWithBranchNames(
@@ -413,6 +458,54 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
       }),
     };
   });
+}
+
+export async function syncLinearRunStarted(input: {
+  ticket: TicketRecord;
+  resolvedConfig: ResolvedLinearConfig;
+  client: LinearRunSyncClient;
+}): Promise<void> {
+  const issueId = input.ticket.providerIdentity?.provider === 'linear' ? input.ticket.providerIdentity.issueId : null;
+  if (!issueId) return;
+  await input.client.updateIssueState(issueId, input.resolvedConfig.workflowStateIds.running);
+}
+
+export async function syncLinearRunTerminal(input: {
+  summary: LinearRunTerminalSummaryInput;
+  resolvedConfig: ResolvedLinearConfig;
+  client: LinearRunSyncClient;
+}): Promise<void> {
+  const issueId =
+    input.summary.ticket.providerIdentity?.provider === 'linear' ? input.summary.ticket.providerIdentity.issueId : null;
+  if (!issueId) return;
+  const terminalStateId =
+    input.summary.outcome === 'completed'
+      ? input.resolvedConfig.workflowStateIds.done
+      : input.resolvedConfig.workflowStateIds.handoff;
+  await input.client.updateIssueState(issueId, terminalStateId);
+  await input.client.addIssueLabel(issueId, input.resolvedConfig.labelId);
+  await input.client.createIssueComment(issueId, buildLinearAfkSummaryComment(input.summary));
+}
+
+export function buildLinearAfkSummaryComment(input: LinearRunTerminalSummaryInput): string {
+  const metadata = input.metadata;
+  const commits = input.commits?.length ? input.commits.join('\n') : 'None recorded';
+  return [
+    '## AFK Summary',
+    '',
+    `- Outcome: ${input.outcome}`,
+    `- Run ID: ${metadata.RUN_ID ?? 'unknown'}`,
+    `- Runtime status: ${metadata.RUN_STATUS ?? metadata.STATUS}`,
+    `- Review outcome: ${metadata.FINAL_REVIEW_OUTCOME ?? 'unknown'}`,
+    `- Review reason: ${metadata.FINAL_REVIEW_REASON ?? metadata.UNSAFE_REASON ?? 'none recorded'}`,
+    `- Commits: ${commits}`,
+    `- Tests/checks: ${input.tests?.trim() || 'Not recorded'}`,
+    `- Caveats: ${input.caveats?.trim() || metadata.UNSAFE_REASON || 'None recorded'}`,
+    `- Next action: ${input.nextAction}`,
+    '',
+    '### Reviewer Notes',
+    input.reviewerNotes?.trim() || 'No reviewer notes recorded.',
+  ].join('\n');
 }
 
 function isBlockedByRelation(type: string): boolean {

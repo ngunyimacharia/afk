@@ -9,10 +9,12 @@ import {
 import { ClaudeCodeSessionExecutor } from './claude-code.js';
 import { mergeCompletedFeaturesToBase } from './feature-base-merge.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
+import { LinearGraphqlClient, resolveLinearConfig } from './linear.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import { SDKOpenCodeSessionExecutor } from './opencode.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
+import { loadAfkProjectConfig } from './project-config.js';
 import { RuntimeStore } from './runtime-store.js';
 import { Scheduler } from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
@@ -51,11 +53,13 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
 
   const executionProvider = createAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
   const reviewerProvider = createAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+  const linearSyncer = await resolveDaemonLinearSyncer(repoRoot);
 
   const runner = new SingleTicketRunner(
     runtimeStore,
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     budgets,
+    linearSyncer,
   );
 
   const notificationPolicy = new NotificationPolicy();
@@ -227,6 +231,14 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     clearInterval(heartbeatInterval);
     activeRunControlPlane.clear(runId);
   }
+}
+
+async function resolveDaemonLinearSyncer(repoRoot: string) {
+  const projectConfig = loadAfkProjectConfig(repoRoot).config;
+  if (!projectConfig?.linear) return undefined;
+  const client = new LinearGraphqlClient(process.env.LINEAR_API_KEY ?? '');
+  const resolvedConfig = await resolveLinearConfig({ config: projectConfig.linear, env: process.env, client });
+  return { resolvedConfig, client };
 }
 
 function createExecutor(harness: 'OpenCode' | 'Claude-Kimi') {

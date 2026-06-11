@@ -235,6 +235,8 @@ export interface RuntimeMetadataRecord {
   LINEAR_ISSUE_URL?: string;
   LINEAR_PARENT_KEY?: string;
   LINEAR_MIRROR_PATH?: string;
+  LINEAR_SYNC_STATUS?: 'running-synced' | 'terminal-synced' | 'failed' | null;
+  LINEAR_SYNC_FAILURES?: string[];
   PROVIDER_IDENTITY?: LinearProviderIdentity;
   STATUS: string;
   EXECUTION_PROVIDER: string;

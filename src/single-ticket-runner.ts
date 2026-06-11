@@ -1,13 +1,15 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
+import type { LinearRunSyncClient, ResolvedLinearConfig } from './linear.js';
+import { syncLinearRunStarted, syncLinearRunTerminal } from './linear.js';
 import { validateSelectedTicketPath } from './path-validation.js';
 import { buildPrompt } from './prompt-builder.js';
 import { classifyProviderFailureFromSource, isDeterministicFailureKind } from './provider-failure.js';
 import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
-import type { RuntimeStore } from './runtime-store.js';
+import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
 import type {
   AfkStateSnapshot,
   AgentExecutionProgressCallback,
@@ -60,13 +62,25 @@ export interface SingleTicketLaunchOptions {
   signal?: AbortSignal;
 }
 
+export interface LinearRunSyncer {
+  resolvedConfig: ResolvedLinearConfig;
+  client: LinearRunSyncClient;
+}
+
 export class SingleTicketRunner {
+  private readonly linearSyncer?: LinearRunSyncer;
+
   constructor(
     private readonly runtimeStore: RuntimeStore,
     private readonly provider: AgentExecutionProvider,
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
+    linearSyncerOrCommandExecutor?: LinearRunSyncer | ReadinessCommandExecutor,
     _commandExecutor: ReadinessCommandExecutor = new SyncReadinessCommandExecutor(),
-  ) {}
+  ) {
+    if (linearSyncerOrCommandExecutor && 'resolvedConfig' in linearSyncerOrCommandExecutor) {
+      this.linearSyncer = linearSyncerOrCommandExecutor;
+    }
+  }
 
   async launch(plan: LaunchPlan, options: SingleTicketLaunchOptions = {}): Promise<SingleTicketRunResult> {
     const ticket = plan.tickets[0];
@@ -88,6 +102,7 @@ export class SingleTicketRunner {
       providerIdentity: ticket.providerIdentity,
     });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
+    await this.syncLinearStarted(ticket, record);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);
     if (!plan.reviewerModel || !plan.reviewerPrompt) {
       const reason = 'reviewer required: no reviewer model or prompt configured';
@@ -208,7 +223,7 @@ export class SingleTicketRunner {
             if (executionBudget)
               return this.handoffForBudget(ticket.label, record, options, executionBudget, sessionId);
             if (executionResult.status !== 'completed') {
-              return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+              return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
                 this.runtimeStore.updateMetadata(record.metadataPath, {
                   STATUS: executionResult.status,
                   IMPLEMENTATION_STATUS: executionResult.status,
@@ -217,6 +232,15 @@ export class SingleTicketRunner {
                 });
                 this.runtimeStore.markFailed(record, executionResult.status);
                 this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
+                await this.syncLinearTerminal(
+                  ticket,
+                  record,
+                  executionResult.status === 'blocked' ? 'blocked' : 'failed',
+                  {
+                    nextAction: executionResult.status === 'blocked' ? 'human handoff' : 'investigate failed run',
+                    reviewerNotes: executionResult.unsafeReason ?? `Execution ended with ${executionResult.status}`,
+                  },
+                );
                 this.emitProgress(record.metadataPath, options.onProgress, {
                   ticketLabel: ticket.label,
                   message: `run ${executionResult.status}`,
@@ -277,9 +301,13 @@ export class SingleTicketRunner {
                 DETERMINISTIC_PROVIDER_FAILURE: true,
                 UNSAFE_REASON: message,
               });
-              return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+              return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
                 this.runtimeStore.markFailed(record, 'failed');
                 this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+                await this.syncLinearTerminal(ticket, record, 'failed', {
+                  nextAction: 'investigate failed run',
+                  reviewerNotes: message,
+                });
                 this.emitProgress(record.metadataPath, options.onProgress, {
                   ticketLabel: ticket.label,
                   message: `run failed: ${message}`,
@@ -297,7 +325,7 @@ export class SingleTicketRunner {
               executeBeforeReview = true;
               continue;
             }
-            return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+            return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
               this.runtimeStore.updateMetadata(record.metadataPath, {
                 STATUS: 'failed',
                 IMPLEMENTATION_STATUS: 'failed',
@@ -311,6 +339,10 @@ export class SingleTicketRunner {
               });
               this.runtimeStore.markFailed(record, 'failed');
               this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+              await this.syncLinearTerminal(ticket, record, 'failed', {
+                nextAction: 'investigate failed run',
+                reviewerNotes: message,
+              });
               this.emitProgress(record.metadataPath, options.onProgress, {
                 ticketLabel: ticket.label,
                 message: `run failed: ${message}`,
@@ -414,12 +446,16 @@ export class SingleTicketRunner {
                 classification: 'review-target-mismatch',
               }),
             );
-            return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+            return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
               this.runtimeStore.markHandoff(record, `reviewer provider failure: ${classification?.kind ?? 'unknown'}`);
               this.runtimeStore.appendLog(
                 record.logPath,
                 `run handoff: reviewer provider failure after implementation completed`,
               );
+              await this.syncLinearTerminal(ticket, record, 'handoff', {
+                nextAction: 'human review required',
+                reviewerNotes: message,
+              });
               this.emitProgress(record.metadataPath, options.onProgress, {
                 ticketLabel: ticket.label,
                 message: `run handoff: reviewer provider failure after implementation completed`,
@@ -441,7 +477,7 @@ export class SingleTicketRunner {
             executeBeforeReview = false;
             continue;
           }
-          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
             this.runtimeStore.updateMetadata(record.metadataPath, {
               STATUS: 'blocked',
               REVIEW_STATUS: 'failed',
@@ -466,6 +502,10 @@ export class SingleTicketRunner {
               record.logPath,
               `run handoff: reviewer provider failure after implementation completed`,
             );
+            await this.syncLinearTerminal(ticket, record, 'handoff', {
+              nextAction: 'human review required',
+              reviewerNotes: message,
+            });
             this.emitProgress(record.metadataPath, options.onProgress, {
               ticketLabel: ticket.label,
               message: `run handoff: reviewer provider failure after implementation completed`,
@@ -512,7 +552,7 @@ export class SingleTicketRunner {
         }
 
         if (decision.decision === 'approve') {
-          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
             const classification: ReviewOutcomeClassification = 'clean-approval';
             this.runtimeStore.recordFinalReviewOutcome(
               record.metadataPath,
@@ -552,6 +592,11 @@ export class SingleTicketRunner {
             }
             this.runtimeStore.markDone(record);
             this.runtimeStore.appendLog(record.logPath, 'run completed');
+            await this.syncLinearTerminal(ticket, record, 'completed', {
+              nextAction: 'none; AFK run approved',
+              reviewerNotes: decision.reason,
+              commits: this.recentCommitLines(plan.checkout.worktreePath),
+            });
             this.emitProgress(record.metadataPath, options.onProgress, {
               ticketLabel: ticket.label,
               message: 'run completed',
@@ -586,10 +631,14 @@ export class SingleTicketRunner {
               })),
             }),
           );
-          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', () => {
+          return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
             this.runtimeStore.markFailed(record, 'needs-human handoff required');
             this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
             this.runtimeStore.appendLog(record.logPath, 'run blocked');
+            await this.syncLinearTerminal(ticket, record, 'blocked', {
+              nextAction: 'human review required',
+              reviewerNotes: decision.reason,
+            });
             this.emitProgress(record.metadataPath, options.onProgress, {
               ticketLabel: ticket.label,
               message: 'run blocked',
@@ -988,6 +1037,76 @@ export class SingleTicketRunner {
     if (snapshotPath !== checkoutPath)
       return `snapshot worktree ${snapshotPath} does not match checkout worktree ${checkoutPath}`;
     return null;
+  }
+
+  private async syncLinearStarted(ticket: TicketRecord, record: RuntimeRecordHandle): Promise<void> {
+    if (!this.linearSyncer || ticket.providerIdentity?.provider !== 'linear') return;
+    try {
+      await syncLinearRunStarted({
+        ticket,
+        resolvedConfig: this.linearSyncer.resolvedConfig,
+        client: this.linearSyncer.client,
+      });
+      this.runtimeStore.updateMetadata(record.metadataPath, { LINEAR_SYNC_STATUS: 'running-synced' });
+      this.runtimeStore.appendLog(record.logPath, `linear sync: ${ticket.providerIdentity.issueKey} set to running`);
+    } catch (error) {
+      this.recordLinearSyncFailure(record, error);
+    }
+  }
+
+  private async syncLinearTerminal(
+    ticket: TicketRecord,
+    record: RuntimeRecordHandle,
+    outcome: 'completed' | 'blocked' | 'failed' | 'handoff',
+    details: { nextAction: string; reviewerNotes?: string; caveats?: string; tests?: string; commits?: string[] },
+  ): Promise<void> {
+    if (!this.linearSyncer || ticket.providerIdentity?.provider !== 'linear') return;
+    try {
+      const metadata = this.runtimeStore.readMetadata(record.metadataPath);
+      await syncLinearRunTerminal({
+        summary: {
+          ticket,
+          metadata,
+          outcome,
+          nextAction: details.nextAction,
+          reviewerNotes: details.reviewerNotes,
+          caveats: details.caveats,
+          tests: details.tests,
+          commits: details.commits,
+        },
+        resolvedConfig: this.linearSyncer.resolvedConfig,
+        client: this.linearSyncer.client,
+      });
+      this.runtimeStore.updateMetadata(record.metadataPath, { LINEAR_SYNC_STATUS: 'terminal-synced' });
+      this.runtimeStore.appendLog(
+        record.logPath,
+        `linear sync: ${ticket.providerIdentity.issueKey} terminal ${outcome}`,
+      );
+    } catch (error) {
+      this.recordLinearSyncFailure(record, error);
+    }
+  }
+
+  private recordLinearSyncFailure(record: RuntimeRecordHandle, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const metadata = this.runtimeStore.readMetadata(record.metadataPath);
+    const failures = [...(metadata.LINEAR_SYNC_FAILURES ?? []), message];
+    this.runtimeStore.updateMetadata(record.metadataPath, {
+      LINEAR_SYNC_STATUS: 'failed',
+      LINEAR_SYNC_FAILURES: failures,
+    });
+    this.runtimeStore.appendLog(record.logPath, `linear sync failed: ${message}`);
+  }
+
+  private recentCommitLines(worktreePath: string): string[] {
+    try {
+      return runGit(worktreePath, ['log', '--oneline', '-5'])
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
   }
 
   private readTicketContent(ticket: TicketRecord): string | null {

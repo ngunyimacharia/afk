@@ -38,6 +38,7 @@ import {
   discoverLinearFeatures,
   LinearGraphqlClient,
   type LinearParentFeature,
+  type ResolvedLinearConfig,
   resolveLinearConfig,
 } from './linear.js';
 import { createLiveRunView } from './live-run-view.js';
@@ -430,10 +431,12 @@ export async function runAfk(
       return { code: 1, message: formatTicketMetadataError(error) };
     }
     let linearTickets: TicketRecord[] = [];
+    let resolvedLinearConfig: ResolvedLinearConfig | undefined;
     if (activeProjectConfig.linear) {
       try {
         const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
         const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
+        resolvedLinearConfig = resolvedConfig;
         const linearFeatures = await discoverLinearFeatures({ resolvedConfig, client });
         const discoveryLines = formatLinearDiscoveryLines(linearFeatures);
         if (discoveryLines.length) io.stdout.write(`${discoveryLines.join('\n')}\n`);
@@ -667,6 +670,9 @@ export async function runAfk(
       runtimeStore,
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
       launchPreferences.budgets,
+      resolvedLinearConfig
+        ? { resolvedConfig: resolvedLinearConfig, client: new LinearGraphqlClient(env.LINEAR_API_KEY ?? '') }
+        : undefined,
     );
     const renderer: OpenTUIRenderer = {
       capabilities: { notifications: io.stdout.isTTY ?? false },
