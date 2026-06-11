@@ -25,6 +25,8 @@ export class PathValidationError extends Error {
 
 export function validateSelectedTicketPath(repoRoot: string, ticket: TicketRecord): LaunchBlockEvidence | null {
   const scratchRoot = path.resolve(repoRoot, '.scratch');
+  if (ticket.source === 'linear') return validateLinearMirrorPath(repoRoot, ticket);
+
   const expectedIssuesRoot = path.resolve(scratchRoot, ticket.feature, 'issues');
   const selectedPath = path.resolve(ticket.path);
   const expectedPath = path.resolve(expectedIssuesRoot, `${ticket.issueName}.md`);
@@ -47,6 +49,22 @@ export function validateSelectedTicketPath(repoRoot: string, ticket: TicketRecor
   }
   if (!existsSync(selectedPath) || !safeIsFile(selectedPath)) {
     return launchBlock(ticket, ticket.path, `Selected issue path missing for ${ticket.label}: ${selectedPath}`);
+  }
+  return null;
+}
+
+function validateLinearMirrorPath(repoRoot: string, ticket: TicketRecord): LaunchBlockEvidence | null {
+  const mirrorRoot = path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
+  const selectedPath = path.resolve(ticket.path);
+  if (!isWithinRoot(selectedPath, mirrorRoot)) {
+    return launchBlock(
+      ticket,
+      ticket.path,
+      `Invalid Linear mirror path for ${ticket.label}: must be under ${mirrorRoot}`,
+    );
+  }
+  if (!existsSync(selectedPath) || !safeIsFile(selectedPath)) {
+    return launchBlock(ticket, ticket.path, `Linear mirror path missing for ${ticket.label}: ${selectedPath}`);
   }
   return null;
 }

@@ -10,6 +10,16 @@ export interface TicketRecord {
   dependsOn?: string[];
   source?: 'scratch' | 'linear';
   content?: string;
+  providerIdentity?: LinearProviderIdentity;
+}
+
+export interface LinearProviderIdentity {
+  provider: 'linear';
+  issueId: string;
+  issueKey: string;
+  issueUrl: string;
+  parentKey: string;
+  mirrorPath?: string;
 }
 
 export interface LaunchBlockEvidence {
@@ -128,6 +138,8 @@ export interface AfkStateSnapshot {
   head: string;
   gitStatusShort: string[];
   ticketOutsideWorktree: boolean;
+  providerIdentity?: LinearProviderIdentity;
+  mirrorPath?: string;
   dependencies: DependencySnapshot[];
   readiness: ReadinessSnapshot | null;
 }
@@ -212,6 +224,12 @@ export interface RuntimeMetadataRecord {
   START_EPOCH: number;
   DONE_SENTINEL_PATH: string;
   FAILED_SENTINEL_PATH: string;
+  LINEAR_ISSUE_ID?: string;
+  LINEAR_ISSUE_KEY?: string;
+  LINEAR_ISSUE_URL?: string;
+  LINEAR_PARENT_KEY?: string;
+  LINEAR_MIRROR_PATH?: string;
+  PROVIDER_IDENTITY?: LinearProviderIdentity;
   STATUS: string;
   EXECUTION_PROVIDER: string;
   EXECUTION_MODEL_ID?: string;
@@ -258,6 +276,8 @@ export interface RuntimeMetadataRecord {
     branchName: string;
     head: string;
     ticketOutsideWorktree: boolean;
+    providerIdentity?: LinearProviderIdentity;
+    mirrorPath?: string;
     dependencyCount: number;
     readinessSourcePath: string | null;
   };

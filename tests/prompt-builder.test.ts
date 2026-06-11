@@ -373,6 +373,52 @@ test('snapshot includes implementation HEAD in executor prompt', () => {
   assert.match(prompt, /Feature PRD: \/repo\/\.scratch\/feat\/PRD\.md/);
 });
 
+test('launch snapshots include Linear mirror identity', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-snapshot-'));
+  const mirrorPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors', 'eng-100-eng-101.md');
+  const plan = buildLaunchPlan(
+    repoRoot,
+    { id: 'exec' },
+    [
+      {
+        path: mirrorPath,
+        feature: 'eng-100',
+        issueName: 'eng-101',
+        label: 'eng-100/eng-101',
+        executorAfk: true,
+        source: 'linear',
+        providerIdentity: {
+          provider: 'linear',
+          issueId: 'issue-1',
+          issueKey: 'ENG-101',
+          issueUrl: 'https://linear.app/acme/issue/ENG-101/child',
+          parentKey: 'ENG-100',
+          mirrorPath,
+        },
+      },
+    ],
+    {
+      featureSlug: 'eng-100',
+      defaultWorktreeName: 'eng-100',
+      effectiveWorktreeName: 'eng-100',
+      defaultBranchName: 'eng-100',
+      effectiveBranchName: 'eng-100',
+      worktreePath: repoRoot,
+    },
+  );
+
+  const snapshot = plan.snapshots?.['eng-100/eng-101'];
+  assert.equal(snapshot?.mirrorPath, mirrorPath);
+  assert.deepEqual(snapshot?.providerIdentity, {
+    provider: 'linear',
+    issueId: 'issue-1',
+    issueKey: 'ENG-101',
+    issueUrl: 'https://linear.app/acme/issue/ENG-101/child',
+    parentKey: 'ENG-100',
+    mirrorPath,
+  });
+});
+
 test('launch plan snapshots use per-feature checkouts', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-prompt-multi-checkout-'));
   const ticketA = path.join(repoRoot, '.scratch', 'feat-a', 'issues', '01.md');

@@ -149,6 +149,8 @@ function buildSnapshot(
     head,
     gitStatusShort,
     ticketOutsideWorktree: path.relative(worktreePath, ticketPath).startsWith('..'),
+    ...(ticket.providerIdentity ? { providerIdentity: ticket.providerIdentity } : {}),
+    ...(ticket.providerIdentity?.mirrorPath ? { mirrorPath: ticket.providerIdentity.mirrorPath } : {}),
     dependencies: buildDependencySnapshots(repoRootResolved, ticket, tickets),
     readiness: readReadinessSummary(repoRootResolved, ticket.feature),
   };

@@ -85,6 +85,7 @@ export class SingleTicketRunner {
       issueName: ticket.issueName,
       ticketPath: ticket.path,
       runId: options.runId,
+      providerIdentity: ticket.providerIdentity,
     });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);
@@ -990,10 +991,10 @@ export class SingleTicketRunner {
   }
 
   private readTicketContent(ticket: TicketRecord): string | null {
-    if (ticket.source === 'linear') return ticket.content ?? '';
     try {
       return readFileSync(ticket.path, 'utf8');
     } catch {
+      if (ticket.source === 'linear') return ticket.content ?? '';
       return null;
     }
   }
@@ -1253,6 +1254,8 @@ export class SingleTicketRunner {
         branchName: snapshot.branchName,
         head: snapshot.head,
         ticketOutsideWorktree: snapshot.ticketOutsideWorktree,
+        providerIdentity: snapshot.providerIdentity,
+        mirrorPath: snapshot.mirrorPath,
         dependencyCount: snapshot.dependencies.length,
         readinessSourcePath: snapshot.readiness?.sourcePath ?? null,
       },
