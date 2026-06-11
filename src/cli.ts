@@ -1,6 +1,15 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
@@ -1256,6 +1265,9 @@ function resolveCompiledSelfCommand(): string {
     try {
       if (statSync(candidate).isFile()) return candidate;
     } catch {}
+  }
+  if (process.argv[1]?.startsWith('/$bunfs/') && path.basename(process.execPath) === 'bun') {
+    return path.join(path.dirname(process.execPath), 'afk');
   }
   try {
     return resolveExecutable('afk');
