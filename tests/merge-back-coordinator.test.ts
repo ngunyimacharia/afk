@@ -255,7 +255,9 @@ test('detects conflicts, invokes reviewer agent, and resolves', async () => {
   const meta1 = setupTicketMetadata(store, feature, '001');
   const meta2 = setupTicketMetadata(store, feature, '002');
 
-  const agentProvider = new FakeAgentExecutionProvider(async () => {
+  const prompts: string[] = [];
+  const agentProvider = new FakeAgentExecutionProvider(async (request) => {
+    prompts.push(request.prompt);
     writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nbranch1\nbranch2\n');
     git(featureWorktreePath, ['add', 'shared.txt']);
     return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
@@ -264,7 +266,6 @@ test('detects conflicts, invokes reviewer agent, and resolves', async () => {
   const coordinator = new MergeBackCoordinator({
     agentExecutionProvider: agentProvider,
     runtimeStore: store,
-    conflictResolutionBudget: 2,
   });
 
   const result = await coordinator.mergeWave({
@@ -291,6 +292,47 @@ test('detects conflicts, invokes reviewer agent, and resolves', async () => {
 
   const metadata2 = store.readMetadata(meta2.metadataPath);
   assert.equal(metadata2.MERGE_STATUS, 'conflict-resolved');
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /Attempt: 1 of 50/);
+});
+
+test('base merge conflict resolution uses default budget in prompt', async () => {
+  const repoRoot = createRepo('feature-base-default-budget-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature work']);
+
+  writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nmain\n');
+  git(repoRoot, ['add', 'shared.txt']);
+  git(repoRoot, ['commit', '-m', 'main work']);
+
+  const prompts: string[] = [];
+  const agentProvider = new FakeAgentExecutionProvider(async (request) => {
+    prompts.push(request.prompt);
+    writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nfeature\nmain\n');
+    git(repoRoot, ['add', 'shared.txt']);
+    return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const result = await coordinator.mergeFeatureBranchToBase({
+    repoRoot,
+    baseBranch: 'main',
+    featureBranch: feature,
+    feature,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /Attempt: 1 of 50/);
 });
 
 test('marks ticket failed when conflict resolution exceeds budget', async () => {
