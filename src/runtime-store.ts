@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { assertPathWithinRoot } from './path-validation.js';
+import { isSelectableHarnessId } from './harness-registry.js';
 import type {
   BudgetExceededEvent,
   BudgetPolicy,
@@ -65,17 +66,13 @@ export class RuntimeStore {
     try {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-      const validHarnesses = new Set<string>(['OpenCode', 'Claude-Kimi']);
       const harnessValue = typeof value.harness === 'string' ? value.harness : undefined;
       const reviewerHarnessValue = typeof value.reviewerHarness === 'string' ? value.reviewerHarness : undefined;
       const preferences: LaunchPreferences = {
-        harness:
-          harnessValue && validHarnesses.has(harnessValue) ? (harnessValue as LaunchPreferences['harness']) : undefined,
+        harness: harnessValue && isSelectableHarnessId(harnessValue) ? harnessValue : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
         reviewerHarness:
-          reviewerHarnessValue && validHarnesses.has(reviewerHarnessValue)
-            ? (reviewerHarnessValue as LaunchPreferences['reviewerHarness'])
-            : undefined,
+          reviewerHarnessValue && isSelectableHarnessId(reviewerHarnessValue) ? reviewerHarnessValue : undefined,
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)

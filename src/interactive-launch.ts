@@ -1,4 +1,5 @@
 import prompts from 'prompts';
+import { displayNameForHarness, isSelectableHarnessId, type SelectableHarnessId } from './harness-registry.js';
 import { resolveReviewerPromptTemplate } from './reviewer-prompt-catalog.js';
 import type { LaunchModel, LaunchPreferences, ReviewerPromptTemplate, TicketRecord } from './types.js';
 
@@ -9,9 +10,9 @@ export interface PromptIO {
 
 export interface LaunchWizardResult {
   cancelled: boolean;
-  harness?: 'OpenCode' | 'Claude-Kimi';
+  harness?: SelectableHarnessId;
   model?: LaunchModel;
-  reviewerHarness?: 'OpenCode' | 'Claude-Kimi';
+  reviewerHarness?: SelectableHarnessId;
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
@@ -33,8 +34,8 @@ export function isInteractiveLaunchAllowed(io: PromptIO, env: NodeJS.ProcessEnv)
 export async function runInteractiveLaunchWizard(input: {
   io: PromptIO;
   repoRoot: string;
-  availableHarnesses: string[];
-  discoverModels: (harness: string) => Promise<LaunchModel[]>;
+  availableHarnesses: SelectableHarnessId[];
+  discoverModels: (harness: SelectableHarnessId) => Promise<LaunchModel[]>;
   tickets: TicketRecord[];
   preferences?: LaunchPreferences;
 }): Promise<LaunchWizardResult> {
@@ -45,8 +46,9 @@ export async function runInteractiveLaunchWizard(input: {
   }
 
   const harnessInitial = input.preferences?.harness ? harnessChoices.indexOf(input.preferences.harness) : undefined;
-  const harness = await promptSingleSelect(input.io, 'Select implementation harness', harnessChoices, harnessInitial);
-  if (!harness) return { cancelled: true };
+  const selectedHarness = await promptSingleSelect(input.io, 'Select implementation harness', harnessChoices, harnessInitial);
+  if (!selectedHarness || !isSelectableHarnessId(selectedHarness)) return { cancelled: true };
+  const harness = selectedHarness;
 
   const models = await input.discoverModels(harness);
   if (!models.length) {
@@ -61,7 +63,7 @@ export async function runInteractiveLaunchWizard(input: {
   if (!model) return { cancelled: true };
 
   const reviewerHarnessChoices = harnessChoices.map((choice) =>
-    choice === harness ? `${choice} (same as implementation)` : choice,
+    choice === harness ? `${displayNameForHarness(choice)} (same as implementation)` : displayNameForHarness(choice),
   );
   const reviewerHarnessInitial = input.preferences?.reviewerHarness
     ? harnessChoices.indexOf(input.preferences.reviewerHarness)
@@ -73,9 +75,9 @@ export async function runInteractiveLaunchWizard(input: {
     reviewerHarnessInitial >= 0 ? reviewerHarnessInitial : undefined,
   );
   if (!selectedReviewerHarnessDisplay) return { cancelled: true };
-  const reviewerHarness = selectedReviewerHarnessDisplay.replace(/ \(same as implementation\)$/, '') as
-    | 'OpenCode'
-    | 'Claude-Kimi';
+  const reviewerHarnessIndex = reviewerHarnessChoices.indexOf(selectedReviewerHarnessDisplay);
+  const reviewerHarness = harnessChoices[reviewerHarnessIndex];
+  if (!reviewerHarness || !isSelectableHarnessId(reviewerHarness)) return { cancelled: true };
 
   const reviewerModels = reviewerHarness === harness ? models : await input.discoverModels(reviewerHarness);
   if (!reviewerModels.length) {
@@ -102,9 +104,9 @@ export async function runInteractiveLaunchWizard(input: {
 
   return {
     cancelled: false,
-    harness: harness as 'OpenCode',
+    harness,
     model,
-    reviewerHarness: reviewerHarness as 'OpenCode',
+    reviewerHarness,
     reviewerModel,
     reviewerPrompt,
     tickets: selectedTickets,

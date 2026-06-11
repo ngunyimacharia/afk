@@ -1,17 +1,16 @@
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
-import {
-  ClaudeKimiAgentExecutionProvider,
-  CompositeAgentExecutionProvider,
-  OpenCodeAgentExecutionProvider,
-} from './agent-execution-provider.js';
-import { ClaudeCodeSessionExecutor } from './claude-code.js';
+import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
 import { mergeCompletedFeaturesToBase } from './feature-base-merge.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
+import {
+  createHarnessAgentExecutionProvider,
+  createHarnessExecutor,
+  type SelectableHarnessId,
+} from './harness-registry.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
-import { SDKOpenCodeSessionExecutor } from './opencode.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { RuntimeStore } from './runtime-store.js';
 import { Scheduler } from './scheduler.js';
@@ -23,8 +22,8 @@ export interface DaemonLaunchContext {
   repoRoot: string;
   runId: string;
   plan: LaunchPlan;
-  harness: 'OpenCode' | 'Claude-Kimi';
-  reviewerHarness: 'OpenCode' | 'Claude-Kimi';
+  harness: SelectableHarnessId;
+  reviewerHarness: SelectableHarnessId;
   concurrency: number;
   budgets?: Partial<BudgetPolicy>;
   mergeBackToBase?: boolean;
@@ -46,11 +45,11 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     autoApprove: true,
   });
 
-  const implementationExecutor = createExecutor(harness);
-  const reviewerExecutor = createExecutor(reviewerHarness);
+  const implementationExecutor = createHarnessExecutor(harness);
+  const reviewerExecutor = createHarnessExecutor(reviewerHarness);
 
-  const executionProvider = createAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-  const reviewerProvider = createAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+  const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
+  const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
 
   const runner = new SingleTicketRunner(
     runtimeStore,
@@ -223,18 +222,4 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     clearInterval(heartbeatInterval);
     activeRunControlPlane.clear(runId);
   }
-}
-
-function createExecutor(harness: 'OpenCode' | 'Claude-Kimi') {
-  if (harness === 'Claude-Kimi') return new ClaudeCodeSessionExecutor('kimi');
-  return new SDKOpenCodeSessionExecutor();
-}
-
-function createAgentExecutionProvider(
-  harness: 'OpenCode' | 'Claude-Kimi',
-  executor: ReturnType<typeof createExecutor>,
-  permissionCoordinator?: PermissionCoordinator,
-) {
-  if (harness === 'Claude-Kimi') return new ClaudeKimiAgentExecutionProvider(executor, permissionCoordinator);
-  return new OpenCodeAgentExecutionProvider(executor, permissionCoordinator);
 }
