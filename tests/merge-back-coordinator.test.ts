@@ -618,12 +618,6 @@ test('skips deletion when issue worktree has uncommitted changes', async () => {
   assert.equal(result.cleanupResults[0].warning?.includes('uncommitted changes'), true);
 });
 
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
