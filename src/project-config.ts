@@ -257,7 +257,8 @@ function credentialFields(record: Record<string, unknown>, field: string, seen =
 
   return Object.entries(record).flatMap(([key, value]) => {
     const nestedField = `${field}.${key}`;
-    const errors = /token|secret|password|credential|apiKey/i.test(key)
+    const credentialKey = key.replace(/[-_]/g, '');
+    const errors = /token|secret|password|credential|apikey/i.test(credentialKey)
       ? [`${nestedField} must not be stored in ${AFK_CONFIG_FILE}; use environment variables or an auth store.`]
       : [];
 

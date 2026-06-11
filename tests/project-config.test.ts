@@ -128,6 +128,17 @@ test('rejects credentials nested under workflow states config', () => {
   assert.match(result.errors.join('\n'), /provider\.workflowStates\.apiKey must not be stored in afk\.json/);
 });
 
+test('rejects provider api key spellings with separators', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: { kind: 'scratch', api_key: 'secret', 'api-key': 'secret' },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /provider\.api_key must not be stored in afk\.json/);
+  assert.match(result.errors.join('\n'), /provider\.api-key must not be stored in afk\.json/);
+});
+
 test('rejects credentials deeply nested under unknown provider config objects', () => {
   const result = validateAfkProjectConfig({
     testsEnabled: false,
