@@ -159,8 +159,7 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): AfkLinea
   if (record.applyAfkLabelToParents !== undefined && typeof record.applyAfkLabelToParents !== 'boolean') {
     errors.push('linear.applyAfkLabelToParents must be a boolean when present.');
   }
-  if (!isNonEmptyString(record.afkLabelName) || !isNonEmptyString(record.readyStateName))
-    return undefined;
+  if (!isNonEmptyString(record.afkLabelName) || !isNonEmptyString(record.readyStateName)) return undefined;
 
   return {
     ...(isNonEmptyString(record.teamId) ? { teamId: record.teamId.trim() } : {}),
