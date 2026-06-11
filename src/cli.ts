@@ -31,6 +31,8 @@ import {
   createHarnessExecutor,
   discoverAvailableHarnesses,
   discoverHarnessModels,
+  displayNameForHarness,
+  isSelectableHarnessId,
   providerNameForHarness,
   type SelectableHarnessId,
 } from './harness-registry.js';
@@ -827,7 +829,7 @@ interface RunMetadata {
   ticketCount: number;
 }
 
-function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
+export function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
   const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   if (!existsSync(metadataRoot)) return { ticketCount: 0 };
 
@@ -844,7 +846,7 @@ function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
       ticketCount++;
       if (!modelId && typeof parsed.EXECUTION_MODEL_ID === 'string') modelId = parsed.EXECUTION_MODEL_ID;
       if (!harness && typeof parsed.EXECUTION_PROVIDER === 'string') {
-        harness = parsed.EXECUTION_PROVIDER === 'opencode' ? 'OpenCode' : parsed.EXECUTION_PROVIDER;
+        harness = displayNameForProvider(parsed.EXECUTION_PROVIDER);
       }
     } catch {
       // skip malformed metadata files
@@ -858,7 +860,9 @@ function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
       if (existsSync(prefsPath)) {
         const prefs = JSON.parse(readFileSync(prefsPath, 'utf8')) as Record<string, unknown>;
         if (!modelId && typeof prefs.modelId === 'string') modelId = prefs.modelId;
-        if (!harness && typeof prefs.harness === 'string') harness = prefs.harness;
+        if (!harness && typeof prefs.harness === 'string' && isSelectableHarnessId(prefs.harness)) {
+          harness = displayNameForHarness(prefs.harness);
+        }
       }
     } catch {
       // ignore unreadable preferences
@@ -866,6 +870,13 @@ function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
   }
 
   return { modelId, harness, ticketCount };
+}
+
+function displayNameForProvider(provider: string): string {
+  if (provider === 'opencode') return 'OpenCode';
+  if (provider === 'claude-kimi') return 'Claude-Kimi';
+  if (provider === 'codex') return 'Codex';
+  return provider;
 }
 
 export interface RunPlan {

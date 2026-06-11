@@ -3,6 +3,8 @@ import type { ThreadEvent, ThreadOptions } from '@openai/codex-sdk';
 import type { OpenCodeSessionExecutor, OpenCodeSessionProgressEvent } from './opencode.js';
 import type { LaunchModel } from './types.js';
 
+const DEFAULT_CODEX_MODEL: LaunchModel = { id: 'codex/default', label: 'Default' };
+
 interface CodexThreadLike {
   readonly id: string | null;
   runStreamed(
@@ -19,6 +21,17 @@ interface CodexClientLike {
 type CodexThreadEventLike = ThreadEvent | Record<string, unknown>;
 
 export type CodexClientFactory = () => CodexClientLike;
+
+export async function discoverCodexModels(env: NodeJS.ProcessEnv = process.env): Promise<LaunchModel[]> {
+  const configuredModels = (env.AFK_CODEX_MODELS ?? '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+  return [
+    DEFAULT_CODEX_MODEL,
+    ...configuredModels.map((model) => ({ id: `codex/${model}`, label: model })),
+  ];
+}
 
 export class CodexSessionExecutor implements OpenCodeSessionExecutor {
   constructor(private readonly factory: CodexClientFactory = () => new Codex()) {}

@@ -232,6 +232,11 @@ test('rejects stale harness values Kimi and Claude-Anthropic from persisted pref
   const valid = store.readLaunchPreferences();
   assert.equal(valid.harness, 'OpenCode');
   assert.equal(valid.reviewerHarness, 'Claude-Kimi');
+
+  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Codex', reviewerHarness: 'Codex' }), 'utf8');
+  const codex = store.readLaunchPreferences();
+  assert.equal(codex.harness, 'Codex');
+  assert.equal(codex.reviewerHarness, 'Codex');
 });
 
 test('initializes separate status fields on record creation', () => {

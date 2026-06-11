@@ -1,15 +1,17 @@
 import {
   type AgentExecutionProvider,
   ClaudeKimiAgentExecutionProvider,
+  CodexAgentExecutionProvider,
   OpenCodeAgentExecutionProvider,
 } from './agent-execution-provider.js';
 import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
+import { CodexSessionExecutor, discoverCodexModels } from './codex.js';
 import { type OpenCodeSessionExecutor, discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
 import type { LaunchModel } from './types.js';
 
 export type HarnessId = 'OpenCode' | 'Claude-Kimi' | 'Codex';
-export type SelectableHarnessId = Exclude<HarnessId, 'Codex'>;
+export type SelectableHarnessId = HarnessId;
 
 interface HarnessRegistryEntry {
   id: HarnessId;
@@ -49,7 +51,11 @@ const HARNESS_REGISTRY = [
     id: 'Codex',
     displayName: 'Codex',
     providerName: 'codex',
-    selectable: false,
+    selectable: true,
+    discoverModels: discoverCodexModels,
+    createExecutor: () => new CodexSessionExecutor(),
+    createAgentExecutionProvider: (executor, permissionCoordinator) =>
+      new CodexAgentExecutionProvider(executor, permissionCoordinator),
   },
 ] satisfies HarnessRegistryEntry[];
 

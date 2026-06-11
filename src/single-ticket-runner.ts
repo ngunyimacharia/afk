@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
+import { providerNameForHarness } from './harness-registry.js';
 import { validateSelectedTicketPath } from './path-validation.js';
 import { buildPrompt } from './prompt-builder.js';
 import { classifyProviderFailureFromSource, isDeterministicFailureKind } from './provider-failure.js';
@@ -106,6 +107,7 @@ export class SingleTicketRunner {
       `reviewer prompt: ${plan.reviewerPrompt.id} (${plan.reviewerPrompt.path})`,
     );
     this.runtimeStore.updateMetadata(record.metadataPath, {
+      EXECUTION_PROVIDER: plan.harness ? providerNameForHarness(plan.harness) : 'opencode',
       EXECUTION_MODEL_ID: plan.model.id,
       REVIEWER_MODEL_ID: plan.reviewerModel.id,
       REVIEWER_PROMPT_ID: plan.reviewerPrompt.id,

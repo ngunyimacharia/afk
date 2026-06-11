@@ -109,6 +109,58 @@ test('__daemon command clears active run on empty plan', async () => {
   assert.equal(existsSync(contextPath), false);
 });
 
+test('__daemon command accepts Codex implementation and reviewer context', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-daemon-codex-'));
+  writeMinimalAfkConfig(repoRoot);
+  const contextPath = path.join(repoRoot, 'daemon-context.json');
+
+  const plan = buildLaunchPlan(
+    repoRoot,
+    { id: 'codex/default' },
+    [],
+    {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: repoRoot,
+    },
+    {
+      harness: 'Codex',
+      model: { id: 'codex/default' },
+      prompt: { id: 'reviewer-default', label: 'Default', path: '/tmp/reviewer.md' },
+    },
+    undefined,
+    undefined,
+    'Codex',
+  );
+
+  const context = {
+    repoRoot,
+    runId: 'daemon-run-codex',
+    plan,
+    harness: 'Codex' as const,
+    reviewerHarness: 'Codex' as const,
+    concurrency: 1,
+  };
+
+  writeFileSync(contextPath, JSON.stringify(context), 'utf8');
+
+  const originalArg = process.argv[2];
+  process.argv[2] = '__daemon';
+  const originalArg3 = process.argv[3];
+  process.argv[3] = contextPath;
+
+  const result = await runAfk(repoRoot);
+
+  process.argv[2] = originalArg;
+  process.argv[3] = originalArg3;
+
+  assert.equal(result.code, 0);
+  assert.equal(existsSync(contextPath), false);
+});
+
 test('__daemon command in argv[1] works for compiled mode', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-daemon-compiled-'));
   writeMinimalAfkConfig(repoRoot);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { buildCodexThreadOptions, CodexSessionExecutor, parseCodexModel } from '../src/codex.js';
+import { buildCodexThreadOptions, CodexSessionExecutor, discoverCodexModels, parseCodexModel } from '../src/codex.js';
 
 class FakeCodexThread {
   runInputs: string[] = [];
@@ -45,6 +45,15 @@ class FakeCodexClient {
 }
 
 describe('CodexSessionExecutor', () => {
+  test('discovers default and configured Codex launch models', async () => {
+    const models = await discoverCodexModels({ AFK_CODEX_MODELS: 'gpt-x, gpt-y' });
+
+    assert.deepEqual(
+      models.map((model) => model.id),
+      ['codex/default', 'codex/gpt-x', 'codex/gpt-y'],
+    );
+  });
+
   test('starts a new Codex thread and returns the thread id from the stream', async () => {
     const client = new FakeCodexClient({
       startThread: new FakeCodexThread('thread-late', [

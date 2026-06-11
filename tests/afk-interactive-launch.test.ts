@@ -7,6 +7,7 @@ import {
   expandSelectedFeaturesToAllTickets,
   formatManualPermissionReviewLines,
   orderSelectedTicketsByFeatureGraph,
+  readRunMetadata,
   readRunOutcomeLines,
   runAfk,
   validateSelectedFeatureDependencies,
@@ -217,6 +218,22 @@ test('run outcome ignores stale metadata from a previous launch', () => {
 
   assert.equal(lines[0], 'Run outcome: mixed/unknown');
   assert.match(lines.join('\n'), /feat\/01: unknown \(stale runtime metadata from previous launch\)/);
+});
+
+test('run metadata displays Codex provider as Codex', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-codex-'));
+  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(metadataRoot, { recursive: true });
+  writeFileSync(
+    path.join(metadataRoot, 'feat-01.json'),
+    JSON.stringify({ RUN_ID: 'run-codex', EXECUTION_PROVIDER: 'codex', EXECUTION_MODEL_ID: 'codex/default' }),
+  );
+
+  assert.deepEqual(readRunMetadata(repoRoot, 'run-codex'), {
+    modelId: 'codex/default',
+    harness: 'Codex',
+    ticketCount: 1,
+  });
 });
 
 test('run outcome ignores metadata from a different run id', () => {
