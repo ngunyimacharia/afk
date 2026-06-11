@@ -1050,7 +1050,7 @@ async function preflightSelectedModels(
   return preflightModel(reviewerExecutor, reviewerModel, 'reviewer', reviewerHarness);
 }
 
-async function preflightModel(
+export async function preflightModel(
   executor: OpenCodeSessionExecutor,
   model: LaunchModel,
   role: 'implementation' | 'reviewer',
@@ -1063,7 +1063,7 @@ async function preflightModel(
       agent: role === 'reviewer' ? (harness === 'OpenCode' ? 'review' : undefined) : 'build',
       prompt: 'AFK model availability preflight. Reply OK.',
     });
-    const reason = detectPreflightFailureReason(result.output);
+    const reason = result.terminalError ?? detectPreflightFailureReason(result.output);
     return reason ? formatPreflightFailure(model.id, role, reason, harness) : null;
   } catch (error) {
     const reason = error instanceof Error ? error.message : `${harness} model preflight failed`;
