@@ -4,29 +4,49 @@ import {
   buildCodexThreadOptions,
   CodexSessionExecutor,
   discoverCodexModels,
+  parseCodexEvent,
   parseCodexApprovalPolicy,
   parseCodexBoolean,
   parseCodexModel,
   parseCodexSandboxMode,
 } from '../src/codex.js';
 
+type FakeCodexEvent = Record<string, unknown> & { delayMs?: number; hang?: boolean };
+
 class FakeCodexThread {
   runInputs: string[] = [];
+  signals: AbortSignal[] = [];
 
   constructor(
     readonly id: string | null,
-    private readonly events: Array<Record<string, unknown>> = [],
+    private readonly events: FakeCodexEvent[] | FakeCodexEvent[][] = [],
     private readonly failure?: Error,
   ) {}
 
-  async runStreamed(input: string): Promise<{ events: AsyncIterable<Record<string, unknown>> }> {
+  async runStreamed(input: string, options?: { signal?: AbortSignal }): Promise<{ events: AsyncIterable<Record<string, unknown>> }> {
     this.runInputs.push(input);
+    if (options?.signal) this.signals.push(options.signal);
     if (this.failure) throw this.failure;
-    return { events: this.streamEvents() };
+    return { events: this.streamEvents(this.eventsForRun(), options?.signal) };
   }
 
-  private async *streamEvents(): AsyncGenerator<Record<string, unknown>> {
-    for (const event of this.events) yield event;
+  private eventsForRun(): FakeCodexEvent[] {
+    if (!this.events.length) return [];
+    if (Array.isArray(this.events[0])) {
+      const runs = this.events as FakeCodexEvent[][];
+      return runs[Math.min(this.runInputs.length - 1, runs.length - 1)] ?? [];
+    }
+    return this.events as FakeCodexEvent[];
+  }
+
+  private async *streamEvents(events: FakeCodexEvent[], signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+    for (const event of events) {
+      if (event.delayMs) await sleep(event.delayMs);
+      if (event.hang) await waitForAbort(signal);
+      if (signal?.aborted) return;
+      const { delayMs: _delayMs, hang: _hang, ...payload } = event;
+      yield payload;
+    }
   }
 }
 
@@ -183,4 +203,146 @@ describe('CodexSessionExecutor', () => {
     assert.equal(turnResult.sessionId, 'thread-turn');
     assert.equal(turnResult.terminalError, 'turn failed');
   });
+
+  test('maps Codex stream events into AFK progress messages', () => {
+    const events = [
+      parseCodexEvent({ type: 'thread.started', thread_id: 'thread-progress' }, null),
+      parseCodexEvent({ type: 'turn.started' }, 'thread-progress'),
+      parseCodexEvent(
+        { type: 'item.updated', item: { type: 'command_execution', command: 'bun test', status: 'running' } },
+        'thread-progress',
+      ),
+      parseCodexEvent(
+        { type: 'item.completed', item: { type: 'file_change', path: 'src/app.ts', action: 'updated' } },
+        'thread-progress',
+      ),
+      parseCodexEvent({ type: 'item.updated', item: { type: 'mcp_tool_call', name: 'context7', status: 'running' } }, 'thread-progress'),
+      parseCodexEvent({ type: 'item.completed', item: { type: 'agent_message', text: 'done' } }, 'thread-progress'),
+      parseCodexEvent({ type: 'turn.completed' }, 'thread-progress'),
+    ];
+
+    assert.deepEqual(
+      events.map((event) => event?.message),
+      [
+        'created codex thread thread-progress',
+        'codex turn started',
+        'tool bash running: bun test',
+        'file updated: src/app.ts',
+        'tool context7 running',
+        'done',
+        'codex turn completed',
+      ],
+    );
+    assert.equal(events[2]?.activity, 'tool');
+    assert.equal(events[3]?.activity, 'diff');
+  });
+
+  test('aborts a stale Codex turn and recovers in the same thread', async () => {
+    const thread = new FakeCodexThread('thread-stale', [
+      [{ type: 'thread.started', thread_id: 'thread-stale' }, { hang: true }],
+      [
+        { type: 'item.completed', item: { id: 'msg-1', type: 'agent_message', text: 'recovered' } },
+        { type: 'turn.completed' },
+      ],
+    ]);
+    const client = new FakeCodexClient({ startThread: thread });
+    const progress: string[] = [];
+    const executor = new CodexSessionExecutor(() => client);
+
+    const result = await executor.run({
+      model: { id: 'codex/default' },
+      prompt: 'run',
+      title: 'afk: feat/01',
+      staleProgressTimeoutMs: 5,
+      maxStaleRecoveries: 1,
+      onProgress: (event) => progress.push(event.message),
+    });
+
+    assert.equal(client.startedOptions.length, 1);
+    assert.equal(client.resumed.length, 0);
+    assert.equal(thread.signals[0]?.aborted, true);
+    assert.deepEqual(thread.runInputs, ['run', 'Continue (stale recovery attempt 1/1).']);
+    assert.equal(result.sessionId, 'thread-stale');
+    assert.equal(result.terminalError, null);
+    assert.equal(result.finalMessageText, 'recovered');
+    assert.match(progress.join('\n'), /codex stale recovery attempt 1\/1/);
+  });
+
+  test('stops after the configured Codex stale recovery cap', async () => {
+    const thread = new FakeCodexThread('thread-cap', [
+      [{ type: 'thread.started', thread_id: 'thread-cap' }, { hang: true }],
+      [{ hang: true }],
+    ]);
+    const executor = new CodexSessionExecutor(() => new FakeCodexClient({ startThread: thread }));
+
+    const result = await executor.run({
+      model: { id: 'codex/default' },
+      prompt: 'run',
+      title: 'afk: feat/01',
+      staleProgressTimeoutMs: 5,
+      maxStaleRecoveries: 1,
+    });
+
+    assert.deepEqual(thread.runInputs, ['run', 'Continue (stale recovery attempt 1/1).']);
+    assert.equal(result.terminalError, 'codex session stale after 1 recovery attempts');
+  });
+
+  test('uses the active-tool stale timeout while a Codex command is running', async () => {
+    const thread = new FakeCodexThread('thread-tool', [
+      { type: 'thread.started', thread_id: 'thread-tool' },
+      { type: 'item.updated', item: { type: 'command_execution', command: 'sleep 60', status: 'running' } },
+      { hang: true },
+    ]);
+    const controller = new AbortController();
+    const executor = new CodexSessionExecutor(() => new FakeCodexClient({ startThread: thread }));
+    const run = executor.run({
+      model: { id: 'codex/default' },
+      prompt: 'run',
+      title: 'afk: feat/01',
+      staleProgressTimeoutMs: 5,
+      activeToolStaleTimeoutMs: 50,
+      maxStaleRecoveries: 0,
+      signal: controller.signal,
+    });
+
+    await sleep(20);
+    assert.equal(thread.signals[0]?.aborted, false);
+    controller.abort();
+    const result = await run;
+    assert.equal(result.terminalError, 'run killed');
+  });
+
+  test('AFK kill aborts the active Codex turn', async () => {
+    const thread = new FakeCodexThread('thread-kill', [{ type: 'thread.started', thread_id: 'thread-kill' }, { hang: true }]);
+    const controller = new AbortController();
+    const executor = new CodexSessionExecutor(() => new FakeCodexClient({ startThread: thread }));
+    const run = executor.run({
+      model: { id: 'codex/default' },
+      prompt: 'run',
+      title: 'afk: feat/01',
+      staleProgressTimeoutMs: 1_000,
+      signal: controller.signal,
+    });
+
+    await sleep(5);
+    controller.abort();
+    const result = await run;
+
+    assert.equal(thread.signals[0]?.aborted, true);
+    assert.equal(result.terminalError, 'run killed');
+  });
 });
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitForAbort(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    signal?.addEventListener('abort', () => resolve(), { once: true });
+  });
+}

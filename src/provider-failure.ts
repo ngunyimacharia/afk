@@ -4,11 +4,13 @@ export type ProviderFailureKind =
   | 'model-unavailable'
   | 'auth'
   | 'context-overflow'
+  | 'rate-limit'
   | 'path-not-found'
   | 'patch-context-mismatch'
   | 'dependency-missing'
   | 'opencode-session-stale'
   | 'claude-session-stale'
+  | 'codex-session-stale'
   | 'tool-failed'
   | 'unknown';
 
@@ -24,11 +26,13 @@ const DETERMINISTIC_FAILURE_KINDS: Set<ProviderFailureKind> = new Set([
   'model-unavailable',
   'auth',
   'context-overflow',
+  'rate-limit',
   'path-not-found',
   'patch-context-mismatch',
   'dependency-missing',
   'opencode-session-stale',
   'claude-session-stale',
+  'codex-session-stale',
 ]);
 
 export function isDeterministicFailureKind(kind: ProviderFailureKind): boolean {
@@ -52,6 +56,7 @@ export function classifyProviderFailureFromSource(
       lower.startsWith('providerautherror') ||
       lower.startsWith('opencode error:') ||
       lower.startsWith('claude error:') ||
+      lower.startsWith('codex error:') ||
       lower.startsWith('tool failed:') ||
       lower.startsWith('the requested model is not available');
     if (!hasStructuredPrefix) {
@@ -78,12 +83,16 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
   if (lower.includes('providerautherror') || lower.includes('authentication') || lower.includes('unauthorized')) {
     return { kind: 'auth', reason: normalizedReason, availableModels: [] };
   }
+  if (lower.includes('rate limit') || lower.includes('rate_limit') || lower.includes('too many requests'))
+    return { kind: 'rate-limit', reason: normalizedReason, availableModels: [] };
   if (lower.includes('context overflow'))
     return { kind: 'context-overflow', reason: normalizedReason, availableModels: [] };
   if (lower.includes('opencode session stale'))
     return { kind: 'opencode-session-stale', reason: normalizedReason, availableModels: [] };
   if (lower.includes('claude session stale'))
     return { kind: 'claude-session-stale', reason: normalizedReason, availableModels: [] };
+  if (lower.includes('codex session stale'))
+    return { kind: 'codex-session-stale', reason: normalizedReason, availableModels: [] };
   if (isDependencyMissing(lower)) return { kind: 'dependency-missing', reason: normalizedReason, availableModels: [] };
   if (isPatchContextMismatch(lower))
     return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
@@ -143,6 +152,23 @@ export function detectClaudeCodeFailure(output: string[]): string | null {
       normalized.includes('overloaded_error') ||
       normalized.includes('rate_limit_error') ||
       normalized.includes('context overflow')
+    );
+  });
+  return failure ?? null;
+}
+
+export function detectCodexFailure(output: string[]): string | null {
+  const failure = output.find((line) => {
+    const normalized = line.toLowerCase();
+    return (
+      normalized.includes('codex error:') ||
+      normalized.includes('requested model is not available') ||
+      normalized.includes('authentication') ||
+      normalized.includes('unauthorized') ||
+      normalized.includes('rate limit') ||
+      normalized.includes('rate_limit') ||
+      normalized.includes('context overflow') ||
+      normalized.includes('codex session stale')
     );
   });
   return failure ?? null;

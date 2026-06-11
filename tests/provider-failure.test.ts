@@ -4,6 +4,7 @@ import { detectPreflightFailureReason, formatPreflightFailure, preflightModel } 
 import {
   classifyProviderFailure,
   classifyProviderFailureFromSource,
+  detectCodexFailure,
   formatProviderFailureMessage,
   isDeterministicFailureKind,
 } from '../src/provider-failure.js';
@@ -95,6 +96,17 @@ test('classifies missing dependency failures', () => {
 test('classifies stale opencode sessions', () => {
   const classification = classifyProviderFailure('opencode session stale after 3 recovery attempts');
   assert.equal(classification?.kind, 'opencode-session-stale');
+});
+
+test('classifies Codex stale, auth, rate-limit, and context failures', () => {
+  assert.equal(classifyProviderFailure('codex session stale after 2 recovery attempts')?.kind, 'codex-session-stale');
+  assert.equal(classifyProviderFailure('Codex error: unauthorized')?.kind, 'auth');
+  assert.equal(classifyProviderFailure('Codex error: rate_limit_exceeded')?.kind, 'rate-limit');
+  assert.equal(classifyProviderFailure('Codex error: context overflow')?.kind, 'context-overflow');
+});
+
+test('detects Codex provider failures from output', () => {
+  assert.equal(detectCodexFailure(['working', 'Codex error: rate limit exceeded']), 'Codex error: rate limit exceeded');
 });
 
 test('source-aware classification returns unknown for ordinary assistant prose', () => {

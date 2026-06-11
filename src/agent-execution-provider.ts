@@ -1,6 +1,6 @@
 import type { OpenCodePermissionDecision, OpenCodePermissionRequest, OpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
-import { detectClaudeCodeFailure, formatProviderFailureMessage } from './provider-failure.js';
+import { detectClaudeCodeFailure, detectCodexFailure, formatProviderFailureMessage } from './provider-failure.js';
 
 import type { AgentExecutionProgressCallback, AgentExecutionResult, LaunchPlan } from './types.js';
 
@@ -267,7 +267,7 @@ export class CodexAgentExecutionProvider implements AgentExecutionProvider {
       executor,
       {
         providerName: 'codex',
-        failureDetector: () => null,
+        failureDetector: detectCodexFailure,
         sessionIdUnavailableReason: 'thread id unavailable from codex',
         successfulSessionRemovable: false,
       },
