@@ -8,6 +8,12 @@ export interface AfkProjectConfig {
   testEnvFile?: string;
   smokeTestCommand?: string;
   staticCheckCommands: string[];
+  linear?: AfkLinearProjectConfig;
+}
+
+export interface AfkLinearProjectConfig {
+  teamId: string;
+  apiKeyEnv?: string;
 }
 
 export interface ProjectConfigLoadResult {
@@ -76,6 +82,8 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
     errors.push('staticCheckCommands must be an array of non-empty strings when present.');
   }
 
+  const linear = validateLinearProjectConfig(record.linear, errors);
+
   if (errors.length || typeof record.testsEnabled !== 'boolean') return { errors };
 
   return {
@@ -88,8 +96,31 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
       staticCheckCommands: Array.isArray(staticCheckCommands)
         ? staticCheckCommands.map((item) => String(item).trim())
         : [],
+      ...(linear ? { linear } : {}),
     },
     errors: [],
+  };
+}
+
+function validateLinearProjectConfig(value: unknown, errors: string[]): AfkLinearProjectConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push('linear must be an object when present.');
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.teamId !== 'string' || !record.teamId.trim()) {
+    errors.push('linear.teamId must be a non-empty string.');
+  }
+  if (record.apiKeyEnv !== undefined && (typeof record.apiKeyEnv !== 'string' || !record.apiKeyEnv.trim())) {
+    errors.push('linear.apiKeyEnv must be a non-empty string when present.');
+  }
+  if (typeof record.teamId !== 'string' || !record.teamId.trim()) return undefined;
+
+  return {
+    teamId: record.teamId.trim(),
+    ...(typeof record.apiKeyEnv === 'string' && record.apiKeyEnv.trim() ? { apiKeyEnv: record.apiKeyEnv.trim() } : {}),
   };
 }
 
