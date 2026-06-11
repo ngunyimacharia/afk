@@ -79,6 +79,21 @@ export interface LinearDiscoveryClient {
   findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]>;
 }
 
+interface LinearIssueGraphqlNode {
+  id: string;
+  identifier: string;
+  url: string;
+  title: string;
+  branchName?: string | null;
+  description?: string | null;
+  state: LinearIssueState;
+  labels: { nodes: LinearIssueLabel[] };
+}
+
+interface LinearParentIssueGraphqlNode extends LinearIssueGraphqlNode {
+  children: { nodes: LinearIssueGraphqlNode[] };
+}
+
 export interface ResolvedLinearConfig {
   teamId: string;
   teamKey: string;
@@ -157,30 +172,22 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
   }
 
   async findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]> {
+    try {
+      return await this.findAfkParentIssuesWithBranchNames(input, true);
+    } catch (error) {
+      if (!isMissingBranchNameGraphqlError(error)) throw error;
+      return this.findAfkParentIssuesWithBranchNames(input, false);
+    }
+  }
+
+  private async findAfkParentIssuesWithBranchNames(
+    input: { teamId: string; labelId: string },
+    includeBranchNames: boolean,
+  ): Promise<LinearParentIssue[]> {
+    const branchNameField = includeBranchNames ? 'branchName' : '';
     const result = await this.request<{
       issues: {
-        nodes: Array<{
-          id: string;
-          identifier: string;
-          url: string;
-          title: string;
-          branchName?: string | null;
-          description?: string | null;
-          state: LinearIssueState;
-          labels: { nodes: LinearIssueLabel[] };
-          children: {
-            nodes: Array<{
-              id: string;
-              identifier: string;
-              url: string;
-              title: string;
-              branchName?: string | null;
-              description?: string | null;
-              state: LinearIssueState;
-              labels: { nodes: LinearIssueLabel[] };
-            }>;
-          };
-        }>;
+        nodes: LinearParentIssueGraphqlNode[];
       };
     }>(
       `query AfkDiscoverLinearIssues($teamId: String!, $labelId: String!) {
@@ -197,20 +204,20 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
             identifier
             url
             title
-            branchName
+            ${branchNameField}
             description
             state { id name }
             labels { nodes { id name } }
             children(first: 100, filter: { labels: { some: { id: { eq: $labelId } } } }) {
               nodes {
                 id
-                identifier
-                url
-                title
-                branchName
-                description
-                state { id name }
-                labels { nodes { id name } }
+                  identifier
+                  url
+                  title
+                  ${branchNameField}
+                  description
+                  state { id name }
+                  labels { nodes { id name } }
               }
             }
           }
@@ -250,6 +257,12 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
 
     return payload.data;
   }
+}
+
+function isMissingBranchNameGraphqlError(error: unknown): boolean {
+  return (
+    error instanceof Error && /branchName/.test(error.message) && /Cannot query field|Unknown field/.test(error.message)
+  );
 }
 
 export async function resolveLinearConfig(options: ResolveLinearConfigOptions): Promise<ResolvedLinearConfig> {

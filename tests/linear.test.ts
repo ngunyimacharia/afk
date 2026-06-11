@@ -10,7 +10,7 @@ import type {
   LinearTeam,
   LinearWorkflowState,
 } from '../src/linear.js';
-import { discoverLinearFeatures, LinearStartupError, resolveLinearConfig } from '../src/linear.js';
+import { discoverLinearFeatures, LinearGraphqlClient, LinearStartupError, resolveLinearConfig } from '../src/linear.js';
 import type { LinearProjectConfig } from '../src/project-config.js';
 
 const validConfig: LinearProjectConfig = {
@@ -130,6 +130,90 @@ test('discovers parent features with zero, one, and multiple eligible Linear sub
     featureSlug: 'eng-200',
   });
   assert.deepEqual(features[1]?.workItems[0]?.afkLabel, { id: 'label-1', name: 'AFK' });
+});
+
+test('falls back when Linear GraphQL does not expose issue branchName', async () => {
+  const originalFetch = globalThis.fetch;
+  const queries: string[] = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { query?: string };
+    const query = body.query ?? '';
+    queries.push(query);
+
+    if (queries.length === 1) {
+      assert.match(query, /branchName/);
+      return new Response(
+        JSON.stringify({ errors: [{ message: 'Cannot query field "branchName" on type "Issue".' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    assert.doesNotMatch(query, /branchName/);
+    return new Response(
+      JSON.stringify({
+        data: {
+          issues: {
+            nodes: [
+              {
+                id: 'parent-one',
+                identifier: 'ENG-200',
+                url: 'https://linear.app/acme/issue/ENG-200/one-parent',
+                title: 'One parent',
+                description: null,
+                state: { id: 'state-ready', name: 'Ready' },
+                labels: { nodes: [] },
+                children: {
+                  nodes: [
+                    {
+                      id: 'child-one-eligible',
+                      identifier: 'ENG-201',
+                      url: 'https://linear.app/acme/issue/ENG-201/one-eligible',
+                      title: 'One eligible',
+                      description: 'Implement one eligible issue.',
+                      state: { id: 'state-ready', name: 'Ready' },
+                      labels: { nodes: [{ id: 'label-1', name: 'AFK' }] },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+
+  try {
+    const client = new LinearGraphqlClient('linear-key', 'https://linear.example/graphql');
+    const issues = await client.findAfkParentIssues({ teamId: 'team-1', labelId: 'label-1' });
+
+    assert.equal(queries.length, 2);
+    assert.deepEqual(issues, [
+      {
+        id: 'parent-one',
+        identifier: 'ENG-200',
+        url: 'https://linear.app/acme/issue/ENG-200/one-parent',
+        title: 'One parent',
+        description: null,
+        state: { id: 'state-ready', name: 'Ready' },
+        labels: [],
+        children: [
+          {
+            id: 'child-one-eligible',
+            identifier: 'ENG-201',
+            url: 'https://linear.app/acme/issue/ENG-201/one-eligible',
+            title: 'One eligible',
+            description: 'Implement one eligible issue.',
+            state: { id: 'state-ready', name: 'Ready' },
+            labels: [{ id: 'label-1', name: 'AFK' }],
+          },
+        ],
+      },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 class FakeLinearClient implements LinearConfigClient {
