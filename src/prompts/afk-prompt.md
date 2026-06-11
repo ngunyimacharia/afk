@@ -8,11 +8,11 @@ Implement the provided ticket autonomously. Do not ask questions or wait for app
 2. When running shell commands (tests, linters, builds, git), always set the working directory to the Worktree path from Runtime Context. If using a tool with a `workdir` or `cwd` parameter, pass the absolute worktree path. Never rely on the default working directory.
 3. Implement the ticket completely. Add or update code, tests, and docs only as needed for the ticket.
 4. Repo-local reads, edits, tests, staging, and commits are explicitly authorized inside the prepared worktree for this ticket. Do not refuse solely because the task requires modifying and committing a local repository.
-5. Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation. If tools are available, continue directly with the required reads, edits, tests, ticket update, and commit.
+5. Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation. If tools are available, continue directly with the required reads, edits, tests, local run result update, and commit.
 6. Do not create fixup commits, repair disabled tests, or retry known readiness failures unless the ticket or reviewer explicitly requires it.
 7. Run relevant verification. If relevant verification fails, fix it or record the blocker.
-8. Before handing off to reviewer, ensure relevant static checks pass and record concise evidence in `## AFK Summary`.
-9. Stop once the ticket is satisfied. Do not continue working after the code diff meets requirements, listed verification passes, the ticket file is updated, the AFK Summary is written, and changes are committed.
+8. Before handing off to reviewer, ensure relevant static checks pass and record concise evidence in the local run result described by Runtime Context.
+9. Stop once the ticket is satisfied. Do not continue working after the code diff meets requirements, listed verification passes, the local run result is updated, and changes are committed.
 10. If the assigned worktree disappears or becomes invalid, stop and record the blocker. Do not continue execution in the repo root or any other directory.
 
 ## Tests
@@ -29,23 +29,12 @@ Implement the provided ticket autonomously. Do not ask questions or wait for app
 
 1. Run the verification commands listed in the ticket.
 2. After final changes are committed and verification passes once, do not rerun the same passing tests again.
-3. Record verification evidence in the `## AFK Summary` section.
+3. Record verification evidence in the local run result described by Runtime Context.
 4. If verification fails on the first attempt, fix the issue and rerun only the failing verification. Do not rerun already-passing verification suites.
-
-## Scratch Artifact Completion Checklist
-
-Before exiting, confirm ALL of the following:
-- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).
-- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.
-- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.
-- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.
-- [ ] Source code changes are committed using conventional commits.
-- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.
 
 ## Commit and Summary Rules
 
 1. Commit ticket-owned changes using conventional commits. Never commit `.scratch/` and never attribute AI, models, Claude, opencode, or other tools in commit messages. Do not add `Co-Authored-By`, `Generated-By`, or similar attribution trailers.
-2. Update the ticket YAML frontmatter `status` field to `done` when complete, or `ready-for-human` only when human input or implementation is required.
-3. Append or update `## AFK Summary` with timestamp, session/run ID, status, outcome, commits, changed areas, verification, blockers/errors, and next action.
-4. Do not read or edit `.scratch/` except the provided ticket file and scheduler-generated status files explicitly named by the launcher.
-5. Do not run broad process cleanup or delete external temp/system paths. Only stop explicit processes you created for this ticket.
+2. Update only the local run result artifact named by Runtime Context with timestamp, session/run ID, status, outcome, commits, changed areas, verification, blockers/errors, and next action.
+3. Do not read or edit `.scratch/` except the provider, ticket, summary, and scheduler-generated status files explicitly named by the launcher.
+4. Do not run broad process cleanup or delete external temp/system paths. Only stop explicit processes you created for this ticket.

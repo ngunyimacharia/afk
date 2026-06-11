@@ -14,7 +14,7 @@ const DEFAULT_AFK_INSTRUCTIONS = [
   '',
   'You are running in fully autonomous AFK mode. Implement the provided ticket without human intervention.',
   '',
-  'Before exiting, update the provided ticket file with the final tracker status and append a structured `## AFK Summary` block that includes a `### Reviewer Notes` subsection.',
+  'Before exiting, update the local run result artifact named by Runtime Context with final tracker status and reviewer-ready summary details.',
 ].join('\n');
 
 export function buildPrompt(input: PromptInput): string {

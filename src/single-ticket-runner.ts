@@ -1010,8 +1010,14 @@ export class SingleTicketRunner {
         '',
         runSummaryContent.trimEnd(),
       ]);
-    const updatedTicketContent = this.readTicketContent(ticket.path);
-    if (updatedTicketContent !== null) return updatedTicketContent;
+    const mirrorPath = ticket.provider?.materializedFiles?.ticketPath ?? ticket.path;
+    const updatedTicketContent = this.readTicketContent(mirrorPath);
+    if (updatedTicketContent !== null)
+      return this.buildProviderRunResultContent(ticket, [
+        mirrorPath ? `Managed local mirror: ${mirrorPath}` : undefined,
+        '',
+        updatedTicketContent.trimEnd(),
+      ]);
     const output = executionResult.output?.join('\n').trim();
     return this.buildProviderRunResultContent(ticket, [output ? `\n## Execution Output\n\n${output}` : undefined]);
   }

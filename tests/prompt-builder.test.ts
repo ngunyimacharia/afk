@@ -99,6 +99,7 @@ test('external-provider prompt uses managed mirror result contract', () => {
   assert.match(prompt, /AFK will sync the local run result back to the source tracker/);
   assert.match(prompt, /Record the provider run result for later sync/);
   assert.doesNotMatch(prompt, /Ticket file to update:/);
+  assert.doesNotMatch(prompt, /provided ticket file/);
   assert.doesNotMatch(prompt, /## Scratch Artifact Completion Checklist/);
   assert.doesNotMatch(prompt, /ticket YAML frontmatter `status` field is updated to `done`/);
 });
@@ -106,16 +107,18 @@ test('external-provider prompt uses managed mirror result contract', () => {
 test('afk prompt includes budget, handoff guardrails, and worktree disappearance rule', () => {
   const source = readFileSync(promptPath('afk-prompt.md'), 'utf8');
   assert.match(source, /Do not create fixup commits, repair disabled tests, or retry known readiness failures/);
-  assert.match(source, /Append or update `## AFK Summary`/);
+  assert.match(source, /local run result described by Runtime Context/);
   assert.match(source, /If the assigned worktree disappears or becomes invalid, stop and record the blocker/);
   assert.match(source, /Repo-local reads, edits, tests, staging, and commits are explicitly authorized/);
   assert.match(source, /Do not refuse solely because the task requires modifying and committing a local repository/);
   assert.match(source, /Do not ask the operator to reply with `proceed`, `continue`, approval, or confirmation/);
+  assert.doesNotMatch(source, /ticket update/);
   assert.match(source, /Do not continue execution in the repo root/);
   assert.match(source, /Stop once the ticket is satisfied/);
   assert.match(source, /Do not add `Co-Authored-By`, `Generated-By`, or similar attribution trailers/);
   assert.match(source, /do not rerun the same passing tests again/);
-  assert.match(source, /Scratch Artifact Completion Checklist/);
+  assert.doesNotMatch(source, /Scratch Artifact Completion Checklist/);
+  assert.doesNotMatch(source, /Update the ticket YAML frontmatter `status` field/);
   assert.match(source, /Verification Budget/);
   assert.match(
     source,
@@ -229,7 +232,43 @@ test('generated prompt with full afk instructions includes stop conditions and w
   assert.match(prompt, /Do not continue execution in the repo root/);
   assert.match(prompt, /Do not create fixup commits/);
   assert.match(prompt, /## Scratch Artifact Completion Checklist/);
+  assert.match(prompt, /Ticket file to update: \/repo\/\.scratch\/feat\/issues\/01\.md/);
   assert.match(prompt, /## Verification Budget/);
+});
+
+test('external-provider prompt with full afk instructions excludes scratch-only ticket instructions', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '',
+      feature: 'feat',
+      issueName: 'LIN-42',
+      label: 'feat/LIN-42',
+      executorAfk: true,
+      provider: {
+        kind: 'linear-graphql',
+        id: 'LIN-42',
+        materializedFiles: {
+          ticketPath: '/repo/.scratch/feat/provider-mirrors/LIN-42.md',
+        },
+      },
+    },
+    ticketContent: '# External issue mirror\n',
+    afkInstructions: readFileSync(promptPath('afk-prompt.md'), 'utf8'),
+  });
+
+  assert.match(prompt, /## Provider Result Contract/);
+  assert.match(prompt, /Managed local mirror: \/repo\/\.scratch\/feat\/provider-mirrors\/LIN-42\.md/);
+  assert.doesNotMatch(prompt, /## Scratch Artifact Completion Checklist/);
+  assert.doesNotMatch(prompt, /ticket YAML frontmatter `status` field/);
+  assert.doesNotMatch(prompt, /Ticket file to update:/);
 });
 
 test('generated prompt includes verification budget guidance', () => {
