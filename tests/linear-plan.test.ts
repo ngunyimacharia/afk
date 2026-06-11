@@ -16,6 +16,16 @@ import { GraphQLLinearProvider } from '../src/linear-provider.js';
 class FakeLinearProvider implements LinearProvider {
   readonly issues: LinearIssueInput[] = [];
   readonly dependencies: LinearIssueDependencyInput[] = [];
+  labelId?: string = 'label-afk';
+  stateId?: string = 'state-ready';
+
+  async resolveIssueLabelId(): Promise<string | undefined> {
+    return this.labelId;
+  }
+
+  async resolveWorkflowStateId(): Promise<string | undefined> {
+    return this.stateId;
+  }
 
   async createIssue(input: LinearIssueInput): Promise<LinearIssueResult> {
     this.issues.push(input);
@@ -76,14 +86,24 @@ test('creates parent and sub-issues through the Linear provider boundary', async
   assert.ok(manifest);
   const provider = new FakeLinearProvider();
 
-  const result = await createLinearPlan({ manifest, teamId: 'team-1', provider });
+  const result = await createLinearPlan({
+    manifest,
+    teamId: 'team-1',
+    provider,
+    setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+  });
 
   assert.deepEqual(
-    provider.issues.map((issue) => ({ title: issue.title, parentId: issue.parentId })),
+    provider.issues.map((issue) => ({
+      title: issue.title,
+      parentId: issue.parentId,
+      labelIds: issue.labelIds,
+      stateId: issue.stateId,
+    })),
     [
-      { title: 'Parent issue', parentId: undefined },
-      { title: 'Build API', parentId: 'issue-1' },
-      { title: 'Build UI', parentId: 'issue-1' },
+      { title: 'Parent issue', parentId: undefined, labelIds: undefined, stateId: undefined },
+      { title: 'Build API', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready' },
+      { title: 'Build UI', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready' },
     ],
   );
   assert.deepEqual(provider.dependencies, [{ issueId: 'issue-3', dependsOnIssueId: 'issue-2' }]);
@@ -118,7 +138,12 @@ test('creates no dependency relations when sub-issues have no dependencies', asy
   assert.ok(manifest);
   const provider = new FakeLinearProvider();
 
-  const result = await createLinearPlan({ manifest, teamId: 'team-1', provider });
+  const result = await createLinearPlan({
+    manifest,
+    teamId: 'team-1',
+    provider,
+    setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+  });
 
   assert.deepEqual(provider.dependencies, []);
   assert.deepEqual(result.parents[0]?.dependencyRelations, []);
@@ -142,7 +167,12 @@ test('creates blocked-by relations for multiple blockers', async () => {
   assert.ok(manifest);
   const provider = new FakeLinearProvider();
 
-  const result = await createLinearPlan({ manifest, teamId: 'team-1', provider });
+  const result = await createLinearPlan({
+    manifest,
+    teamId: 'team-1',
+    provider,
+    setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+  });
 
   assert.deepEqual(provider.dependencies, [
     { issueId: 'issue-4', dependsOnIssueId: 'issue-2' },
@@ -225,6 +255,37 @@ test('rejects cyclic dependency references before mutation', () => {
   assert.match(result.errors.join('\n'), /dependency cycle detected in parent: api -> ui -> api/);
 });
 
+test('fails before creating Linear issues when AFK label or ready state is missing', async () => {
+  const manifest = parseLinearPlanManifest(validManifest).manifest;
+  assert.ok(manifest);
+  const provider = new FakeLinearProvider();
+  provider.labelId = undefined;
+
+  await assert.rejects(
+    createLinearPlan({
+      manifest,
+      teamId: 'team-1',
+      provider,
+      setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+    }),
+    /Linear AFK label not found: AFK/,
+  );
+  assert.deepEqual(provider.issues, []);
+
+  provider.labelId = 'label-afk';
+  provider.stateId = undefined;
+  await assert.rejects(
+    createLinearPlan({
+      manifest,
+      teamId: 'team-1',
+      provider,
+      setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+    }),
+    /Linear ready workflow state not found: Ready/,
+  );
+  assert.deepEqual(provider.issues, []);
+});
+
 test('linear-plan command returns machine-readable created issue output', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-command-'));
   const manifestPath = path.join(repoRoot, 'manifest.json');
@@ -236,6 +297,8 @@ test('linear-plan command returns machine-readable created issue output', async 
       linear: {
         teamId: 'team-1',
         labelName: 'AFK',
+        afkLabelName: 'AFK',
+        readyStateName: 'Ready',
         workflowStates: {
           ready: 'Ready for AFK',
           running: 'AFK Running',

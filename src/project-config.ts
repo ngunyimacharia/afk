@@ -17,6 +17,9 @@ export interface AfkLinearProjectConfig {
   labelName: string;
   workflowStates: AfkLinearWorkflowStatesConfig;
   apiKeyEnv?: string;
+  afkLabelName: string;
+  readyStateName: string;
+  applyAfkLabelToParents?: boolean;
 }
 
 export interface AfkLinearWorkflowStatesConfig {
@@ -147,6 +150,17 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): AfkLinea
     return undefined;
   }
   if (!workflowStates) return undefined;
+  if (typeof record.afkLabelName !== 'string' || !record.afkLabelName.trim()) {
+    errors.push('linear.afkLabelName must be a non-empty string.');
+  }
+  if (typeof record.readyStateName !== 'string' || !record.readyStateName.trim()) {
+    errors.push('linear.readyStateName must be a non-empty string.');
+  }
+  if (record.applyAfkLabelToParents !== undefined && typeof record.applyAfkLabelToParents !== 'boolean') {
+    errors.push('linear.applyAfkLabelToParents must be a boolean when present.');
+  }
+  if (!isNonEmptyString(record.afkLabelName) || !isNonEmptyString(record.readyStateName))
+    return undefined;
 
   return {
     ...(isNonEmptyString(record.teamId) ? { teamId: record.teamId.trim() } : {}),
@@ -154,6 +168,11 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): AfkLinea
     labelName: record.labelName.trim(),
     workflowStates,
     ...(typeof record.apiKeyEnv === 'string' && record.apiKeyEnv.trim() ? { apiKeyEnv: record.apiKeyEnv.trim() } : {}),
+    afkLabelName: record.afkLabelName.trim(),
+    readyStateName: record.readyStateName.trim(),
+    ...(typeof record.applyAfkLabelToParents === 'boolean'
+      ? { applyAfkLabelToParents: record.applyAfkLabelToParents }
+      : {}),
   };
 }
 

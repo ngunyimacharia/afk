@@ -3,6 +3,8 @@ export interface LinearIssueInput {
   title: string;
   description: string;
   parentId?: string;
+  labelIds?: string[];
+  stateId?: string;
 }
 
 export interface LinearIssueResult {
@@ -17,8 +19,22 @@ export interface LinearIssueDependencyInput {
 }
 
 export interface LinearProvider {
+  resolveIssueLabelId(name: string): Promise<string | undefined>;
+  resolveWorkflowStateId(input: { teamId: string; name: string }): Promise<string | undefined>;
   createIssue(input: LinearIssueInput): Promise<LinearIssueResult>;
   createIssueDependency(input: LinearIssueDependencyInput): Promise<void>;
+}
+
+interface IssueLabelResponse {
+  issueLabels?: {
+    nodes?: Array<{ id?: string; name?: string }>;
+  };
+}
+
+interface WorkflowStatesResponse {
+  workflowStates?: {
+    nodes?: Array<{ id?: string; name?: string }>;
+  };
 }
 
 interface LinearGraphQLResponse<T> {
@@ -46,6 +62,26 @@ interface IssueRelationCreateResponse {
 export class GraphQLLinearProvider implements LinearProvider {
   constructor(private readonly input: { apiKey: string; endpoint?: string; fetchImpl?: typeof fetch }) {}
 
+  async resolveIssueLabelId(name: string): Promise<string | undefined> {
+    const data = await this.request<IssueLabelResponse>(
+      `query IssueLabels($filter: IssueLabelFilter) {
+        issueLabels(filter: $filter) { nodes { id name } }
+      }`,
+      { filter: { name: { eqIgnoreCase: name } } },
+    );
+    return data.issueLabels?.nodes?.find((label) => label.name?.toLowerCase() === name.toLowerCase())?.id;
+  }
+
+  async resolveWorkflowStateId(input: { teamId: string; name: string }): Promise<string | undefined> {
+    const data = await this.request<WorkflowStatesResponse>(
+      `query WorkflowStates($filter: WorkflowStateFilter) {
+        workflowStates(filter: $filter) { nodes { id name } }
+      }`,
+      { filter: { team: { id: { eq: input.teamId } }, name: { eqIgnoreCase: input.name } } },
+    );
+    return data.workflowStates?.nodes?.find((state) => state.name?.toLowerCase() === input.name.toLowerCase())?.id;
+  }
+
   async createIssue(input: LinearIssueInput): Promise<LinearIssueResult> {
     const data = await this.request<IssueCreateResponse>(
       `mutation CreateIssue($input: IssueCreateInput!) {
@@ -60,6 +96,8 @@ export class GraphQLLinearProvider implements LinearProvider {
           title: input.title,
           description: input.description,
           ...(input.parentId ? { parentId: input.parentId } : {}),
+          ...(input.labelIds?.length ? { labelIds: input.labelIds } : {}),
+          ...(input.stateId ? { stateId: input.stateId } : {}),
         },
       },
     );
