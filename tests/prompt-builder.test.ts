@@ -61,6 +61,46 @@ test('prompt consumes prepared checkout context', () => {
   assert.doesNotMatch(prompt, /git worktree add|git worktree list|change into the worktree/i);
 });
 
+test('external-provider prompt uses managed mirror result contract', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat-tree',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat-tree',
+      worktreePath: '/repo/.git/worktrees/feat-tree',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/provider-mirrors/LIN-42.md',
+      feature: 'feat',
+      issueName: 'LIN-42',
+      label: 'feat/LIN-42',
+      executorAfk: true,
+      provider: {
+        kind: 'linear-graphql',
+        id: 'LIN-42',
+        displayId: 'LIN-42',
+        url: 'https://linear.app/team/issue/LIN-42',
+        materializedFiles: {
+          ticketPath: '/repo/.scratch/feat/provider-mirrors/LIN-42.md',
+          runSummaryPath: '/repo/.scratch/feat/provider-results/LIN-42.md',
+        },
+        runResultInstructions: ['Record the provider run result for later sync.'],
+      },
+    },
+    ticketContent: '# External issue mirror\n',
+  });
+
+  assert.match(prompt, /## Provider Result Contract/);
+  assert.match(prompt, /Source tracker provider: linear-graphql/);
+  assert.match(prompt, /Managed local mirror: \/repo\/\.scratch\/feat\/provider-mirrors\/LIN-42\.md/);
+  assert.match(prompt, /Run summary artifact: \/repo\/\.scratch\/feat\/provider-results\/LIN-42\.md/);
+  assert.match(prompt, /AFK will sync the local run result back to the source tracker/);
+  assert.match(prompt, /Record the provider run result for later sync/);
+  assert.doesNotMatch(prompt, /Ticket file to update:/);
+});
+
 test('afk prompt includes budget, handoff guardrails, and worktree disappearance rule', () => {
   const source = readFileSync(promptPath('afk-prompt.md'), 'utf8');
   assert.match(source, /Do not create fixup commits, repair disabled tests, or retry known readiness failures/);

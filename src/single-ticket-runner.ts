@@ -321,7 +321,7 @@ export class SingleTicketRunner {
         if (!latestExecutionResult)
           return { scheduled: false, message: 'No execution result available for review', outcome: 'not-scheduled' };
         const executionForReview = latestExecutionResult;
-        const updatedTicketContent = this.readTicketContent(ticket.path);
+        const updatedTicketContent = this.readRunResultContent(ticket, latestExecutionResult);
         if (updatedTicketContent === null) {
           return this.handoffForTicketReadFailure(ticket.label, record, options, sessionId);
         }
@@ -989,11 +989,31 @@ export class SingleTicketRunner {
   }
 
   private readTicketContent(ticketPath: string): string | null {
+    if (!ticketPath) return null;
     try {
       return readFileSync(ticketPath, 'utf8');
     } catch {
       return null;
     }
+  }
+
+  private readRunResultContent(
+    ticket: LaunchPlan['tickets'][number],
+    executionResult: AgentExecutionResult,
+  ): string | null {
+    const updatedTicketContent = this.readTicketContent(ticket.path);
+    if (updatedTicketContent !== null) return updatedTicketContent;
+    if ((ticket.provider?.kind ?? 'scratch') === 'scratch') return null;
+    const output = executionResult.output?.join('\n').trim();
+    return [
+      `Provider-backed ticket: ${ticket.label}`,
+      `Provider: ${ticket.provider?.kind ?? 'unknown'}`,
+      ticket.provider?.displayId ? `Provider display ID: ${ticket.provider.displayId}` : undefined,
+      ticket.provider?.url ? `Provider URL: ${ticket.provider.url}` : undefined,
+      output ? `\n## Execution Output\n\n${output}` : undefined,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
   }
 
   private readAfkInstructions(repoRoot: string): string | undefined {

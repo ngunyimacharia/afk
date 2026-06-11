@@ -273,6 +273,74 @@ test('sends ticket file summary instructions to the execution provider', async (
   assert.match(capturedPrompt, /caveats or risks/);
 });
 
+test('validates external-provider completion without scratch issue file', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-external-provider-'));
+  const store = new RuntimeStore({ repoRoot });
+  const modes: string[] = [];
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode, prompt }) => {
+      modes.push(invocationMode ?? 'execution');
+      if (invocationMode === 'reviewer') {
+        assert.match(prompt, /Provider-backed ticket: feat\/LIN-42/);
+        assert.match(prompt, /Implementation completed and local provider result recorded/);
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      assert.match(prompt, /## Provider Result Contract/);
+      assert.match(prompt, /AFK will sync the local run result back to the source tracker/);
+      return {
+        status: 'completed',
+        sessionId: 'session-external',
+        removable: true,
+        output: ['Implementation completed and local provider result recorded.'],
+      };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      {
+        path: '',
+        feature: 'feat',
+        issueName: 'LIN-42',
+        label: 'feat/LIN-42',
+        executorAfk: true,
+        provider: {
+          kind: 'linear-graphql',
+          id: 'LIN-42',
+          displayId: 'LIN-42',
+          materializedFiles: {
+            runSummaryPath: path.join(repoRoot, '.scratch', 'feat', 'provider-results', 'LIN-42.md'),
+          },
+        },
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: repoRoot,
+    },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(result.outcome, 'completed');
+  assert.deepEqual(modes, ['execution', 'reviewer']);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-LIN-42.json');
+  assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_OUTCOME": "approved"/);
+});
+
 test('injects reviewer-notes requirement even when custom AFK instructions are loaded', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-custom-afk-'));
   const afkPromptPath = path.join(repoRoot, 'src', 'prompts', 'afk-prompt.md');

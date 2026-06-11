@@ -26,6 +26,7 @@ export interface TrackerWorkItemContent {
   providerRef: TrackerProviderRef;
   url?: string;
   materializedFiles?: Partial<MaterializedTrackerFiles>;
+  runResultInstructions?: string[];
 }
 
 export interface TrackerWorkItem extends TrackerWorkItemContent {
@@ -65,6 +66,7 @@ export interface MaterializedTrackerFiles {
   featurePrdPath?: string;
   runtimeMetadataPath?: string;
   logPath?: string;
+  runSummaryPath?: string;
 }
 
 export interface TrackerCreateInput {
@@ -108,6 +110,14 @@ export function trackerWorkItemToTicketRecord(
   item: TrackerWorkItem,
   path = item.materializedFiles?.ticketPath ?? '',
 ): TicketRecord {
+  const provider = {
+    kind: item.providerRef.key.provider,
+    id: item.providerRef.key.id,
+    ...(item.providerRef.displayId ? { displayId: item.providerRef.displayId } : {}),
+    ...((item.providerRef.url ?? item.url) ? { url: item.providerRef.url ?? item.url } : {}),
+    ...(item.materializedFiles ? { materializedFiles: item.materializedFiles } : {}),
+    ...(item.runResultInstructions ? { runResultInstructions: item.runResultInstructions } : {}),
+  };
   return {
     path,
     feature: item.feature,
@@ -116,6 +126,7 @@ export function trackerWorkItemToTicketRecord(
     status: item.status,
     executorAfk: item.executorAfk,
     dependsOn: item.dependsOn.map((dependency) => normalizeDependencyKey(item.feature, dependency)),
+    provider,
   };
 }
 

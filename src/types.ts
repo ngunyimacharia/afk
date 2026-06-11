@@ -8,6 +8,23 @@ export interface TicketRecord {
   status?: string;
   executorAfk: boolean;
   dependsOn?: string[];
+  provider?: TicketProviderContext;
+}
+
+export interface TicketProviderContext {
+  kind: string;
+  id: string;
+  displayId?: string;
+  url?: string;
+  materializedFiles?: {
+    ticketPath?: string;
+    scratchFeaturePath?: string;
+    featurePrdPath?: string;
+    runtimeMetadataPath?: string;
+    logPath?: string;
+    runSummaryPath?: string;
+  };
+  runResultInstructions?: string[];
 }
 
 export interface LaunchBlockEvidence {

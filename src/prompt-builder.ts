@@ -19,6 +19,7 @@ const DEFAULT_AFK_INSTRUCTIONS = [
 
 export function buildPrompt(input: PromptInput): string {
   const snapshotLines = buildSnapshotLines(input.snapshot);
+  const updateContractLines = buildTicketUpdateContractLines(input.ticket);
   return [
     input.afkInstructions?.trim() || DEFAULT_AFK_INSTRUCTIONS,
     '',
@@ -42,14 +43,7 @@ export function buildPrompt(input: PromptInput): string {
     '',
     ...snapshotLines,
     '',
-    '## Ticket Update Contract',
-    '',
-    `Ticket file to update: ${input.ticket.path}`,
-    `Issue reference: ${input.ticket.label}`,
-    '',
-    'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
-    'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
-    'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    ...updateContractLines,
     '',
     '## Scratch Artifact Completion Checklist',
     '',
@@ -78,6 +72,40 @@ export function buildPrompt(input: PromptInput): string {
     input.ticketContent.trimEnd(),
     '```',
   ].join('\n');
+}
+
+function buildTicketUpdateContractLines(ticket: TicketRecord): string[] {
+  const providerKind = ticket.provider?.kind ?? 'scratch';
+  if (providerKind === 'scratch') {
+    return [
+      '## Ticket Update Contract',
+      '',
+      `Ticket file to update: ${ticket.path}`,
+      `Issue reference: ${ticket.label}`,
+      '',
+      'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
+      'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
+      'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    ];
+  }
+
+  const mirrorPath = ticket.provider?.materializedFiles?.ticketPath ?? ticket.path;
+  const summaryPath = ticket.provider?.materializedFiles?.runSummaryPath;
+  return [
+    '## Provider Result Contract',
+    '',
+    `Source tracker provider: ${providerKind}`,
+    `Issue reference: ${ticket.label}`,
+    ...(ticket.provider?.displayId ? [`Provider display ID: ${ticket.provider.displayId}`] : []),
+    ...(ticket.provider?.url ? [`Provider URL: ${ticket.provider.url}`] : []),
+    ...(mirrorPath ? [`Managed local mirror: ${mirrorPath}`] : []),
+    ...(summaryPath ? [`Run summary artifact: ${summaryPath}`] : []),
+    '',
+    'Before exiting, update the managed local mirror or run summary artifact with the final status and reviewer-ready AFK summary details.',
+    'AFK will sync the local run result back to the source tracker after completion; do not attempt to call the source tracker directly.',
+    'The local result MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    ...(ticket.provider?.runResultInstructions?.length ? ['', ...ticket.provider.runResultInstructions] : []),
+  ];
 }
 
 function buildSnapshotLines(snapshot?: AfkStateSnapshot): string[] {
