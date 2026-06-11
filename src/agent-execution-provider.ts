@@ -112,6 +112,7 @@ export interface BaseSDKAgentExecutionProviderConfig {
   agentName?: string;
   failureDetector: (output: string[]) => string | null;
   sessionIdUnavailableReason: string;
+  successfulSessionRemovable?: boolean;
 }
 
 export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
@@ -188,7 +189,7 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
       return {
         status: outputFailure ? 'failed' : 'completed',
         sessionId: result.sessionId ?? null,
-        removable: !outputFailure,
+        removable: outputFailure ? false : (this.config.successfulSessionRemovable ?? true),
         output: result.output,
         unsafeReason: outputFailure ?? (result.sessionId ? null : this.config.sessionIdUnavailableReason),
       };
@@ -248,6 +249,27 @@ export class ClaudeKimiAgentExecutionProvider implements AgentExecutionProvider 
         providerName: 'claude-kimi',
         failureDetector: detectClaudeCodeFailure,
         sessionIdUnavailableReason: 'session id unavailable from claude',
+      },
+      permissionCoordinator,
+    );
+  }
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    return this.base.execute(request);
+  }
+}
+
+export class CodexAgentExecutionProvider implements AgentExecutionProvider {
+  private readonly base: BaseSDKAgentExecutionProvider;
+
+  constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
+    this.base = new BaseSDKAgentExecutionProvider(
+      executor,
+      {
+        providerName: 'codex',
+        failureDetector: () => null,
+        sessionIdUnavailableReason: 'thread id unavailable from codex',
+        successfulSessionRemovable: false,
       },
       permissionCoordinator,
     );
