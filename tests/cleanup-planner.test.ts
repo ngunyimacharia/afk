@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { CleanupPlanner } from '../src/cleanup.js';
+import { CleanupExecutor, CleanupPlanner } from '../src/cleanup.js';
 
 test('classifies only terminal tickets for cleanup', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
@@ -77,6 +77,62 @@ test('plans local Linear mirrors and runtime artifacts for terminal runs', () =>
   assert.equal(plan.terminalTargets[0]?.linearMirrorPath, mirrorPath);
   assert.equal(plan.terminalTargets[0]?.metadataPath?.endsWith('eng-1-eng-2.json'), true);
   assert.equal(plan.terminalTargets[0]?.logPath?.endsWith('eng-1-eng-2.log'), true);
+});
+
+test('accepts legacy Linear mirror path from TICKET_PATH only under mirror root', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  const mirrorPath = path.join(logsDir, 'linear-mirrors', 'eng-1-eng-2.md');
+  mkdirSync(metadataDir, { recursive: true });
+  mkdirSync(path.dirname(mirrorPath), { recursive: true });
+  writeFileSync(mirrorPath, 'Linear mirror\n');
+  writeFileSync(
+    path.join(metadataDir, 'eng-1-eng-2.json'),
+    JSON.stringify({
+      TICKET_PATH: mirrorPath,
+      FEATURE_SLUG: 'eng-1',
+      ISSUE_NAME: 'eng-2',
+      LOG_PATH: path.join(logsDir, 'eng-1-eng-2.log'),
+      STATUS: 'completed',
+      RUN_STATUS: 'completed',
+      LINEAR_ISSUE_KEY: 'ENG-2',
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.terminalTargets[0]?.issuePath, mirrorPath);
+  assert.equal(plan.terminalTargets[0]?.linearMirrorPath, mirrorPath);
+});
+
+test('does not plan arbitrary Linear metadata paths for deletion', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  const unrelatedPath = path.join(repoRoot, 'do-not-delete.md');
+  mkdirSync(metadataDir, { recursive: true });
+  writeFileSync(unrelatedPath, 'keep\n');
+  writeFileSync(
+    path.join(metadataDir, 'eng-1-eng-2.json'),
+    JSON.stringify({
+      TICKET_PATH: unrelatedPath,
+      FEATURE_SLUG: 'eng-1',
+      ISSUE_NAME: 'eng-2',
+      LOG_PATH: path.join(logsDir, 'eng-1-eng-2.log'),
+      STATUS: 'completed',
+      RUN_STATUS: 'completed',
+      LINEAR_ISSUE_KEY: 'ENG-2',
+      LINEAR_MIRROR_PATH: unrelatedPath,
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.terminalTargets.length, 1);
+  assert.equal(plan.terminalTargets[0]?.issuePath, undefined);
+  assert.equal(plan.terminalTargets[0]?.linearMirrorPath, undefined);
+
+  new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(existsSync(unrelatedPath), true);
 });
 
 test('preserves handoff tickets with runtime metadata RUN_STATUS handoff', () => {

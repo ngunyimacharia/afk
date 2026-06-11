@@ -13,7 +13,7 @@ export interface CleanupPlannerInput {
 export interface CleanupTarget {
   feature: string;
   issueName: string;
-  issuePath: string;
+  issuePath?: string;
   logPath?: string;
   metadataPath?: string;
   linearMirrorPath?: string;
@@ -256,9 +256,23 @@ function isTerminalRuntimeStatus(runtime: RuntimeMetadataRecord): boolean {
   return ['completed', 'failed', 'blocked', 'interrupted'].includes(normalize(runtime.RUN_STATUS ?? runtime.STATUS));
 }
 
-function linearMirrorPath(runtime: RuntimeMetadataRecord | null): string | undefined {
-  const mirrorPath = runtime?.LINEAR_MIRROR_PATH;
-  return mirrorPath && fileExists(mirrorPath) ? mirrorPath : undefined;
+function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function linearMirrorRoot(repoRoot: string): string {
+  return path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
+}
+
+function linearMirrorPath(repoRoot: string, runtime: RuntimeMetadataRecord | null): string | undefined {
+  const mirrorRoot = linearMirrorRoot(repoRoot);
+  for (const candidate of [runtime?.LINEAR_MIRROR_PATH, runtime?.TICKET_PATH]) {
+    if (!candidate) continue;
+    const resolved = path.resolve(candidate);
+    if (isPathWithinRoot(resolved, mirrorRoot) && fileExists(resolved)) return resolved;
+  }
+  return undefined;
 }
 
 export class CleanupPlanner {
@@ -305,7 +319,7 @@ export class CleanupPlanner {
             metadataPath: fileExists(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName))
               ? ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)
               : undefined,
-            linearMirrorPath: linearMirrorPath(runtime),
+            linearMirrorPath: linearMirrorPath(this.input.repoRoot, runtime),
             doneSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done'))
               ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done')
               : undefined,
@@ -343,11 +357,11 @@ export class CleanupPlanner {
         }
         const key = `${runtime.FEATURE_SLUG}/${runtime.ISSUE_NAME}`;
         if (!runtime.LINEAR_ISSUE_KEY || plannedKeys.has(key) || !isTerminalRuntimeStatus(runtime)) continue;
-        const mirrorPath = linearMirrorPath(runtime);
+        const mirrorPath = linearMirrorPath(this.input.repoRoot, runtime);
         terminalTargets.push({
           feature: runtime.FEATURE_SLUG,
           issueName: runtime.ISSUE_NAME,
-          issuePath: mirrorPath ?? runtime.TICKET_PATH,
+          issuePath: mirrorPath,
           logPath: fileExists(ticketLogPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME))
             ? ticketLogPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME)
             : undefined,

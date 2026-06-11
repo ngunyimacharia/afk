@@ -291,7 +291,11 @@ export async function runAfk(
       'AFK Cleanup Plan',
       '',
       'Terminal tickets to delete',
-      ...(plan.terminalTargets.length ? plan.terminalTargets.map((target) => `- ${target.issuePath}`) : ['- none']),
+      ...(plan.terminalTargets.length
+        ? plan.terminalTargets.map(
+            (target) => `- ${target.issuePath ?? target.metadataPath ?? `${target.feature}/${target.issueName}`}`,
+          )
+        : ['- none']),
       '',
       'Matching logs / metadata to delete',
       ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
