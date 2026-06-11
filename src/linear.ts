@@ -17,10 +17,62 @@ export interface LinearWorkflowState extends LinearEntity {
   teamId: string;
 }
 
+export interface LinearIssueLabel extends LinearEntity {}
+
+export interface LinearIssueState extends LinearEntity {}
+
+export interface LinearIssueSummary {
+  id: string;
+  identifier: string;
+  url: string;
+  title: string;
+  description?: string | null;
+  state: LinearIssueState;
+  labels: LinearIssueLabel[];
+}
+
+export interface LinearParentIssue extends LinearIssueSummary {
+  children: LinearIssueSummary[];
+}
+
+export interface LinearParentFeature {
+  provider: 'linear';
+  id: string;
+  key: string;
+  url: string;
+  title: string;
+  status: string;
+  featureSlug: string;
+  workItems: LinearProviderWorkItem[];
+}
+
+export interface LinearProviderWorkItem {
+  provider: 'linear';
+  id: string;
+  key: string;
+  url: string;
+  title: string;
+  body: string;
+  status: string;
+  parent: {
+    id: string;
+    key: string;
+    url: string;
+    title: string;
+    featureSlug: string;
+  };
+  labels: LinearIssueLabel[];
+  afkLabel: LinearIssueLabel;
+}
+
 export interface LinearConfigClient {
   findTeam(identifier: string): Promise<LinearTeam | null>;
   findIssueLabel(teamId: string, name: string): Promise<LinearEntity | null>;
   findWorkflowState(teamId: string, identifier: string): Promise<LinearWorkflowState | null>;
+}
+
+export interface LinearDiscoveryClient {
+  findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]>;
 }
 
 export interface ResolvedLinearConfig {
@@ -36,6 +88,11 @@ export interface ResolveLinearConfigOptions {
   client?: LinearConfigClient;
 }
 
+export interface DiscoverLinearFeaturesOptions {
+  resolvedConfig: ResolvedLinearConfig;
+  client: LinearDiscoveryClient;
+}
+
 export class LinearStartupError extends Error {
   constructor(message: string) {
     super(message);
@@ -43,7 +100,7 @@ export class LinearStartupError extends Error {
   }
 }
 
-export class LinearGraphqlClient implements LinearConfigClient {
+export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryClient {
   constructor(
     private readonly apiKey: string,
     private readonly endpoint = 'https://api.linear.app/graphql',
@@ -93,6 +150,72 @@ export class LinearGraphqlClient implements LinearConfigClient {
 
     const state = result.workflowStates.nodes[0];
     return state ? { id: state.id, name: state.name, teamId } : null;
+  }
+
+  async findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]> {
+    const result = await this.request<{
+      issues: {
+        nodes: Array<{
+          id: string;
+          identifier: string;
+          url: string;
+          title: string;
+          description?: string | null;
+          state: LinearIssueState;
+          labels: { nodes: LinearIssueLabel[] };
+          children: {
+            nodes: Array<{
+              id: string;
+              identifier: string;
+              url: string;
+              title: string;
+              description?: string | null;
+              state: LinearIssueState;
+              labels: { nodes: LinearIssueLabel[] };
+            }>;
+          };
+        }>;
+      };
+    }>(
+      `query AfkDiscoverLinearIssues($teamId: String!, $labelId: String!) {
+        issues(
+          first: 100
+          filter: {
+            team: { id: { eq: $teamId } }
+            parent: { null: true }
+            children: { some: { labels: { some: { id: { eq: $labelId } } } } }
+          }
+        ) {
+          nodes {
+            id
+            identifier
+            url
+            title
+            description
+            state { id name }
+            labels { nodes { id name } }
+            children(first: 100, filter: { labels: { some: { id: { eq: $labelId } } } }) {
+              nodes {
+                id
+                identifier
+                url
+                title
+                description
+                state { id name }
+                labels { nodes { id name } }
+              }
+            }
+          }
+        }
+      }`,
+      input,
+    );
+
+    return result.issues.nodes.map((issue) => ({
+      ...issue,
+      labels: issue.labels.nodes,
+      children: issue.children.nodes.map((child) => ({ ...child, labels: child.labels.nodes })),
+    }));
   }
 
   private async request<T>(query: string, variables: Record<string, string>): Promise<T> {
@@ -166,4 +289,61 @@ export async function resolveLinearConfig(options: ResolveLinearConfigOptions): 
     labelId: label.id,
     workflowStateIds,
   };
+}
+
+export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOptions): Promise<LinearParentFeature[]> {
+  const parents = await options.client.findAfkParentIssues({
+    teamId: options.resolvedConfig.teamId,
+    labelId: options.resolvedConfig.labelId,
+  });
+  const terminalStateIds = new Set([
+    options.resolvedConfig.workflowStateIds.done,
+    options.resolvedConfig.workflowStateIds.handoff,
+  ]);
+
+  return parents.map((parent) => {
+    const featureSlug = slugFromLinearKey(parent.identifier);
+    return {
+      provider: 'linear',
+      id: parent.id,
+      key: parent.identifier,
+      url: parent.url,
+      title: parent.title,
+      status: parent.state.name,
+      featureSlug,
+      workItems: parent.children
+        .filter((child) => child.labels.some((label) => label.id === options.resolvedConfig.labelId))
+        .filter((child) => !terminalStateIds.has(child.state.id))
+        .map((child) => {
+          const afkLabel = child.labels.find((label) => label.id === options.resolvedConfig.labelId);
+          if (!afkLabel) throw new Error(`Linear issue ${child.identifier} did not include the configured AFK label.`);
+          return {
+            provider: 'linear' as const,
+            id: child.id,
+            key: child.identifier,
+            url: child.url,
+            title: child.title,
+            body: child.description ?? '',
+            status: child.state.name,
+            parent: {
+              id: parent.id,
+              key: parent.identifier,
+              url: parent.url,
+              title: parent.title,
+              featureSlug,
+            },
+            labels: child.labels,
+            afkLabel,
+          };
+        }),
+    };
+  });
+}
+
+export function slugFromLinearKey(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
