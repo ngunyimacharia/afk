@@ -66,67 +66,14 @@ import {
 } from './workspace-execution-graph.js';
 import { runGit, WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
 
-function yamlString(value: string): string {
-  return JSON.stringify(value);
-}
-
-function linearTicketBody(feature: LinearParentFeature, item: LinearParentFeature['workItems'][number]): string {
-  const body = item.body.trim();
-  return [
-    `# ${item.title}`,
-    '',
-    `Linear issue: ${item.url}`,
-    `Linear parent: ${feature.key} - ${feature.title}`,
-    '',
-    body || '_No Linear description provided._',
-    '',
-  ].join('\n');
-}
-
-export function materializeLinearFeatureTickets(repoRoot: string, features: LinearParentFeature[]): TicketRecord[] {
-  const records: TicketRecord[] = [];
-  for (const feature of features) {
-    const issuesDir = path.join(repoRoot, '.scratch', feature.featureSlug, 'issues');
-    for (const item of feature.workItems) {
-      const issueName = item.key
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-      if (!issueName) continue;
-      const ticketPath = path.join(issuesDir, `${issueName}.md`);
-      if (!existsSync(ticketPath)) {
-        mkdirSync(issuesDir, { recursive: true });
-        writeFileSync(
-          ticketPath,
-          [
-            '---',
-            'status: ready-for-agent',
-            'executor: afk',
-            `feature: ${yamlString(feature.featureSlug)}`,
-            `linearParentKey: ${yamlString(feature.key)}`,
-            `linearParentUrl: ${yamlString(feature.url)}`,
-            `linearIssueKey: ${yamlString(item.key)}`,
-            `linearIssueUrl: ${yamlString(item.url)}`,
-            '---',
-            '',
-            linearTicketBody(feature, item),
-          ].join('\n'),
-          'utf8',
-        );
-      }
-      records.push({
-        path: ticketPath,
-        feature: feature.featureSlug,
-        issueName,
-        label: `${feature.featureSlug}/${issueName}`,
-        status: 'ready-for-agent',
-        executorAfk: true,
-        dependsOn: [],
-      });
-    }
-  }
-  return records;
+export function formatLinearDiscoveryLines(features: LinearParentFeature[]): string[] {
+  const lines = features
+    .filter((feature) => feature.workItems.length > 0)
+    .flatMap((feature) => [
+      `- ${feature.featureSlug}: ${feature.key} - ${feature.title} (${feature.workItems.length} labeled subissues)`,
+      ...feature.workItems.map((item) => `  - ${item.key}: ${item.title}`),
+    ]);
+  return lines.length ? ['Linear discovery found labeled subissues:', ...lines] : [];
 }
 
 function commandArg(): string | undefined {
@@ -357,8 +304,8 @@ export async function runAfk(
         const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
         const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
         const linearFeatures = await discoverLinearFeatures({ resolvedConfig, client });
-        materializeLinearFeatureTickets(repoRoot, linearFeatures);
-        allTickets = repository.discoverTickets();
+        const discoveryLines = formatLinearDiscoveryLines(linearFeatures);
+        if (discoveryLines.length) io.stdout.write(`${discoveryLines.join('\n')}\n`);
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Unknown Linear discovery error';
         return { code: 1, message: `Linear ticket discovery failed.\nReason: ${reason}` };

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
   expandSelectedFeaturesToAllTickets,
+  formatLinearDiscoveryLines,
   formatManualPermissionReviewLines,
-  materializeLinearFeatureTickets,
   orderSelectedTicketsByFeatureGraph,
   readRunOutcomeLines,
   runAfk,
@@ -17,10 +17,10 @@ import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/intera
 import { RuntimeStore } from '../src/runtime-store.js';
 import { TicketRepository } from '../src/ticket-repository.js';
 
-test('materializes Linear parent feature work items as eligible launch tickets', () => {
+test('formats Linear parent feature work items without materializing launch tickets', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-launch-'));
 
-  const records = materializeLinearFeatureTickets(repoRoot, [
+  const lines = formatLinearDiscoveryLines([
     {
       provider: 'linear',
       id: 'parent-1',
@@ -52,17 +52,12 @@ test('materializes Linear parent feature work items as eligible launch tickets',
     },
   ]);
 
-  assert.deepEqual(
-    records.map((record) => ({ feature: record.feature, issueName: record.issueName, label: record.label })),
-    [{ feature: 'eng-100', issueName: 'eng-101', label: 'eng-100/eng-101' }],
-  );
-
-  const repository = new TicketRepository(repoRoot);
-  const tickets = repository.discoverTickets().filter((ticket) => repository.isEligible(ticket));
-  assert.equal(tickets.length, 1);
-  assert.equal(tickets[0]?.feature, 'eng-100');
-  assert.equal(tickets[0]?.issueName, 'eng-101');
-  assert.match(readFileSync(tickets[0]?.path ?? '', 'utf8'), /Linear parent: ENG-100 - Parent feature/);
+  assert.deepEqual(lines, [
+    'Linear discovery found labeled subissues:',
+    '- eng-100: ENG-100 - Parent feature (1 labeled subissues)',
+    '  - ENG-101: Child work',
+  ]);
+  assert.equal(existsSync(path.join(repoRoot, '.scratch')), false);
 });
 
 test('default afk launch fails early without interactive tty', async () => {
