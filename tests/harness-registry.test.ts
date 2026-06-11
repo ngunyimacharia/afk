@@ -55,7 +55,7 @@ test('Codex discovery makes Codex available to launch', async () => {
   const models = await discoverHarnessModels('Codex');
   assert.deepEqual(models.map((model) => model.id), ['codex/default']);
 
-  const discovery = await discoverAvailableHarnesses();
+  const discovery = await discoverAvailableHarnesses(async (harness) => (harness === 'Codex' ? models : []));
   assert.equal(discovery.availableHarnesses.includes('Codex'), true);
   assert.deepEqual(discovery.harnessModelCache.Codex?.map((model) => model.id), ['codex/default']);
 });

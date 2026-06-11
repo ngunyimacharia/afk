@@ -74,7 +74,9 @@ export function selectableHarnessIds(): SelectableHarnessId[] {
   return HARNESS_REGISTRY.filter((entry) => entry.selectable).map((entry) => entry.id as SelectableHarnessId);
 }
 
-export async function discoverAvailableHarnesses(): Promise<{
+export async function discoverAvailableHarnesses(
+  discoverModels: (harness: SelectableHarnessId) => Promise<LaunchModel[]> = discoverHarnessModels,
+): Promise<{
   availableHarnesses: SelectableHarnessId[];
   harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
 }> {
@@ -82,7 +84,7 @@ export async function discoverAvailableHarnesses(): Promise<{
   const harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>> = {};
   for (const harness of selectableHarnessIds()) {
     try {
-      const models = await discoverHarnessModels(harness);
+      const models = await discoverModels(harness);
       if (!models.length) continue;
       availableHarnesses.push(harness);
       harnessModelCache[harness] = models;
