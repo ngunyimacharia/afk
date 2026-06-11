@@ -111,7 +111,7 @@ export function linearFeaturesToTicketRecords(features: LinearParentFeature[]): 
           label: `${feature.featureSlug}/${issueName}`,
           status: 'ready-for-agent',
           executorAfk: true,
-          dependsOn: [],
+          dependsOn: item.dependsOn.map(linearIssueSlug).filter(Boolean),
           source: 'linear' as const,
           content: linearTicketContent(feature, item),
         },

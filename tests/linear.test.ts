@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
+import { linearFeaturesToTicketRecords } from '../src/cli.js';
+import { buildFeatureExecutionGraph } from '../src/feature-execution-graph.js';
 import type {
   LinearConfigClient,
   LinearDiscoveryClient,
   LinearEntity,
   LinearIssueLabel,
+  LinearIssueRelation,
   LinearIssueState,
   LinearParentIssue,
   LinearTeam,
@@ -132,6 +138,87 @@ test('discovers parent features with zero, one, and multiple eligible Linear sub
   assert.deepEqual(features[1]?.workItems[0]?.afkLabel, { id: 'label-1', name: 'AFK' });
 });
 
+test('maps Linear blocked-by sibling relations to AFK dependencies', async () => {
+  const afkLabel: LinearIssueLabel = { id: 'label-1', name: 'AFK' };
+  const ready: LinearIssueState = { id: 'state-ready', name: 'Ready' };
+  const features = await discoverLinearFeatures({
+    resolvedConfig: {
+      teamId: 'team-1',
+      teamKey: 'ENG',
+      labelId: 'label-1',
+      workflowStateIds: {
+        ready: 'state-ready',
+        running: 'state-running',
+        done: 'state-done',
+        handoff: 'state-handoff',
+      },
+    },
+    client: new StaticLinearDiscoveryClient([
+      parent('parent-relations', 'ENG-300', 'Relations parent', ready, [
+        child('child-a', 'ENG-301', 'Foundation', null, ready, [afkLabel]),
+        child('child-b', 'ENG-302', 'Dependent', null, ready, [afkLabel], [], [blocks('child-a', 'ENG-301')]),
+        child(
+          'child-c',
+          'ENG-303',
+          'Independent',
+          null,
+          ready,
+          [afkLabel],
+          [blockedBy('external-child', 'ENG-999', 'other-parent')],
+        ),
+      ]),
+    ]),
+  });
+
+  const tickets = linearFeaturesToTicketRecords(features);
+  assert.deepEqual(
+    tickets.map((ticket) => ({ issueName: ticket.issueName, dependsOn: ticket.dependsOn })),
+    [
+      { issueName: 'eng-301', dependsOn: [] },
+      { issueName: 'eng-302', dependsOn: ['eng-301'] },
+      { issueName: 'eng-303', dependsOn: [] },
+    ],
+  );
+
+  const graph = buildFeatureExecutionGraph(
+    mkdtempSync(path.join(tmpdir(), 'afk-linear-graph-')),
+    'eng-300',
+    tickets,
+    false,
+  );
+  assert.deepEqual(graph.waves, [['eng-301', 'eng-303'], ['eng-302']]);
+});
+
+test('surfaces cycles from Linear blocked-by relations through feature graph validation', async () => {
+  const afkLabel: LinearIssueLabel = { id: 'label-1', name: 'AFK' };
+  const ready: LinearIssueState = { id: 'state-ready', name: 'Ready' };
+  const features = await discoverLinearFeatures({
+    resolvedConfig: {
+      teamId: 'team-1',
+      teamKey: 'ENG',
+      labelId: 'label-1',
+      workflowStateIds: {
+        ready: 'state-ready',
+        running: 'state-running',
+        done: 'state-done',
+        handoff: 'state-handoff',
+      },
+    },
+    client: new StaticLinearDiscoveryClient([
+      parent('parent-cycle', 'ENG-400', 'Cycle parent', ready, [
+        child('child-a', 'ENG-401', 'Cycle A', null, ready, [afkLabel], [blockedBy('child-b', 'ENG-402')]),
+        child('child-b', 'ENG-402', 'Cycle B', null, ready, [afkLabel], [blockedBy('child-a', 'ENG-401')]),
+      ]),
+    ]),
+  });
+
+  const tickets = linearFeaturesToTicketRecords(features);
+  assert.throws(
+    () => buildFeatureExecutionGraph(mkdtempSync(path.join(tmpdir(), 'afk-linear-cycle-')), 'eng-400', tickets, false),
+    /dependency cycle: eng-401 -> eng-402 -> eng-401/,
+  );
+});
+
 class FakeLinearClient implements LinearConfigClient {
   private readonly team: LinearTeam = { id: 'team-1', key: 'ENG', name: 'Engineering' };
   private readonly label: LinearEntity = { id: 'label-1', name: 'AFK' };
@@ -184,6 +271,15 @@ class FakeLinearDiscoveryClient implements LinearDiscoveryClient {
   }
 }
 
+class StaticLinearDiscoveryClient implements LinearDiscoveryClient {
+  constructor(private readonly parents: LinearParentIssue[]) {}
+
+  async findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]> {
+    assert.deepEqual(input, { teamId: 'team-1', labelId: 'label-1' });
+    return this.parents;
+  }
+}
+
 function parent(
   id: string,
   identifier: string,
@@ -210,6 +306,8 @@ function child(
   description: string | null,
   state: LinearIssueState,
   labels: LinearIssueLabel[],
+  relations: LinearIssueRelation[] = [],
+  inverseRelations: LinearIssueRelation[] = [],
 ): LinearParentIssue['children'][number] {
   return {
     id,
@@ -219,5 +317,29 @@ function child(
     description,
     state,
     labels,
+    relations,
+    inverseRelations,
+  };
+}
+
+function blockedBy(id: string, identifier: string, parentId = 'parent-relations'): LinearIssueRelation {
+  return {
+    type: 'blocked_by',
+    relatedIssue: {
+      id,
+      identifier,
+      parent: { id: parentId },
+    },
+  };
+}
+
+function blocks(id: string, identifier: string, parentId = 'parent-relations'): LinearIssueRelation {
+  return {
+    type: 'blocks',
+    relatedIssue: {
+      id,
+      identifier,
+      parent: { id: parentId },
+    },
   };
 }

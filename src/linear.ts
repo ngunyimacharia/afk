@@ -29,6 +29,17 @@ export interface LinearIssueSummary {
   description?: string | null;
   state: LinearIssueState;
   labels: LinearIssueLabel[];
+  relations?: LinearIssueRelation[];
+  inverseRelations?: LinearIssueRelation[];
+}
+
+export interface LinearIssueRelation {
+  type: string;
+  relatedIssue: {
+    id: string;
+    identifier: string;
+    parent?: { id: string } | null;
+  };
 }
 
 export interface LinearParentIssue extends LinearIssueSummary {
@@ -63,6 +74,7 @@ export interface LinearProviderWorkItem {
   };
   labels: LinearIssueLabel[];
   afkLabel: LinearIssueLabel;
+  dependsOn: string[];
 }
 
 export interface LinearConfigClient {
@@ -172,6 +184,12 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
               description?: string | null;
               state: LinearIssueState;
               labels: { nodes: LinearIssueLabel[] };
+              relations: {
+                nodes: LinearIssueRelation[];
+              };
+              inverseRelations: {
+                nodes: LinearIssueRelation[];
+              };
             }>;
           };
         }>;
@@ -203,6 +221,18 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
                 description
                 state { id name }
                 labels { nodes { id name } }
+                relations(first: 100) {
+                  nodes {
+                    type
+                    relatedIssue { id identifier parent { id } }
+                  }
+                }
+                inverseRelations(first: 100) {
+                  nodes {
+                    type
+                    relatedIssue { id identifier parent { id } }
+                  }
+                }
               }
             }
           }
@@ -214,7 +244,12 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
     return result.issues.nodes.map((issue) => ({
       ...issue,
       labels: issue.labels.nodes,
-      children: issue.children.nodes.map((child) => ({ ...child, labels: child.labels.nodes })),
+      children: issue.children.nodes.map((child) => ({
+        ...child,
+        labels: child.labels.nodes,
+        relations: child.relations.nodes,
+        inverseRelations: child.inverseRelations.nodes,
+      })),
     }));
   }
 
@@ -303,6 +338,10 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
 
   return parents.map((parent) => {
     const featureSlug = slugFromLinearKey(parent.identifier);
+    const eligibleChildren = parent.children
+      .filter((child) => child.labels.some((label) => label.id === options.resolvedConfig.labelId))
+      .filter((child) => !terminalStateIds.has(child.state.id));
+    const eligibleSiblingKeysById = new Map(eligibleChildren.map((child) => [child.id, child.identifier] as const));
     return {
       provider: 'linear',
       id: parent.id,
@@ -311,33 +350,61 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
       title: parent.title,
       status: parent.state.name,
       featureSlug,
-      workItems: parent.children
-        .filter((child) => child.labels.some((label) => label.id === options.resolvedConfig.labelId))
-        .filter((child) => !terminalStateIds.has(child.state.id))
-        .map((child) => {
-          const afkLabel = child.labels.find((label) => label.id === options.resolvedConfig.labelId);
-          if (!afkLabel) throw new Error(`Linear issue ${child.identifier} did not include the configured AFK label.`);
-          return {
-            provider: 'linear' as const,
-            id: child.id,
-            key: child.identifier,
-            url: child.url,
-            title: child.title,
-            body: child.description ?? '',
-            status: child.state.name,
-            parent: {
-              id: parent.id,
-              key: parent.identifier,
-              url: parent.url,
-              title: parent.title,
-              featureSlug,
-            },
-            labels: child.labels,
-            afkLabel,
-          };
-        }),
+      workItems: eligibleChildren.map((child) => {
+        const afkLabel = child.labels.find((label) => label.id === options.resolvedConfig.labelId);
+        if (!afkLabel) throw new Error(`Linear issue ${child.identifier} did not include the configured AFK label.`);
+        const dependsOn = [
+          ...new Set(
+            [
+              ...(child.relations ?? []).filter((relation) => isBlockedByRelation(relation.type)),
+              ...(child.inverseRelations ?? []).filter((relation) => isBlocksRelation(relation.type)),
+            ].flatMap((relation) => {
+              const dependencyKey = eligibleSiblingKeysById.get(relation.relatedIssue.id);
+              if (!dependencyKey || dependencyKey === child.identifier) return [];
+              return [dependencyKey];
+            }),
+          ),
+        ];
+        return {
+          provider: 'linear' as const,
+          id: child.id,
+          key: child.identifier,
+          url: child.url,
+          title: child.title,
+          body: child.description ?? '',
+          status: child.state.name,
+          parent: {
+            id: parent.id,
+            key: parent.identifier,
+            url: parent.url,
+            title: parent.title,
+            featureSlug,
+          },
+          labels: child.labels,
+          afkLabel,
+          dependsOn,
+        };
+      }),
     };
   });
+}
+
+function isBlockedByRelation(type: string): boolean {
+  return (
+    type
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z]/g, '') === 'blockedby'
+  );
+}
+
+function isBlocksRelation(type: string): boolean {
+  return (
+    type
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z]/g, '') === 'blocks'
+  );
 }
 
 export function slugFromLinearKey(key: string): string {
