@@ -16,6 +16,7 @@ export interface CleanupTarget {
   issuePath: string;
   logPath?: string;
   metadataPath?: string;
+  linearMirrorPath?: string;
   doneSentinelPath?: string;
   failedSentinelPath?: string;
   handoffSentinelPath?: string;
@@ -251,6 +252,15 @@ function isTerminalTicketStatus(status: string | undefined, runtime: RuntimeMeta
   return isFrontmatterTerminal;
 }
 
+function isTerminalRuntimeStatus(runtime: RuntimeMetadataRecord): boolean {
+  return ['completed', 'failed', 'blocked', 'interrupted'].includes(normalize(runtime.RUN_STATUS ?? runtime.STATUS));
+}
+
+function linearMirrorPath(runtime: RuntimeMetadataRecord | null): string | undefined {
+  const mirrorPath = runtime?.LINEAR_MIRROR_PATH;
+  return mirrorPath && fileExists(mirrorPath) ? mirrorPath : undefined;
+}
+
 export class CleanupPlanner {
   constructor(private readonly input: CleanupPlannerInput) {}
 
@@ -295,6 +305,7 @@ export class CleanupPlanner {
             metadataPath: fileExists(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName))
               ? ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)
               : undefined,
+            linearMirrorPath: linearMirrorPath(runtime),
             doneSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done'))
               ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done')
               : undefined,
@@ -319,9 +330,53 @@ export class CleanupPlanner {
         featureDirectoriesToDelete.push(path.join(scratchRoot, featureDir.name));
     }
 
+    const plannedKeys = new Set(terminalTargets.map((target) => `${target.feature}/${target.issueName}`));
+    const metadataRoot = path.join(scratchRoot, '.opencode-afk-logs', 'runtime-metadata');
+    if (exists(metadataRoot)) {
+      for (const file of readdirSync(metadataRoot).filter((entry) => entry.endsWith('.json'))) {
+        const metadataPath = path.join(metadataRoot, file);
+        let runtime: RuntimeMetadataRecord;
+        try {
+          runtime = JSON.parse(readFileSync(metadataPath, 'utf8')) as RuntimeMetadataRecord;
+        } catch {
+          continue;
+        }
+        const key = `${runtime.FEATURE_SLUG}/${runtime.ISSUE_NAME}`;
+        if (!runtime.LINEAR_ISSUE_KEY || plannedKeys.has(key) || !isTerminalRuntimeStatus(runtime)) continue;
+        const mirrorPath = linearMirrorPath(runtime);
+        terminalTargets.push({
+          feature: runtime.FEATURE_SLUG,
+          issueName: runtime.ISSUE_NAME,
+          issuePath: mirrorPath ?? runtime.TICKET_PATH,
+          logPath: fileExists(ticketLogPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME))
+            ? ticketLogPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME)
+            : undefined,
+          metadataPath,
+          linearMirrorPath: mirrorPath,
+          doneSentinelPath: fileExists(
+            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'done'),
+          )
+            ? ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'done')
+            : undefined,
+          failedSentinelPath: fileExists(
+            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'failed'),
+          )
+            ? ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'failed')
+            : undefined,
+          handoffSentinelPath: fileExists(
+            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'handoff'),
+          )
+            ? ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'handoff')
+            : undefined,
+          reason: `terminal Linear run: ${runtime.RUN_STATUS ?? runtime.STATUS}`,
+        });
+      }
+    }
+
     for (const target of terminalTargets) {
       if (target.logPath) preservedArtifacts.push(target.logPath);
       if (target.metadataPath) preservedArtifacts.push(target.metadataPath);
+      if (target.linearMirrorPath) preservedArtifacts.push(target.linearMirrorPath);
       if (target.doneSentinelPath) preservedArtifacts.push(target.doneSentinelPath);
       if (target.failedSentinelPath) preservedArtifacts.push(target.failedSentinelPath);
       if (target.handoffSentinelPath) preservedArtifacts.push(target.handoffSentinelPath);
@@ -366,14 +421,17 @@ export class CleanupExecutor {
     writePendingPostMergeCleanupItems(repoRoot, remainingPending);
 
     for (const target of plan.terminalTargets) {
-      for (const filePath of [
-        target.issuePath,
-        target.logPath,
-        target.metadataPath,
-        target.doneSentinelPath,
-        target.failedSentinelPath,
-        target.handoffSentinelPath,
-      ].filter((value): value is string => Boolean(value))) {
+      for (const filePath of new Set(
+        [
+          target.issuePath,
+          target.logPath,
+          target.metadataPath,
+          target.linearMirrorPath,
+          target.doneSentinelPath,
+          target.failedSentinelPath,
+          target.handoffSentinelPath,
+        ].filter((value): value is string => Boolean(value)),
+      )) {
         try {
           rmSync(filePath, { force: true, recursive: false });
           deleted.push(filePath);

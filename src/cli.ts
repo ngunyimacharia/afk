@@ -278,7 +278,13 @@ export async function runAfk(
     const planner = new CleanupPlanner({ repoRoot });
     const plan = planner.buildPlan();
     const logTargets = plan.terminalTargets
-      .flatMap((target) => [target.logPath, target.metadataPath, target.doneSentinelPath, target.failedSentinelPath])
+      .flatMap((target) => [
+        target.logPath,
+        target.metadataPath,
+        target.linearMirrorPath,
+        target.doneSentinelPath,
+        target.failedSentinelPath,
+      ])
       .filter(Boolean) as string[];
     if (plan.workspaceExecutionPath) logTargets.push(plan.workspaceExecutionPath);
     const dryRun = [

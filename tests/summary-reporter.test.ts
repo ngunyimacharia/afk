@@ -91,6 +91,55 @@ Outcome: completed
   assert.match(report.message, /- none/);
 });
 
+test('reports Linear-backed run identity and sync status from metadata', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  const mirrorPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors', 'eng-1-eng-2.md');
+  mkdirSync(metadataDir, { recursive: true });
+  mkdirSync(path.dirname(mirrorPath), { recursive: true });
+  writeFileSync(mirrorPath, 'Linear mirror\n');
+  writeFileSync(
+    path.join(metadataDir, 'eng-1-eng-2.json'),
+    JSON.stringify(
+      {
+        TICKET_PATH: mirrorPath,
+        FEATURE_SLUG: 'eng-1',
+        ISSUE_NAME: 'eng-2',
+        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'eng-1-eng-2.log'),
+        START_TIME: '2026-05-18T00:00:00.000Z',
+        START_EPOCH: 1,
+        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'eng-1-eng-2.done'),
+        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'eng-1-eng-2.failed'),
+        STATUS: 'completed',
+        RUN_STATUS: 'completed',
+        EXECUTION_PROVIDER: 'opencode',
+        PROVIDER_SESSION_ID: 'session-1',
+        PROVIDER_SESSION_REMOVABLE: true,
+        INSPECTION_PROVIDER: null,
+        INSPECTION_TARGET_IDENTIFIER: null,
+        UNSAFE_REASON: null,
+        LINEAR_ISSUE_ID: 'issue-2',
+        LINEAR_ISSUE_KEY: 'ENG-2',
+        LINEAR_ISSUE_URL: 'https://linear.app/acme/issue/ENG-2/test',
+        LINEAR_PARENT_KEY: 'ENG-1',
+        LINEAR_MIRROR_PATH: mirrorPath,
+        LINEAR_SYNC_STATUS: 'terminal-synced',
+      },
+      null,
+      2,
+    ),
+  );
+
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /eng-1\/eng-2/);
+  assert.match(report.message, /linear issue: ENG-2/);
+  assert.match(report.message, /linear url: https:\/\/linear\.app\/acme\/issue\/ENG-2\/test/);
+  assert.match(report.message, /linear parent: ENG-1/);
+  assert.match(report.message, /linear workflow sync: terminal-synced/);
+  assert.match(report.message, /linear summary comment: synced/);
+  assert.match(report.message, new RegExp(`linear mirror: ${mirrorPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+});
+
 test('reports timing and review counters from metadata when available', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');

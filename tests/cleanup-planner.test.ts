@@ -34,6 +34,51 @@ test('pairs terminal tickets with attributable runtime artifacts only', () => {
   assert.equal(plan.terminalTargets[0]?.metadataPath?.endsWith('feat-done.json'), true);
 });
 
+test('plans local Linear mirrors and runtime artifacts for terminal runs', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  const mirrorPath = path.join(logsDir, 'linear-mirrors', 'eng-1-eng-2.md');
+  mkdirSync(metadataDir, { recursive: true });
+  mkdirSync(path.dirname(mirrorPath), { recursive: true });
+  writeFileSync(mirrorPath, 'Linear mirror\n');
+  writeFileSync(path.join(logsDir, 'eng-1-eng-2.log'), 'log');
+  writeFileSync(
+    path.join(metadataDir, 'eng-1-eng-2.json'),
+    JSON.stringify({
+      TICKET_PATH: mirrorPath,
+      FEATURE_SLUG: 'eng-1',
+      ISSUE_NAME: 'eng-2',
+      LOG_PATH: path.join(logsDir, 'eng-1-eng-2.log'),
+      START_TIME: '2026-05-18T00:00:00.000Z',
+      START_EPOCH: 1,
+      DONE_SENTINEL_PATH: path.join(logsDir, 'sentinels', 'eng-1-eng-2.done'),
+      FAILED_SENTINEL_PATH: path.join(logsDir, 'sentinels', 'eng-1-eng-2.failed'),
+      STATUS: 'completed',
+      RUN_STATUS: 'completed',
+      EXECUTION_PROVIDER: 'opencode',
+      PROVIDER_SESSION_ID: 'session-1',
+      PROVIDER_SESSION_REMOVABLE: true,
+      INSPECTION_PROVIDER: null,
+      INSPECTION_TARGET_IDENTIFIER: null,
+      UNSAFE_REASON: null,
+      LINEAR_ISSUE_ID: 'issue-2',
+      LINEAR_ISSUE_KEY: 'ENG-2',
+      LINEAR_ISSUE_URL: 'https://linear.app/acme/issue/ENG-2/test',
+      LINEAR_PARENT_KEY: 'ENG-1',
+      LINEAR_MIRROR_PATH: mirrorPath,
+      LINEAR_SYNC_STATUS: 'terminal-synced',
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.terminalTargets.length, 1);
+  assert.equal(plan.terminalTargets[0]?.issuePath, mirrorPath);
+  assert.equal(plan.terminalTargets[0]?.linearMirrorPath, mirrorPath);
+  assert.equal(plan.terminalTargets[0]?.metadataPath?.endsWith('eng-1-eng-2.json'), true);
+  assert.equal(plan.terminalTargets[0]?.logPath?.endsWith('eng-1-eng-2.log'), true);
+});
+
 test('preserves handoff tickets with runtime metadata RUN_STATUS handoff', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
