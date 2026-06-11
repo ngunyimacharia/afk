@@ -280,7 +280,12 @@ test('readiness uses afk.json commands instead of inferred package scripts', () 
     expectedBranch: 'config-ready',
     envTestingDecision: 'not-required',
     dependencyCopyStatusKnown: true,
-    config: { testsEnabled: true, smokeTestCommand: 'bun test {testFile}', staticCheckCommands: ['bun run build'] },
+    config: {
+      testsEnabled: true,
+      smokeTestCommand: 'bun test {testFile}',
+      staticCheckCommands: ['bun run build'],
+      provider: { kind: 'scratch' },
+    },
     executor,
   });
 

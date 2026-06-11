@@ -23,6 +23,7 @@ test('loads valid afk project config', () => {
     testsEnabled: true,
     smokeTestCommand: 'npm test -- {testFile}',
     staticCheckCommands: ['npm run lint --silent'],
+    provider: { kind: 'scratch' },
   });
 });
 
@@ -48,5 +49,113 @@ test('allows tests disabled without smoke command', () => {
   const result = validateAfkProjectConfig({ testsEnabled: false });
 
   assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.config, { testsEnabled: false, staticCheckCommands: [] });
+  assert.deepEqual(result.config, { testsEnabled: false, staticCheckCommands: [], provider: { kind: 'scratch' } });
+});
+
+test('loads linear GraphQL provider config', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: {
+      kind: 'linear-graphql',
+      team: { key: 'AFK' },
+      afkLabelName: 'afk',
+      workflowStates: {
+        ready: { name: 'Ready for agent' },
+        running: { id: 'state-running' },
+        done: { name: 'Done', id: 'state-done' },
+        handoff: { name: 'Ready for human' },
+      },
+    },
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.config?.provider, {
+    kind: 'linear-graphql',
+    team: { key: 'AFK' },
+    afkLabelName: 'afk',
+    workflowStates: {
+      ready: { name: 'Ready for agent' },
+      running: { id: 'state-running' },
+      done: { name: 'Done', id: 'state-done' },
+      handoff: { name: 'Ready for human' },
+    },
+  });
+});
+
+test('rejects malformed provider config with actionable errors', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: {
+      kind: 'linear-graphql',
+      team: {},
+      afkLabelName: ' ',
+      apiKey: 'secret',
+      workflowStates: {
+        ready: { name: '' },
+        running: { id: 'state-running' },
+        done: {},
+      },
+    },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /provider\.team must include key or id/);
+  assert.match(result.errors.join('\n'), /provider\.afkLabelName must be a non-empty string/);
+  assert.match(result.errors.join('\n'), /provider\.workflowStates\.ready\.name must be a non-empty string/);
+  assert.match(result.errors.join('\n'), /provider\.workflowStates\.done must include name or id/);
+  assert.match(result.errors.join('\n'), /provider\.workflowStates\.handoff must be an object/);
+  assert.match(result.errors.join('\n'), /provider\.apiKey must not be stored in afk\.json/);
+});
+
+test('rejects credentials nested under workflow states config', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: {
+      kind: 'linear-graphql',
+      team: { key: 'AFK' },
+      afkLabelName: 'afk',
+      workflowStates: {
+        ready: { name: 'Ready for agent' },
+        running: { id: 'state-running' },
+        done: { name: 'Done' },
+        handoff: { name: 'Ready for human' },
+        apiKey: 'secret',
+      },
+    },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /provider\.workflowStates\.apiKey must not be stored in afk\.json/);
+});
+
+test('rejects provider api key spellings with separators', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: { kind: 'scratch', api_key: 'secret', 'api-key': 'secret' },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /provider\.api_key must not be stored in afk\.json/);
+  assert.match(result.errors.join('\n'), /provider\.api-key must not be stored in afk\.json/);
+});
+
+test('rejects credentials deeply nested under unknown provider config objects', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: {
+      kind: 'linear-graphql',
+      team: { key: 'AFK' },
+      afkLabelName: 'afk',
+      workflowStates: {
+        ready: { name: 'Ready for agent' },
+        running: { id: 'state-running' },
+        done: { name: 'Done' },
+        handoff: { name: 'Ready for human' },
+        extra: { apiKey: 'secret' },
+      },
+    },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /provider\.workflowStates\.extra\.apiKey must not be stored in afk\.json/);
 });
