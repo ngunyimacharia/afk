@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
   expandSelectedFeaturesToAllTickets,
   formatManualPermissionReviewLines,
+  materializeLinearFeatureTickets,
   orderSelectedTicketsByFeatureGraph,
   readRunOutcomeLines,
   runAfk,
@@ -15,6 +16,54 @@ import {
 import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/interactive-launch.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { TicketRepository } from '../src/ticket-repository.js';
+
+test('materializes Linear parent feature work items as eligible launch tickets', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-launch-'));
+
+  const records = materializeLinearFeatureTickets(repoRoot, [
+    {
+      provider: 'linear',
+      id: 'parent-1',
+      key: 'ENG-100',
+      url: 'https://linear.app/acme/issue/ENG-100/parent',
+      title: 'Parent feature',
+      status: 'Ready',
+      featureSlug: 'eng-100',
+      workItems: [
+        {
+          provider: 'linear',
+          id: 'child-1',
+          key: 'ENG-101',
+          url: 'https://linear.app/acme/issue/ENG-101/child',
+          title: 'Child work',
+          body: 'Implement child work.',
+          status: 'Ready',
+          parent: {
+            id: 'parent-1',
+            key: 'ENG-100',
+            url: 'https://linear.app/acme/issue/ENG-100/parent',
+            title: 'Parent feature',
+            featureSlug: 'eng-100',
+          },
+          labels: [{ id: 'label-1', name: 'AFK' }],
+          afkLabel: { id: 'label-1', name: 'AFK' },
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(
+    records.map((record) => ({ feature: record.feature, issueName: record.issueName, label: record.label })),
+    [{ feature: 'eng-100', issueName: 'eng-101', label: 'eng-100/eng-101' }],
+  );
+
+  const repository = new TicketRepository(repoRoot);
+  const tickets = repository.discoverTickets().filter((ticket) => repository.isEligible(ticket));
+  assert.equal(tickets.length, 1);
+  assert.equal(tickets[0]?.feature, 'eng-100');
+  assert.equal(tickets[0]?.issueName, 'eng-101');
+  assert.match(readFileSync(tickets[0]?.path ?? '', 'utf8'), /Linear parent: ENG-100 - Parent feature/);
+});
 
 test('default afk launch fails early without interactive tty', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));

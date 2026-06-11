@@ -34,6 +34,12 @@ import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
+import {
+  discoverLinearFeatures,
+  LinearGraphqlClient,
+  type LinearParentFeature,
+  resolveLinearConfig,
+} from './linear.js';
 import { createLiveRunView } from './live-run-view.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
@@ -59,6 +65,69 @@ import {
   type WorkspaceExecutionGraph,
 } from './workspace-execution-graph.js';
 import { runGit, WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
+
+function yamlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function linearTicketBody(feature: LinearParentFeature, item: LinearParentFeature['workItems'][number]): string {
+  const body = item.body.trim();
+  return [
+    `# ${item.title}`,
+    '',
+    `Linear issue: ${item.url}`,
+    `Linear parent: ${feature.key} - ${feature.title}`,
+    '',
+    body || '_No Linear description provided._',
+    '',
+  ].join('\n');
+}
+
+export function materializeLinearFeatureTickets(repoRoot: string, features: LinearParentFeature[]): TicketRecord[] {
+  const records: TicketRecord[] = [];
+  for (const feature of features) {
+    const issuesDir = path.join(repoRoot, '.scratch', feature.featureSlug, 'issues');
+    for (const item of feature.workItems) {
+      const issueName = item.key
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      if (!issueName) continue;
+      const ticketPath = path.join(issuesDir, `${issueName}.md`);
+      if (!existsSync(ticketPath)) {
+        mkdirSync(issuesDir, { recursive: true });
+        writeFileSync(
+          ticketPath,
+          [
+            '---',
+            'status: ready-for-agent',
+            'executor: afk',
+            `feature: ${yamlString(feature.featureSlug)}`,
+            `linearParentKey: ${yamlString(feature.key)}`,
+            `linearParentUrl: ${yamlString(feature.url)}`,
+            `linearIssueKey: ${yamlString(item.key)}`,
+            `linearIssueUrl: ${yamlString(item.url)}`,
+            '---',
+            '',
+            linearTicketBody(feature, item),
+          ].join('\n'),
+          'utf8',
+        );
+      }
+      records.push({
+        path: ticketPath,
+        feature: feature.featureSlug,
+        issueName,
+        label: `${feature.featureSlug}/${issueName}`,
+        status: 'ready-for-agent',
+        executorAfk: true,
+        dependsOn: [],
+      });
+    }
+  }
+  return records;
+}
 
 function commandArg(): string | undefined {
   const knownCommands = new Set([
@@ -282,6 +351,18 @@ export async function runAfk(
       allTickets = repository.discoverTickets();
     } catch (error) {
       return { code: 1, message: formatTicketMetadataError(error) };
+    }
+    if (activeProjectConfig.linear) {
+      try {
+        const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
+        const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
+        const linearFeatures = await discoverLinearFeatures({ resolvedConfig, client });
+        materializeLinearFeatureTickets(repoRoot, linearFeatures);
+        allTickets = repository.discoverTickets();
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Unknown Linear discovery error';
+        return { code: 1, message: `Linear ticket discovery failed.\nReason: ${reason}` };
+      }
     }
     const tickets = allTickets.filter((ticket) => repository.isEligible(ticket));
     if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
