@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createOpencode } from '@opencode-ai/sdk';
 import prompts from 'prompts';
 import type { LaunchModel } from './types.js';
@@ -6,6 +9,26 @@ const OPENCODE_EPHEMERAL_PORT = 0;
 const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_STALE_RECOVERIES = 5;
+const YOLO_OPENCODE_AGENTS = ['build', 'plan', 'general', 'explore', 'scout'] as const;
+const YOLO_AGENT_PERMISSION = {
+  bash: 'allow',
+  doom_loop: 'allow',
+  edit: 'allow',
+  external_directory: 'allow',
+  glob: 'allow',
+  grep: 'allow',
+  list: 'allow',
+  lsp: 'allow',
+  question: 'allow',
+  read: 'allow',
+  repo_clone: 'allow',
+  repo_overview: 'allow',
+  skill: 'allow',
+  task: 'allow',
+  todowrite: 'allow',
+  webfetch: 'allow',
+  websearch: 'allow',
+} as const;
 
 type OpenCodeActivityKind = 'assistant' | 'tool' | 'permission' | 'session' | 'diff' | 'other';
 
@@ -37,6 +60,7 @@ export interface OpenCodeSessionExecutor {
     agent?: string;
     sessionId?: string | null;
     workDir?: string;
+    repoRoot?: string;
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
@@ -115,6 +139,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     agent?: string;
     sessionId?: string | null;
     workDir?: string;
+    repoRoot?: string;
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
@@ -136,7 +161,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
         finalMessageText: null,
       };
     }
-    const sdk = await createAfkOpencodeWith(this.factory);
+    const sdk = await createAfkOpencodeWith(this.factory, { repoRoot: input.repoRoot });
     const abortController = new AbortController();
     let eventTask: Promise<void> | undefined;
     const terminalErrors: string[] = [];
@@ -391,9 +416,56 @@ async function createAfkOpencode(): ReturnType<typeof createOpencode> {
 
 export function createAfkOpencodeWith(
   factory: (options: { port: number }) => ReturnType<typeof createOpencode>,
+  options: { repoRoot?: string } = {},
 ): ReturnType<typeof createOpencode> {
   process.env.OPENCODE_PURE = 'true';
+  const configContent = buildAfkOpencodeConfigContent(options.repoRoot, process.env.OPENCODE_CONFIG_CONTENT);
+  if (configContent) {
+    process.env.OPENCODE_CONFIG_CONTENT = configContent;
+    process.env.OPENCODE_CONFIG = writeAfkOpencodeConfigFile(configContent);
+  }
   return factory({ port: OPENCODE_EPHEMERAL_PORT });
+}
+
+export function buildAfkOpencodeConfigContent(repoRoot?: string, existingContent?: string): string | null {
+  void repoRoot;
+  const existing = parseConfigContent(existingContent);
+  const existingAgent = readConfigObject(existing.agent);
+  const yoloAgents = Object.fromEntries(
+    YOLO_OPENCODE_AGENTS.map((agentName) => {
+      const agentConfig = readConfigObject(existingAgent[agentName]);
+      return [agentName, { ...agentConfig, permission: YOLO_AGENT_PERMISSION }];
+    }),
+  );
+
+  return JSON.stringify({
+    ...existing,
+    permission: 'allow',
+    agent: {
+      ...existingAgent,
+      ...yoloAgents,
+    },
+  });
+}
+
+function writeAfkOpencodeConfigFile(configContent: string): string {
+  const directory = mkdtempSync(path.join(tmpdir(), 'afk-opencode-config-'));
+  const configPath = path.join(directory, 'opencode.json');
+  writeFileSync(configPath, configContent, 'utf8');
+  return configPath;
+}
+
+function parseConfigContent(content?: string): Record<string, unknown> {
+  if (!content?.trim()) return {};
+  try {
+    return readConfigObject(JSON.parse(content));
+  } catch {
+    return {};
+  }
+}
+
+function readConfigObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function composePermissionDecisionProvider(

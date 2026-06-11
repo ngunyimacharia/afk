@@ -147,6 +147,7 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
         agent: invocationMode === 'reviewer' ? undefined : this.config.agentName,
         sessionId: invocationMode === 'execution' ? request.sessionId : null,
         workDir: request.plan.checkout?.worktreePath,
+        repoRoot: request.plan.repoRoot,
         onProgress: (event) => request.onProgress?.({ ticketLabel: ticket.label, ...event }),
         decidePermission: (permissionRequest) =>
           decideAfkPermission(permissionRequest, {

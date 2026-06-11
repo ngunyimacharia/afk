@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
+  buildAfkOpencodeConfigContent,
   createAfkOpencodeWith,
   extractModelsFromProvidersPayload,
   extractSessionOutput,
@@ -282,8 +284,12 @@ test('formats opencode permission replies', () => {
 
 test('sets OPENCODE_PURE before creating opencode sdk server', async () => {
   const previousPure = process.env.OPENCODE_PURE;
+  const previousConfigContent = process.env.OPENCODE_CONFIG_CONTENT;
+  const previousConfig = process.env.OPENCODE_CONFIG;
   try {
     process.env.OPENCODE_PURE = 'false';
+    delete process.env.OPENCODE_CONFIG_CONTENT;
+    delete process.env.OPENCODE_CONFIG;
     let observedPure: string | undefined;
     let observedPort: number | undefined;
 
@@ -302,7 +308,75 @@ test('sets OPENCODE_PURE before creating opencode sdk server', async () => {
     } else {
       process.env.OPENCODE_PURE = previousPure;
     }
+    if (previousConfigContent === undefined) {
+      delete process.env.OPENCODE_CONFIG_CONTENT;
+    } else {
+      process.env.OPENCODE_CONFIG_CONTENT = previousConfigContent;
+    }
+    if (previousConfig === undefined) {
+      delete process.env.OPENCODE_CONFIG;
+    } else {
+      process.env.OPENCODE_CONFIG = previousConfig;
+    }
   }
+});
+
+test('injects yolo permission config content and explicit config file for opencode', async () => {
+  const previousConfigContent = process.env.OPENCODE_CONFIG_CONTENT;
+  const previousConfig = process.env.OPENCODE_CONFIG;
+  try {
+    process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+      permission: {
+        bash: { 'rm *': 'deny' },
+      },
+      agent: { build: { model: 'openai/gpt-5.5' } },
+      tool_output: { max_lines: 100 },
+    });
+    let observedConfigContent: string | undefined;
+    let observedConfigPath: string | undefined;
+
+    await createAfkOpencodeWith(
+      async () => {
+        observedConfigContent = process.env.OPENCODE_CONFIG_CONTENT;
+        observedConfigPath = process.env.OPENCODE_CONFIG;
+        return {} as Awaited<ReturnType<typeof createAfkOpencodeWith>>;
+      },
+      { repoRoot: '/repo' },
+    );
+
+    const parsed = JSON.parse(observedConfigContent ?? '{}');
+    assert.equal(parsed.permission, 'allow');
+    assert.equal(parsed.agent.build.model, 'openai/gpt-5.5');
+    assert.equal(parsed.agent.build.permission.external_directory, 'allow');
+    assert.equal(parsed.agent.build.permission.bash, 'allow');
+    assert.equal(parsed.agent.plan.permission.external_directory, 'allow');
+    assert.equal(parsed.agent.general.permission.external_directory, 'allow');
+    assert.equal(parsed.agent.explore.permission.external_directory, 'allow');
+    assert.deepEqual(parsed.tool_output, { max_lines: 100 });
+    assert.ok(observedConfigPath);
+    assert.deepEqual(JSON.parse(readFileSync(observedConfigPath, 'utf8')), parsed);
+  } finally {
+    if (previousConfigContent === undefined) {
+      delete process.env.OPENCODE_CONFIG_CONTENT;
+    } else {
+      process.env.OPENCODE_CONFIG_CONTENT = previousConfigContent;
+    }
+    if (previousConfig === undefined) {
+      delete process.env.OPENCODE_CONFIG;
+    } else {
+      process.env.OPENCODE_CONFIG = previousConfig;
+    }
+  }
+});
+
+test('builds yolo permission config for AFK opencode sessions', () => {
+  const config = JSON.parse(buildAfkOpencodeConfigContent('/repo/', undefined) ?? '{}');
+
+  assert.equal(config.permission, 'allow');
+  assert.equal(config.agent.build.permission.external_directory, 'allow');
+  assert.equal(config.agent.plan.permission.external_directory, 'allow');
+  assert.equal(config.agent.general.permission.external_directory, 'allow');
+  assert.equal(config.agent.explore.permission.external_directory, 'allow');
 });
 
 test('recovers stale opencode prompts in the same session', async () => {
