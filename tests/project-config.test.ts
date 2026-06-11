@@ -106,3 +106,24 @@ test('rejects malformed provider config with actionable errors', () => {
   assert.match(result.errors.join('\n'), /provider\.workflowStates\.handoff must be an object/);
   assert.match(result.errors.join('\n'), /provider\.apiKey must not be stored in afk\.json/);
 });
+
+test('rejects credentials nested under workflow states config', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: {
+      kind: 'linear-graphql',
+      team: { key: 'AFK' },
+      afkLabelName: 'afk',
+      workflowStates: {
+        ready: { name: 'Ready for agent' },
+        running: { id: 'state-running' },
+        done: { name: 'Done' },
+        handoff: { name: 'Ready for human' },
+        apiKey: 'secret',
+      },
+    },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /provider\.workflowStates\.apiKey must not be stored in afk\.json/);
+});

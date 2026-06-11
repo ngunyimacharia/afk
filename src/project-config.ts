@@ -173,7 +173,13 @@ function validateWorkflowStates(value: unknown): { config?: LinearGraphqlWorkflo
   const running = validateWorkflowStateConfig(record.running, 'provider.workflowStates.running');
   const done = validateWorkflowStateConfig(record.done, 'provider.workflowStates.done');
   const handoff = validateWorkflowStateConfig(record.handoff, 'provider.workflowStates.handoff');
-  const errors = [...ready.errors, ...running.errors, ...done.errors, ...handoff.errors];
+  const errors = [
+    ...credentialFields(record, 'provider.workflowStates'),
+    ...ready.errors,
+    ...running.errors,
+    ...done.errors,
+    ...handoff.errors,
+  ];
 
   if (errors.length || !ready.config || !running.config || !done.config || !handoff.config) return { errors };
 
