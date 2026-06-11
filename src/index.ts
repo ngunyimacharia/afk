@@ -11,6 +11,7 @@ export {
 } from './permission-coordinator.js';
 export { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 export { resolveReviewerPrompt } from './reviewer-prompt-catalog.js';
+export { createDefaultTrackerProvider, ScratchTrackerProvider } from './scratch-tracker-provider.js';
 export { SelectionService } from './selection-service.js';
 export { TicketRepository } from './ticket-repository.js';
 export type {

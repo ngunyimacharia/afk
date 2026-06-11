@@ -19,6 +19,7 @@ export interface TrackerWorkItemContent {
   issueName: string;
   label: string;
   status: string;
+  executorAfk: boolean;
   dependsOn: string[];
   title: string;
   body: string;
@@ -108,7 +109,7 @@ export function trackerWorkItemToTicketRecord(item: TrackerWorkItem, path = ''):
     issueName: item.issueName,
     label: item.label,
     status: item.status,
-    executorAfk: false,
+    executorAfk: item.executorAfk,
     dependsOn: item.dependsOn.map((dependency) => normalizeDependencyKey(item.feature, dependency)),
   };
 }
@@ -121,6 +122,7 @@ export function ticketRecordToTrackerWorkItem(ticket: TicketRecord, body = ''): 
     issueName: ticket.issueName,
     label: ticket.label,
     status: ticket.status ?? '',
+    executorAfk: ticket.executorAfk,
     dependsOn: ticket.dependsOn ?? [],
     title: ticket.label,
     body,
