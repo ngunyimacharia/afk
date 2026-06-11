@@ -9,6 +9,7 @@ import type {
   ReviewerPromptTemplate,
   TicketRecord,
 } from './types.js';
+import type { SelectableHarnessId } from './harness-registry.js';
 import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
 import { runGit } from './worktree-preparation-service.js';
 
@@ -160,13 +161,13 @@ export function buildLaunchPlan(
   tickets: TicketRecord[],
   checkout: PreparedCheckoutContext,
   reviewer?: {
-    harness?: 'OpenCode' | 'Claude-Kimi';
+    harness?: SelectableHarnessId;
     model?: LaunchModel;
     prompt?: ReviewerPromptTemplate;
   },
   checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
   featureDependencies?: Record<string, string[]>,
-  harness?: 'OpenCode' | 'Claude-Kimi',
+  harness?: SelectableHarnessId,
 ): LaunchPlan {
   const snapshots = Object.fromEntries(
     tickets.map((ticket) => [

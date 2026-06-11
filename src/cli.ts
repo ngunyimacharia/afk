@@ -13,13 +13,7 @@ import {
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
-import {
-  type AgentExecutionProvider,
-  ClaudeKimiAgentExecutionProvider,
-  CompositeAgentExecutionProvider,
-  OpenCodeAgentExecutionProvider,
-} from './agent-execution-provider.js';
-import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
+import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
 import { CleanupExecutor, CleanupPlanner } from './cleanup.js';
 import { type DaemonLaunchContext, runDaemon } from './daemon.js';
 import {
@@ -32,13 +26,20 @@ import { type FeatureBaseMergeResult, mergeCompletedFeaturesToBase } from './fea
 import type { FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
+import {
+  createHarnessAgentExecutionProvider,
+  createHarnessExecutor,
+  discoverAvailableHarnesses,
+  discoverHarnessModels,
+  providerNameForHarness,
+  type SelectableHarnessId,
+} from './harness-registry.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
 import { createLiveRunView } from './live-run-view.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
-import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import { formatDuration } from './opentui-dashboard.js';
 import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
@@ -292,29 +293,10 @@ export async function runAfk(
     let selectedTickets: TicketRecord[] = [];
     let concurrency = 3;
     let mergeBackToBase = false;
-    let harness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
-    let reviewerHarness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode';
+    let harness: SelectableHarnessId = 'OpenCode';
+    let reviewerHarness: SelectableHarnessId = 'OpenCode';
 
-    const harnessModelCache: Record<string, LaunchModel[]> = {};
-    const availableHarnesses: string[] = [];
-    try {
-      const opencodeModels = await discoverOpenCodeModels();
-      if (opencodeModels.length > 0) {
-        availableHarnesses.push('OpenCode');
-        harnessModelCache.OpenCode = opencodeModels;
-      }
-    } catch {
-      // OpenCode not available
-    }
-    try {
-      const claudeKimiModels = await discoverClaudeKimiModels();
-      if (claudeKimiModels.length > 0) {
-        availableHarnesses.push('Claude-Kimi');
-        harnessModelCache['Claude-Kimi'] = claudeKimiModels;
-      }
-    } catch {
-      // Claude Kimi not available
-    }
+    const { availableHarnesses, harnessModelCache } = await discoverAvailableHarnesses();
 
     if (availableHarnesses.length === 0) {
       return {
@@ -330,8 +312,7 @@ export async function runAfk(
         availableHarnesses,
         discoverModels: async (selectedHarness) => {
           if (harnessModelCache[selectedHarness]) return harnessModelCache[selectedHarness];
-          if (selectedHarness === 'Claude-Kimi') return discoverClaudeKimiModels();
-          return discoverOpenCodeModels();
+          return discoverHarnessModels(selectedHarness);
         },
         tickets,
         preferences: launchPreferences,
@@ -363,8 +344,8 @@ export async function runAfk(
     if (!model) return { code: 0, message: 'Launch cancelled' };
     if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
     if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
-    const implementationExecutor = createExecutor(harness);
-    const reviewerExecutor = createExecutor(reviewerHarness);
+    const implementationExecutor = createHarnessExecutor(harness);
+    const reviewerExecutor = createHarnessExecutor(reviewerHarness);
     const preflight = await preflightSelectedModels(
       implementationExecutor,
       model,
@@ -477,8 +458,8 @@ export async function runAfk(
       ticketLabel: selectedTickets[0]?.label,
       autoApprove: true,
     });
-    const executionProvider = createAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-    const reviewerProvider = createAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+    const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
+    const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
     const runner = new SingleTicketRunner(
       runtimeStore,
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
@@ -526,7 +507,7 @@ export async function runAfk(
       kind: io.stdout.isTTY ? 'dashboard' : 'text',
       stdout: io.stdout,
       isPromptActive: () => permissionCoordinator.promptActive,
-      providerName: providerNameFromHarness(harness),
+      providerName: providerNameForHarness(harness),
       selectedTickets: plan.tickets,
       repoRoot,
       runOptions: {
@@ -1049,8 +1030,8 @@ async function preflightSelectedModels(
   model: LaunchModel,
   reviewerExecutor: OpenCodeSessionExecutor,
   reviewerModel: LaunchModel,
-  harness: 'OpenCode' | 'Claude-Kimi',
-  reviewerHarness: 'OpenCode' | 'Claude-Kimi',
+  harness: SelectableHarnessId,
+  reviewerHarness: SelectableHarnessId,
 ): Promise<string | null> {
   const implementationFailure = await preflightModel(implementationExecutor, model, 'implementation', harness);
   if (implementationFailure) return implementationFailure;
@@ -1062,7 +1043,7 @@ async function preflightModel(
   executor: OpenCodeSessionExecutor,
   model: LaunchModel,
   role: 'implementation' | 'reviewer',
-  harness: 'OpenCode' | 'Claude-Kimi',
+  harness: SelectableHarnessId,
 ): Promise<string | null> {
   try {
     const result = await executor.run({
@@ -1091,7 +1072,7 @@ export function formatPreflightFailure(
   modelId: string,
   role: 'implementation' | 'reviewer',
   reason: string,
-  harness: 'OpenCode' | 'Claude-Kimi' = 'OpenCode',
+  harness: SelectableHarnessId = 'OpenCode',
 ): string {
   const classification = classifyProviderFailure(reason);
   const roleLabel = role === 'implementation' ? 'Implementation model' : 'Reviewer model';
@@ -1229,25 +1210,6 @@ function readFrontmatter(content: string): string | null {
   if (!content.startsWith('---\n')) return null;
   const end = content.indexOf('\n---\n', 4);
   return end === -1 ? null : content.slice(4, end);
-}
-
-function createExecutor(harness: 'OpenCode' | 'Claude-Kimi'): OpenCodeSessionExecutor {
-  if (harness === 'Claude-Kimi') return new ClaudeCodeSessionExecutor('kimi');
-  return new SDKOpenCodeSessionExecutor();
-}
-
-function createAgentExecutionProvider(
-  harness: 'OpenCode' | 'Claude-Kimi',
-  executor: OpenCodeSessionExecutor,
-  permissionCoordinator?: PermissionCoordinator,
-): AgentExecutionProvider {
-  if (harness === 'Claude-Kimi') return new ClaudeKimiAgentExecutionProvider(executor, permissionCoordinator);
-  return new OpenCodeAgentExecutionProvider(executor, permissionCoordinator);
-}
-
-function providerNameFromHarness(harness: 'OpenCode' | 'Claude-Kimi'): string {
-  if (harness === 'Claude-Kimi') return 'claude-kimi';
-  return 'opencode';
 }
 
 export function getDaemonSpawnCommand(contextPath: string): { command: string; args: string[] } {

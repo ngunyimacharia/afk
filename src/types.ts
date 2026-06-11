@@ -1,4 +1,5 @@
 import type { ReadinessCheckMetadata } from './readiness-service.js';
+import type { SelectableHarnessId } from './harness-registry.js';
 
 export interface TicketRecord {
   path: string;
@@ -25,9 +26,9 @@ export interface LaunchModel {
 }
 
 export interface LaunchPreferences {
-  harness?: 'OpenCode' | 'Claude-Kimi';
+  harness?: SelectableHarnessId;
   modelId?: string;
-  reviewerHarness?: 'OpenCode' | 'Claude-Kimi';
+  reviewerHarness?: SelectableHarnessId;
   reviewerModelId?: string;
   concurrency?: number;
   budgets?: Partial<BudgetPolicy>;
@@ -131,9 +132,9 @@ export interface AfkStateSnapshot {
 }
 
 export interface LaunchPlan {
-  harness?: 'OpenCode' | 'Claude-Kimi';
+  harness?: SelectableHarnessId;
   model: LaunchModel;
-  reviewerHarness?: 'OpenCode' | 'Claude-Kimi';
+  reviewerHarness?: SelectableHarnessId;
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets: TicketRecord[];
