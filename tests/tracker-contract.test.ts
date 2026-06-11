@@ -70,7 +70,26 @@ test('converts scheduler ticket records to scratch provider work items', () => {
     title: 'feat/01',
     body: '# Ticket body',
     providerRef: { key: { provider: 'scratch', id: 'feat/01' }, displayId: '01' },
+    materializedFiles: { ticketPath: '/repo/.scratch/feat/issues/01.md' },
   });
+});
+
+test('round-trips scratch ticket paths through provider work items', () => {
+  const ticketPath = '/repo/.scratch/feat/issues/01.md';
+  const item = ticketRecordToTrackerWorkItem(
+    {
+      path: ticketPath,
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      status: 'ready-for-agent',
+      executorAfk: true,
+      dependsOn: [],
+    },
+    '# Ticket body',
+  );
+
+  assert.equal(trackerWorkItemToTicketRecord(item).path, ticketPath);
 });
 
 test('tracker provider contract exposes operations needed by external issue providers', () => {

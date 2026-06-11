@@ -25,6 +25,7 @@ export interface TrackerWorkItemContent {
   body: string;
   providerRef: TrackerProviderRef;
   url?: string;
+  materializedFiles?: Partial<MaterializedTrackerFiles>;
 }
 
 export interface TrackerWorkItem extends TrackerWorkItemContent {
@@ -103,7 +104,10 @@ export function normalizeTrackerWorkItemKey(key: TrackerWorkItemKey): string {
   return `${key.provider}:${id.toLowerCase()}`;
 }
 
-export function trackerWorkItemToTicketRecord(item: TrackerWorkItem, path = ''): TicketRecord {
+export function trackerWorkItemToTicketRecord(
+  item: TrackerWorkItem,
+  path = item.materializedFiles?.ticketPath ?? '',
+): TicketRecord {
   return {
     path,
     feature: item.feature,
@@ -128,6 +132,7 @@ export function ticketRecordToTrackerWorkItem(ticket: TicketRecord, body = ''): 
     title: ticket.label,
     body,
     providerRef: { key, displayId: ticket.issueName },
+    materializedFiles: { ticketPath: ticket.path },
   };
 }
 

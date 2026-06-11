@@ -21,8 +21,9 @@ test('scratch provider is the default tracker provider', () => {
 
 test('scratch provider preserves ticket repository discovery fields and eligibility', async () => {
   const { repoRoot, issuesDir } = makeRepo();
+  const ticketPath = path.join(issuesDir, '01.md');
   writeFileSync(
-    path.join(issuesDir, '01.md'),
+    ticketPath,
     '---\nfeature: feat\nstatus: waiting\nexecutor: afk\nDepends-On:\n  - "00"\n---\n\n# Body\n',
   );
   const provider = new ScratchTrackerProvider(repoRoot);
@@ -35,6 +36,7 @@ test('scratch provider preserves ticket repository discovery fields and eligibil
   assert.equal(item.status, 'waiting');
   assert.equal(item.executorAfk, true);
   assert.deepEqual(item.dependsOn, ['00']);
+  assert.equal(item.materializedFiles?.ticketPath, ticketPath);
   assert.equal(provider.isEligible(item), true);
 });
 
