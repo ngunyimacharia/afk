@@ -37,6 +37,12 @@ interface IssueCreateResponse {
   };
 }
 
+interface IssueRelationCreateResponse {
+  issueRelationCreate?: {
+    success?: boolean;
+  };
+}
+
 export class GraphQLLinearProvider implements LinearProvider {
   constructor(private readonly input: { apiKey: string; endpoint?: string; fetchImpl?: typeof fetch }) {}
 
@@ -65,7 +71,7 @@ export class GraphQLLinearProvider implements LinearProvider {
   }
 
   async createIssueDependency(input: LinearIssueDependencyInput): Promise<void> {
-    await this.request(
+    const data = await this.request<IssueRelationCreateResponse>(
       `mutation CreateIssueRelation($input: IssueRelationCreateInput!) {
         issueRelationCreate(input: $input) { success }
       }`,
@@ -77,6 +83,9 @@ export class GraphQLLinearProvider implements LinearProvider {
         },
       },
     );
+    if (!data.issueRelationCreate?.success) {
+      throw new Error('Linear issueRelationCreate did not create an issue relation.');
+    }
   }
 
   private async request<T>(query: string, variables: Record<string, unknown>): Promise<T> {

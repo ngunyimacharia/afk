@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { runAfk } from '../src/cli.js';
 import { createLinearPlan, createLinearProviderFromConfig, parseLinearPlanManifest } from '../src/linear-plan.js';
+import { GraphQLLinearProvider } from '../src/linear-provider.js';
 import type {
   LinearIssueDependencyInput,
   LinearIssueInput,
@@ -116,4 +117,20 @@ test('linear-plan command returns machine-readable created issue output', async 
   } finally {
     process.argv = originalArgv;
   }
+});
+
+test('GraphQLLinearProvider rejects unsuccessful dependency relation responses', async () => {
+  const provider = new GraphQLLinearProvider({
+    apiKey: 'test-key',
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ data: { issueRelationCreate: { success: false } } }), {
+        status: 200,
+        statusText: 'OK',
+      }),
+  });
+
+  await assert.rejects(
+    provider.createIssueDependency({ issueId: 'issue-2', dependsOnIssueId: 'issue-1' }),
+    /issueRelationCreate did not create an issue relation/,
+  );
 });
