@@ -19,6 +19,39 @@ const DEFAULT_AFK_INSTRUCTIONS = [
 
 export function buildPrompt(input: PromptInput): string {
   const snapshotLines = buildSnapshotLines(input.snapshot);
+  const ticketUpdateLines =
+    input.ticket.source === 'linear'
+      ? [
+          `Ticket source: Linear (${input.ticket.path})`,
+          `Issue reference: ${input.ticket.label}`,
+          '',
+          'There is no local scratch ticket file for this Linear issue. Record completion evidence in commits and runtime output; do not create a scratch ticket unless the task explicitly requires it.',
+        ]
+      : [
+          `Ticket file to update: ${input.ticket.path}`,
+          `Issue reference: ${input.ticket.label}`,
+          '',
+          'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
+          'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
+          'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+        ];
+  const completionChecklist =
+    input.ticket.source === 'linear'
+      ? [
+          '- [ ] Completion evidence is recorded in commits and runtime output for the Linear issue.',
+          '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
+          '- [ ] Source code changes are committed using conventional commits.',
+          '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
+        ]
+      : [
+          '- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).',
+          '- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.',
+          '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+          '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
+          '- [ ] Source code changes are committed using conventional commits.',
+          '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
+          '- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.',
+        ];
   return [
     input.afkInstructions?.trim() || DEFAULT_AFK_INSTRUCTIONS,
     '',
@@ -44,23 +77,12 @@ export function buildPrompt(input: PromptInput): string {
     '',
     '## Ticket Update Contract',
     '',
-    `Ticket file to update: ${input.ticket.path}`,
-    `Issue reference: ${input.ticket.label}`,
-    '',
-    'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
-    'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
-    'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
+    ...ticketUpdateLines,
     '',
     '## Scratch Artifact Completion Checklist',
     '',
     'Before exiting, confirm ALL of the following:',
-    '- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).',
-    '- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.',
-    '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
-    '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
-    '- [ ] Source code changes are committed using conventional commits.',
-    '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
-    '- [ ] The PRD or feature spec is updated only if the ticket explicitly requires it.',
+    ...completionChecklist,
     '',
     '## Verification Budget',
     '',

@@ -8,6 +8,8 @@ export interface TicketRecord {
   status?: string;
   executorAfk: boolean;
   dependsOn?: string[];
+  source?: 'scratch' | 'linear';
+  content?: string;
 }
 
 export interface LaunchBlockEvidence {

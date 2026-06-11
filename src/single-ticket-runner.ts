@@ -22,6 +22,7 @@ import type {
   ReviewerPromptTemplate,
   ReviewOutcomeClassification,
   ReviewTerminalOutcomeRecord,
+  TicketRecord,
 } from './types.js';
 import { runGit } from './worktree-preparation-service.js';
 
@@ -111,7 +112,7 @@ export class SingleTicketRunner {
       REVIEWER_PROMPT_ID: plan.reviewerPrompt.id,
       REVIEWER_PROMPT_PATH: plan.reviewerPrompt.path,
     });
-    const ticketContent = this.readTicketContent(ticket.path) ?? '';
+    const ticketContent = this.readTicketContent(ticket) ?? '';
     const reviewerPromptText = this.readReviewerPrompt(plan.reviewerPrompt);
     const budgets = this.resolveBudgets();
     this.runtimeStore.updateMetadata(record.metadataPath, { EFFECTIVE_BUDGETS: budgets });
@@ -321,7 +322,7 @@ export class SingleTicketRunner {
         if (!latestExecutionResult)
           return { scheduled: false, message: 'No execution result available for review', outcome: 'not-scheduled' };
         const executionForReview = latestExecutionResult;
-        const updatedTicketContent = this.readTicketContent(ticket.path);
+        const updatedTicketContent = this.readTicketContent(ticket);
         if (updatedTicketContent === null) {
           return this.handoffForTicketReadFailure(ticket.label, record, options, sessionId);
         }
@@ -988,9 +989,10 @@ export class SingleTicketRunner {
     return null;
   }
 
-  private readTicketContent(ticketPath: string): string | null {
+  private readTicketContent(ticket: TicketRecord): string | null {
+    if (ticket.source === 'linear') return ticket.content ?? '';
     try {
-      return readFileSync(ticketPath, 'utf8');
+      return readFileSync(ticket.path, 'utf8');
     } catch {
       return null;
     }

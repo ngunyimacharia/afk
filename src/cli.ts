@@ -29,7 +29,7 @@ import {
   resolveExecutables,
 } from './executable-resolution.js';
 import { type FeatureBaseMergeResult, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
-import type { FeatureExecutionGraph } from './feature-execution-graph.js';
+import { buildFeatureExecutionGraph, type FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
@@ -74,6 +74,89 @@ export function formatLinearDiscoveryLines(features: LinearParentFeature[]): str
       ...feature.workItems.map((item) => `  - ${item.key}: ${item.title}`),
     ]);
   return lines.length ? ['Linear discovery found labeled subissues:', ...lines] : [];
+}
+
+function linearIssueSlug(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function linearTicketContent(feature: LinearParentFeature, item: LinearParentFeature['workItems'][number]): string {
+  const body = item.body.trim();
+  return [
+    `# ${item.title}`,
+    '',
+    `Linear issue: ${item.url}`,
+    `Linear parent: ${feature.key} - ${feature.title}`,
+    `Linear parent URL: ${feature.url}`,
+    '',
+    body || '_No Linear description provided._',
+    '',
+  ].join('\n');
+}
+
+export function linearFeaturesToTicketRecords(features: LinearParentFeature[]): TicketRecord[] {
+  return features.flatMap((feature) =>
+    feature.workItems.flatMap((item) => {
+      const issueName = linearIssueSlug(item.key);
+      if (!issueName) return [];
+      return [
+        {
+          path: `linear://${item.key}`,
+          feature: feature.featureSlug,
+          issueName,
+          label: `${feature.featureSlug}/${issueName}`,
+          status: 'ready-for-agent',
+          executorAfk: true,
+          dependsOn: [],
+          source: 'linear' as const,
+          content: linearTicketContent(feature, item),
+        },
+      ];
+    }),
+  );
+}
+
+function isLinearTicket(ticket: TicketRecord): boolean {
+  return ticket.source === 'linear';
+}
+
+function buildLinearWorkspaceGraph(
+  selectedFeatures: string[],
+  linearFeatures: Set<string>,
+  localGraph: WorkspaceExecutionGraph | null,
+  concurrency: number,
+): WorkspaceExecutionGraph {
+  const localWaves = localGraph?.featureWaves ?? [];
+  const localWaveFeatures = new Set(localWaves.flat());
+  const linearWaves = selectedFeatures.filter(
+    (feature) => linearFeatures.has(feature) && !localWaveFeatures.has(feature),
+  );
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    selectedFeatures,
+    concurrency,
+    featureWaves: [...localWaves, ...(linearWaves.length ? [linearWaves] : [])],
+    features: {
+      ...(localGraph?.features ?? {}),
+      ...Object.fromEntries(
+        linearWaves.map((feature) => [
+          feature,
+          {
+            state: 'ready' as const,
+            dependsOnFeatures: [],
+            blockedByFeatures: [],
+            stackParent: null,
+            blockingIssues: [],
+          },
+        ]),
+      ),
+    },
+  };
 }
 
 function commandArg(): string | undefined {
@@ -299,6 +382,7 @@ export async function runAfk(
     } catch (error) {
       return { code: 1, message: formatTicketMetadataError(error) };
     }
+    let linearTickets: TicketRecord[] = [];
     if (activeProjectConfig.linear) {
       try {
         const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
@@ -306,12 +390,15 @@ export async function runAfk(
         const linearFeatures = await discoverLinearFeatures({ resolvedConfig, client });
         const discoveryLines = formatLinearDiscoveryLines(linearFeatures);
         if (discoveryLines.length) io.stdout.write(`${discoveryLines.join('\n')}\n`);
+        linearTickets = linearFeaturesToTicketRecords(linearFeatures);
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Unknown Linear discovery error';
         return { code: 1, message: `Linear ticket discovery failed.\nReason: ${reason}` };
       }
     }
-    const tickets = allTickets.filter((ticket) => repository.isEligible(ticket));
+    const localTickets = allTickets.filter((ticket) => repository.isEligible(ticket));
+    const tickets = [...localTickets, ...linearTickets];
+    const launchTickets = [...allTickets, ...linearTickets];
     if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
     const worktreePreparationService = new WorktreePreparationService();
     let model: LaunchModel | undefined;
@@ -403,18 +490,33 @@ export async function runAfk(
     );
     if (preflight) return { code: 1, message: preflight };
     const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
-    selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
+    selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, launchTickets);
     const refresh = new FeatureExecutionRefreshService(repoRoot);
     let featureGraphs: Record<string, FeatureExecutionGraph>;
+    const selectedLinearFeatures = new Set(selectedTickets.filter(isLinearTicket).map((ticket) => ticket.feature));
     try {
-      featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
+      featureGraphs = Object.fromEntries(
+        selectedFeatures.map((feature) => {
+          const featureTickets = selectedTickets.filter((ticket) => ticket.feature === feature);
+          if (selectedLinearFeatures.has(feature)) {
+            return [feature, buildFeatureExecutionGraph(repoRoot, feature, featureTickets, false)];
+          }
+          return [feature, refresh.refresh(feature)];
+        }),
+      );
     } catch (error) {
       return { code: 1, message: formatTicketMetadataError(error) };
     }
-    const orderingBlock = validateSelectedTicketDependencies(selectedTickets, allTickets);
+    const orderingBlock = validateSelectedTicketDependencies(selectedTickets, launchTickets);
     if (orderingBlock) return { code: 1, message: orderingBlock };
     selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
-    const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
+    const localSelectedFeatures = selectedFeatures.filter((feature) => !selectedLinearFeatures.has(feature));
+    const localWorkspaceGraph = localSelectedFeatures.length
+      ? refreshWorkspaceExecutionGraph(repoRoot, localSelectedFeatures, concurrency)
+      : null;
+    const workspaceGraph = selectedLinearFeatures.size
+      ? buildLinearWorkspaceGraph(selectedFeatures, selectedLinearFeatures, localWorkspaceGraph, concurrency)
+      : (localWorkspaceGraph as WorkspaceExecutionGraph);
     const featureBlock = validateSelectedFeatureDependencies(workspaceGraph, selectedFeatures);
     if (featureBlock) return { code: 1, message: featureBlock };
     const firstTicket = selectedTickets[0];
@@ -429,7 +531,7 @@ export async function runAfk(
           featureSlug: feature,
           baseRef: stackParent ? stackParent : undefined,
           selectedTicketPaths: selectedTickets
-            .filter((ticket) => ticket.feature === feature)
+            .filter((ticket) => ticket.feature === feature && !isLinearTicket(ticket))
             .map((ticket) => ticket.path),
           projectConfig: activeProjectConfig,
         });

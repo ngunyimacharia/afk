@@ -7,6 +7,7 @@ import {
   expandSelectedFeaturesToAllTickets,
   formatLinearDiscoveryLines,
   formatManualPermissionReviewLines,
+  linearFeaturesToTicketRecords,
   orderSelectedTicketsByFeatureGraph,
   readRunOutcomeLines,
   runAfk,
@@ -58,6 +59,62 @@ test('formats Linear parent feature work items without materializing launch tick
     '  - ENG-101: Child work',
   ]);
   assert.equal(existsSync(path.join(repoRoot, '.scratch')), false);
+});
+
+test('converts Linear parent work items into selectable launch tickets', () => {
+  const tickets = linearFeaturesToTicketRecords([
+    {
+      provider: 'linear',
+      id: 'parent-1',
+      key: 'ENG-100',
+      url: 'https://linear.app/acme/issue/ENG-100/parent',
+      title: 'Parent feature',
+      status: 'Ready',
+      featureSlug: 'eng-100',
+      workItems: [
+        {
+          provider: 'linear',
+          id: 'child-1',
+          key: 'ENG-101',
+          url: 'https://linear.app/acme/issue/ENG-101/child',
+          title: 'Child work',
+          body: 'Implement child work.',
+          status: 'Ready',
+          parent: {
+            id: 'parent-1',
+            key: 'ENG-100',
+            url: 'https://linear.app/acme/issue/ENG-100/parent',
+            title: 'Parent feature',
+            featureSlug: 'eng-100',
+          },
+          labels: [{ id: 'label-1', name: 'AFK' }],
+          afkLabel: { id: 'label-1', name: 'AFK' },
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(
+    tickets.map((ticket) => ({
+      path: ticket.path,
+      feature: ticket.feature,
+      issueName: ticket.issueName,
+      label: ticket.label,
+      source: ticket.source,
+      status: ticket.status,
+    })),
+    [
+      {
+        path: 'linear://ENG-101',
+        feature: 'eng-100',
+        issueName: 'eng-101',
+        label: 'eng-100/eng-101',
+        source: 'linear',
+        status: 'ready-for-agent',
+      },
+    ],
+  );
+  assert.match(tickets[0]?.content ?? '', /Linear issue: https:\/\/linear\.app\/acme\/issue\/ENG-101\/child/);
 });
 
 test('default afk launch fails early without interactive tty', async () => {
@@ -375,6 +432,23 @@ test('selected features expand back to completed and eligible tickets', () => {
   const expanded = expandSelectedFeaturesToAllTickets(eligibleTickets, allTickets);
 
   assert.deepEqual(expanded.map((ticket) => ticket.issueName).sort(), ['01', '02']);
+});
+
+test('selected Linear feature tickets survive expansion without local scratch tickets', () => {
+  const linearTicket = {
+    path: 'linear://ENG-101',
+    feature: 'eng-100',
+    issueName: 'eng-101',
+    label: 'eng-100/eng-101',
+    status: 'ready-for-agent',
+    executorAfk: true,
+    source: 'linear' as const,
+    content: '# Child work',
+  };
+
+  const expanded = expandSelectedFeaturesToAllTickets([linearTicket], [linearTicket]);
+
+  assert.deepEqual(expanded, [linearTicket]);
 });
 
 test('selected feature tickets are ordered by dependency graph waves', () => {
