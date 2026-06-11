@@ -1,0 +1,169 @@
+import type { LinearProjectConfig } from './project-config.js';
+
+export const LINEAR_API_KEY_ENV = 'LINEAR_API_KEY';
+
+export type LinearWorkflowStateRole = 'ready' | 'running' | 'done' | 'handoff';
+
+export interface LinearEntity {
+  id: string;
+  name: string;
+}
+
+export interface LinearTeam extends LinearEntity {
+  key: string;
+}
+
+export interface LinearWorkflowState extends LinearEntity {
+  teamId: string;
+}
+
+export interface LinearConfigClient {
+  findTeam(identifier: string): Promise<LinearTeam | null>;
+  findIssueLabel(teamId: string, name: string): Promise<LinearEntity | null>;
+  findWorkflowState(teamId: string, identifier: string): Promise<LinearWorkflowState | null>;
+}
+
+export interface ResolvedLinearConfig {
+  teamId: string;
+  teamKey: string;
+  labelId: string;
+  workflowStateIds: Record<LinearWorkflowStateRole, string>;
+}
+
+export interface ResolveLinearConfigOptions {
+  config?: LinearProjectConfig;
+  env?: NodeJS.ProcessEnv;
+  client?: LinearConfigClient;
+}
+
+export class LinearStartupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LinearStartupError';
+  }
+}
+
+export class LinearGraphqlClient implements LinearConfigClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly endpoint = 'https://api.linear.app/graphql',
+  ) {}
+
+  async findTeam(identifier: string): Promise<LinearTeam | null> {
+    const result = await this.request<{
+      teams: { nodes: LinearTeam[] };
+    }>(
+      `query AfkFindLinearTeam($identifier: String!) {
+        teams(first: 1, filter: { or: [{ id: { eq: $identifier } }, { key: { eq: $identifier } }] }) {
+          nodes { id key name }
+        }
+      }`,
+      { identifier },
+    );
+
+    return result.teams.nodes[0] ?? null;
+  }
+
+  async findIssueLabel(teamId: string, name: string): Promise<LinearEntity | null> {
+    const result = await this.request<{
+      issueLabels: { nodes: LinearEntity[] };
+    }>(
+      `query AfkFindLinearIssueLabel($teamId: String!, $name: String!) {
+        issueLabels(first: 1, filter: { team: { id: { eq: $teamId } }, name: { eq: $name } }) {
+          nodes { id name }
+        }
+      }`,
+      { teamId, name },
+    );
+
+    return result.issueLabels.nodes[0] ?? null;
+  }
+
+  async findWorkflowState(teamId: string, identifier: string): Promise<LinearWorkflowState | null> {
+    const result = await this.request<{
+      workflowStates: { nodes: LinearWorkflowState[] };
+    }>(
+      `query AfkFindLinearWorkflowState($teamId: String!, $identifier: String!) {
+        workflowStates(first: 1, filter: { team: { id: { eq: $teamId } }, or: [{ id: { eq: $identifier } }, { name: { eq: $identifier } }] }) {
+          nodes { id name team { id } }
+        }
+      }`,
+      { teamId, identifier },
+    );
+
+    const state = result.workflowStates.nodes[0];
+    return state ? { id: state.id, name: state.name, teamId } : null;
+  }
+
+  private async request<T>(query: string, variables: Record<string, string>): Promise<T> {
+    const response = await fetch(this.endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: this.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    if (!response.ok) throw new Error(`Linear GraphQL request failed with HTTP ${response.status}.`);
+
+    const payload = (await response.json()) as { data?: T; errors?: { message?: string }[] };
+    if (payload.errors?.length) {
+      const details = payload.errors
+        .map((error) => error.message)
+        .filter(Boolean)
+        .join('; ');
+      throw new Error(`Linear GraphQL request failed: ${details || 'unknown error'}.`);
+    }
+    if (!payload.data) throw new Error('Linear GraphQL request failed: response did not include data.');
+
+    return payload.data;
+  }
+}
+
+export async function resolveLinearConfig(options: ResolveLinearConfigOptions): Promise<ResolvedLinearConfig> {
+  const env = options.env ?? process.env;
+  const apiKey = env[LINEAR_API_KEY_ENV]?.trim();
+  if (!apiKey) {
+    throw new LinearStartupError(`Linear startup requires ${LINEAR_API_KEY_ENV} to be set.`);
+  }
+
+  const config = options.config;
+  if (!config) {
+    throw new LinearStartupError('Linear startup requires afk.json linear configuration.');
+  }
+
+  const client = options.client ?? new LinearGraphqlClient(apiKey);
+  const team = await client.findTeam(config.team);
+  if (!team) {
+    throw new LinearStartupError(
+      `Linear team "${config.team}" was not found. Set linear.team to an existing Linear team key or ID.`,
+    );
+  }
+
+  const label = await client.findIssueLabel(team.id, config.afkLabel);
+  if (!label) {
+    throw new LinearStartupError(
+      `Linear AFK label "${config.afkLabel}" was not found for team ${team.key}. Create the label in Linear or update linear.afkLabel.`,
+    );
+  }
+
+  const workflowStateIds = {} as Record<LinearWorkflowStateRole, string>;
+  for (const role of ['ready', 'running', 'done', 'handoff'] as const) {
+    const configuredState = config.workflowStates[role];
+    const state = await client.findWorkflowState(team.id, configuredState);
+    if (!state) {
+      throw new LinearStartupError(
+        `Linear ${role} workflow state "${configuredState}" was not found for team ${team.key}. Update linear.workflowStates.${role} to an existing state name or ID.`,
+      );
+    }
+    workflowStateIds[role] = state.id;
+  }
+
+  return {
+    teamId: team.id,
+    teamKey: team.key,
+    labelId: label.id,
+    workflowStateIds,
+  };
+}

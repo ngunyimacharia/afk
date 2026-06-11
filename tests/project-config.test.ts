@@ -50,3 +50,31 @@ test('allows tests disabled without smoke command', () => {
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.config, { testsEnabled: false, staticCheckCommands: [] });
 });
+
+test('loads optional Linear project config', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    linear: {
+      team: ' ENG ',
+      afkLabel: ' AFK ',
+      workflowStates: {
+        ready: ' Ready ',
+        running: ' In Progress ',
+        done: ' Done ',
+        handoff: ' Handoff ',
+      },
+    },
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.config?.linear, {
+    team: 'ENG',
+    afkLabel: 'AFK',
+    workflowStates: {
+      ready: 'Ready',
+      running: 'In Progress',
+      done: 'Done',
+      handoff: 'Handoff',
+    },
+  });
+});
