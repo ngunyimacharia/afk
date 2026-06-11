@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +8,9 @@ import {
   formatLinearDiscoveryLines,
   formatManualPermissionReviewLines,
   linearFeaturesToTicketRecords,
+  linearMirrorPath,
+  linearMirrorRoot,
+  materializeLinearTicketMirrors,
   orderSelectedTicketsByFeatureGraph,
   readRunOutcomeLines,
   runAfk,
@@ -115,6 +118,54 @@ test('converts Linear parent work items into selectable launch tickets', () => {
     ],
   );
   assert.match(tickets[0]?.content ?? '', /Linear issue: https:\/\/linear\.app\/acme\/issue\/ENG-101\/child/);
+});
+
+test('materializes Linear mirrors with safe paths and provider identity', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-mirror-'));
+  const tickets = linearFeaturesToTicketRecords([
+    linearFeature({
+      featureSlug: '../ENG 100',
+      parentKey: 'ENG-100',
+      issueKey: '../../ENG-101',
+      issueId: 'child-1',
+      title: 'Child work',
+      labels: [
+        { id: 'label-1', name: 'AFK' },
+        { id: 'label-2', name: 'Backend' },
+      ],
+    }),
+  ]);
+
+  const [ticket] = materializeLinearTicketMirrors(repoRoot, tickets);
+  assert.ok(ticket);
+  assert.equal(path.relative(linearMirrorRoot(repoRoot), ticket.path).startsWith('..'), false);
+  assert.equal(ticket.providerIdentity?.mirrorPath, ticket.path);
+  assert.equal(ticket.providerIdentity?.issueId, 'child-1');
+  const mirror = readFileSync(ticket.path, 'utf8');
+  assert.match(mirror, /Linear issue ID: child-1/);
+  assert.match(mirror, /Linear issue key: ..\/..\/ENG-101/);
+  assert.match(mirror, /Linear parent: ENG-100 - Parent feature/);
+  assert.match(mirror, /Linear labels: AFK, Backend/);
+  assert.match(mirror, /Dependency summary: None discovered by AFK Linear discovery\./);
+});
+
+test('Linear mirror path generation cannot escape the mirror root', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-safe-'));
+  const mirrorPath = linearMirrorPath(repoRoot, '../../outside', '../ENG-101/../../escape');
+  assert.equal(path.relative(linearMirrorRoot(repoRoot), mirrorPath).startsWith('..'), false);
+  assert.equal(path.basename(mirrorPath), 'outside-eng-101-escape.md');
+});
+
+test('scratch ticket discovery ignores managed Linear mirrors', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-discovery-'));
+  materializeLinearTicketMirrors(
+    repoRoot,
+    linearFeaturesToTicketRecords([
+      linearFeature({ featureSlug: 'eng-100', parentKey: 'ENG-100', issueKey: 'ENG-101', issueId: 'child-1' }),
+    ]),
+  );
+
+  assert.deepEqual(new TicketRepository(repoRoot).discoverTickets(), []);
 });
 
 test('default afk launch fails early without interactive tty', async () => {
@@ -605,6 +656,46 @@ test('does not attach to stale active run with expired heartbeat', async () => {
   assert.doesNotMatch(result.message, /Attached to active run/);
   assert.match(result.message, /No pending AFK tickets found/);
 });
+
+function linearFeature(input: {
+  featureSlug: string;
+  parentKey: string;
+  issueKey: string;
+  issueId: string;
+  title?: string;
+  labels?: { id: string; name: string }[];
+}) {
+  const labels = input.labels ?? [{ id: 'label-1', name: 'AFK' }];
+  return {
+    provider: 'linear' as const,
+    id: 'parent-1',
+    key: input.parentKey,
+    url: `https://linear.app/acme/issue/${input.parentKey}/parent`,
+    title: 'Parent feature',
+    status: 'Ready',
+    featureSlug: input.featureSlug,
+    workItems: [
+      {
+        provider: 'linear' as const,
+        id: input.issueId,
+        key: input.issueKey,
+        url: `https://linear.app/acme/issue/${input.issueKey}/child`,
+        title: input.title ?? 'Child work',
+        body: 'Implement child work.',
+        status: 'Ready',
+        parent: {
+          id: 'parent-1',
+          key: input.parentKey,
+          url: `https://linear.app/acme/issue/${input.parentKey}/parent`,
+          title: 'Parent feature',
+          featureSlug: input.featureSlug,
+        },
+        labels,
+        afkLabel: labels[0],
+      },
+    ],
+  };
+}
 
 function writeMinimalAfkConfig(repoRoot: string): void {
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));

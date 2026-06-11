@@ -22,10 +22,10 @@ export function buildPrompt(input: PromptInput): string {
   const ticketUpdateLines =
     input.ticket.source === 'linear'
       ? [
-          `Ticket source: Linear (${input.ticket.path})`,
+          `Ticket source: Linear mirror (${input.ticket.path})`,
           `Issue reference: ${input.ticket.label}`,
           '',
-          'There is no local scratch ticket file for this Linear issue. Record completion evidence in commits and runtime output; do not create a scratch ticket unless the task explicitly requires it.',
+          'Before exiting, update the local Linear mirror with completion evidence in a `## AFK Summary` section. Do not sync mirror edits back to Linear.',
         ]
       : [
           `Ticket file to update: ${input.ticket.path}`,
@@ -38,7 +38,7 @@ export function buildPrompt(input: PromptInput): string {
   const completionChecklist =
     input.ticket.source === 'linear'
       ? [
-          '- [ ] Completion evidence is recorded in commits and runtime output for the Linear issue.',
+          '- [ ] Completion evidence is recorded in the local Linear mirror, commits, and runtime output.',
           '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
           '- [ ] Source code changes are committed using conventional commits.',
           '- [ ] Commit messages contain no AI, model, Claude, opencode, `Co-Authored-By`, `Generated-By`, or similar attribution.',
@@ -117,6 +117,7 @@ function buildSnapshotLines(snapshot?: AfkStateSnapshot): string[] {
     '',
     `- Scratch feature path: ${snapshot.scratchFeaturePath}`,
     ...(snapshot.featurePrdPath ? [`- Feature PRD: ${snapshot.featurePrdPath}`] : []),
+    ...(snapshot.mirrorPath ? [`- Linear mirror path: ${snapshot.mirrorPath}`] : []),
     '- Read or update scratch artifacts only at these absolute paths. Do not guess `.scratch` paths relative to the worktree.',
     '',
     ...(dependencyLines.length ? ['## Dependencies', ''] : []),

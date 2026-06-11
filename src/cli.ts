@@ -47,6 +47,7 @@ import type { OpenCodeSessionExecutor } from './opencode.js';
 import { discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
 import { formatDuration } from './opentui-dashboard.js';
 import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
+import { assertPathWithinRoot } from './path-validation.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
@@ -86,16 +87,49 @@ function linearIssueSlug(key: string): string {
 
 function linearTicketContent(feature: LinearParentFeature, item: LinearParentFeature['workItems'][number]): string {
   const body = item.body.trim();
+  const labels = item.labels.map((label) => label.name).join(', ') || 'None';
   return [
     `# ${item.title}`,
     '',
+    `Linear issue ID: ${item.id}`,
+    `Linear issue key: ${item.key}`,
     `Linear issue: ${item.url}`,
+    `Linear status: ${item.status}`,
     `Linear parent: ${feature.key} - ${feature.title}`,
     `Linear parent URL: ${feature.url}`,
+    `Linear labels: ${labels}`,
+    `Dependency summary: None discovered by AFK Linear discovery.`,
     '',
     body || '_No Linear description provided._',
     '',
   ].join('\n');
+}
+
+export function linearMirrorRoot(repoRoot: string): string {
+  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
+}
+
+export function linearMirrorPath(repoRoot: string, featureSlug: string, issueName: string): string {
+  const root = path.resolve(linearMirrorRoot(repoRoot));
+  const safeFeature = linearIssueSlug(featureSlug);
+  const safeIssue = linearIssueSlug(issueName);
+  if (!safeFeature || !safeIssue) throw new Error(`Invalid Linear mirror name for ${featureSlug}/${issueName}`);
+  const mirrorPath = path.join(root, `${safeFeature}-${safeIssue}.md`);
+  assertPathWithinRoot(mirrorPath, root, 'Linear mirror');
+  return mirrorPath;
+}
+
+export function materializeLinearTicketMirrors(repoRoot: string, tickets: TicketRecord[]): TicketRecord[] {
+  const root = path.resolve(linearMirrorRoot(repoRoot));
+  mkdirSync(root, { recursive: true });
+  return tickets.map((ticket) => {
+    if (ticket.source !== 'linear') return ticket;
+    const mirrorPath = linearMirrorPath(repoRoot, ticket.feature, ticket.issueName);
+    const providerIdentity = ticket.providerIdentity ? { ...ticket.providerIdentity, mirrorPath } : undefined;
+    const content = ticket.content ?? '';
+    writeFileSync(mirrorPath, content.endsWith('\n') ? content : `${content}\n`, 'utf8');
+    return { ...ticket, path: mirrorPath, content, providerIdentity };
+  });
 }
 
 export function linearFeaturesToTicketRecords(features: LinearParentFeature[]): TicketRecord[] {
@@ -114,6 +148,13 @@ export function linearFeaturesToTicketRecords(features: LinearParentFeature[]): 
           dependsOn: [],
           source: 'linear' as const,
           content: linearTicketContent(feature, item),
+          providerIdentity: {
+            provider: 'linear' as const,
+            issueId: item.id,
+            issueKey: item.key,
+            issueUrl: item.url,
+            parentKey: feature.key,
+          },
         },
       ];
     }),
@@ -398,7 +439,7 @@ export async function runAfk(
     }
     const localTickets = allTickets.filter((ticket) => repository.isEligible(ticket));
     const tickets = [...localTickets, ...linearTickets];
-    const launchTickets = [...allTickets, ...linearTickets];
+    let launchTickets = [...allTickets, ...linearTickets];
     if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
     const worktreePreparationService = new WorktreePreparationService();
     let model: LaunchModel | undefined;
@@ -491,6 +532,10 @@ export async function runAfk(
     if (preflight) return { code: 1, message: preflight };
     const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
     selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, launchTickets);
+    selectedTickets = materializeLinearTicketMirrors(repoRoot, selectedTickets);
+    launchTickets = launchTickets.map(
+      (ticket) => selectedTickets.find((selected) => selected.label === ticket.label) ?? ticket,
+    );
     const refresh = new FeatureExecutionRefreshService(repoRoot);
     let featureGraphs: Record<string, FeatureExecutionGraph>;
     const selectedLinearFeatures = new Set(selectedTickets.filter(isLinearTicket).map((ticket) => ticket.feature));

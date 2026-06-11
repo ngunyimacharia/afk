@@ -30,6 +30,40 @@ test('creates metadata, appends logs, and writes sentinels', () => {
   assert.match(readFileSync(record.failedSentinelPath, 'utf8'), /failed/);
 });
 
+test('records Linear identity and mirror path in runtime metadata', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-linear-'));
+  const store = new RuntimeStore({ repoRoot });
+  const mirrorPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors', 'eng-101.md');
+  const record = store.createRecord({
+    featureSlug: 'eng-100',
+    issueName: 'eng-101',
+    ticketPath: mirrorPath,
+    providerIdentity: {
+      provider: 'linear',
+      issueId: 'issue-1',
+      issueKey: 'ENG-101',
+      issueUrl: 'https://linear.app/acme/issue/ENG-101/child',
+      parentKey: 'ENG-100',
+      mirrorPath,
+    },
+  });
+
+  const metadata = JSON.parse(readFileSync(record.metadataPath, 'utf8')) as Record<string, unknown>;
+  assert.equal(metadata.TICKET_PATH, mirrorPath);
+  assert.equal(metadata.LINEAR_ISSUE_ID, 'issue-1');
+  assert.equal(metadata.LINEAR_ISSUE_KEY, 'ENG-101');
+  assert.equal(metadata.LINEAR_PARENT_KEY, 'ENG-100');
+  assert.equal(metadata.LINEAR_MIRROR_PATH, mirrorPath);
+  assert.deepEqual(metadata.PROVIDER_IDENTITY, {
+    provider: 'linear',
+    issueId: 'issue-1',
+    issueKey: 'ENG-101',
+    issueUrl: 'https://linear.app/acme/issue/ENG-101/child',
+    parentKey: 'ENG-100',
+    mirrorPath,
+  });
+});
+
 test('reads empty launch preferences when missing or malformed', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
   const store = new RuntimeStore({ repoRoot });
