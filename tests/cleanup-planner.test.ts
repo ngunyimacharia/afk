@@ -135,6 +135,39 @@ test('does not plan arbitrary Linear metadata paths for deletion', () => {
   assert.equal(existsSync(unrelatedPath), true);
 });
 
+test('does not plan traversal-derived Linear runtime artifacts for deletion', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  const victimDir = mkdtempSync(path.join(tmpdir(), 'afk-victim-'));
+  const victimBase = path.join(victimDir, 'runtime');
+  const issueName = 'artifact';
+  const featureSlug = path.relative(logsDir, victimBase);
+  const escapedLogPath = `${victimBase}-${issueName}.log`;
+  mkdirSync(metadataDir, { recursive: true });
+  writeFileSync(escapedLogPath, 'keep\n');
+  writeFileSync(
+    path.join(metadataDir, 'eng-1-eng-2.json'),
+    JSON.stringify({
+      FEATURE_SLUG: featureSlug,
+      ISSUE_NAME: issueName,
+      STATUS: 'completed',
+      RUN_STATUS: 'completed',
+      LINEAR_ISSUE_KEY: 'ENG-2',
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.terminalTargets.length, 1);
+  assert.equal(plan.terminalTargets[0]?.logPath, undefined);
+  assert.equal(plan.terminalTargets[0]?.doneSentinelPath, undefined);
+  assert.equal(plan.terminalTargets[0]?.failedSentinelPath, undefined);
+  assert.equal(plan.terminalTargets[0]?.handoffSentinelPath, undefined);
+
+  new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(existsSync(escapedLogPath), true);
+});
+
 test('preserves handoff tickets with runtime metadata RUN_STATUS handoff', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
