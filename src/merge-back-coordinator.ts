@@ -18,6 +18,8 @@ import type {
 } from './types.js';
 import { runGit } from './worktree-preparation-service.js';
 
+const DEFAULT_CONFLICT_RESOLUTION_BUDGET = 50;
+
 export interface MergeBackTicket {
   feature: string;
   issueName: string;
@@ -223,7 +225,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
         }
 
         const conflictPaths = getConflictPaths(repoRoot);
-        const budget = this.deps.conflictResolutionBudget ?? 3;
+        const budget = this.deps.conflictResolutionBudget ?? DEFAULT_CONFLICT_RESOLUTION_BUDGET;
 
         for (let attempt = 1; attempt <= budget; attempt++) {
           const ticket: MergeBackTicket = {
@@ -338,7 +340,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
     }
 
     const conflictPaths = getConflictPaths(input.featureWorktreePath);
-    const budget = this.deps.conflictResolutionBudget ?? 3;
+    const budget = this.deps.conflictResolutionBudget ?? DEFAULT_CONFLICT_RESOLUTION_BUDGET;
 
     for (let attempt = 1; attempt <= budget; attempt++) {
       const prompt = buildConflictResolutionPrompt(ticket, conflictPaths, attempt, budget);
