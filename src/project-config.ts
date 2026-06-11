@@ -251,11 +251,22 @@ function validateKeyOrId(
   };
 }
 
-function credentialFields(record: Record<string, unknown>, field: string): string[] {
-  const credentialKeys = Object.keys(record).filter((key) => /token|secret|password|credential|apiKey/i.test(key));
-  return credentialKeys.map(
-    (key) => `${field}.${key} must not be stored in ${AFK_CONFIG_FILE}; use environment variables or an auth store.`,
-  );
+function credentialFields(record: Record<string, unknown>, field: string, seen = new WeakSet<object>()): string[] {
+  if (seen.has(record)) return [];
+  seen.add(record);
+
+  return Object.entries(record).flatMap(([key, value]) => {
+    const nestedField = `${field}.${key}`;
+    const errors = /token|secret|password|credential|apiKey/i.test(key)
+      ? [`${nestedField} must not be stored in ${AFK_CONFIG_FILE}; use environment variables or an auth store.`]
+      : [];
+
+    if (value && typeof value === 'object') {
+      errors.push(...credentialFields(value as Record<string, unknown>, nestedField, seen));
+    }
+
+    return errors;
+  });
 }
 
 function unknownPlaceholders(command: string): string[] {

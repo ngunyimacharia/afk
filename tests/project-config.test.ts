@@ -127,3 +127,24 @@ test('rejects credentials nested under workflow states config', () => {
   assert.equal(result.config, undefined);
   assert.match(result.errors.join('\n'), /provider\.workflowStates\.apiKey must not be stored in afk\.json/);
 });
+
+test('rejects credentials deeply nested under unknown provider config objects', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: {
+      kind: 'linear-graphql',
+      team: { key: 'AFK' },
+      afkLabelName: 'afk',
+      workflowStates: {
+        ready: { name: 'Ready for agent' },
+        running: { id: 'state-running' },
+        done: { name: 'Done' },
+        handoff: { name: 'Ready for human' },
+        extra: { apiKey: 'secret' },
+      },
+    },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /provider\.workflowStates\.extra\.apiKey must not be stored in afk\.json/);
+});
