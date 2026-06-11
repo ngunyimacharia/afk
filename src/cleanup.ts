@@ -18,7 +18,7 @@ export interface CleanupIssueSource {
 export interface CleanupIssueRecord {
   feature: string;
   issueName: string;
-  issuePath: string;
+  issuePath?: string;
   status?: string;
 }
 
@@ -42,7 +42,7 @@ export interface RuntimeArtifactCleanupTarget {
 export interface CleanupTarget {
   feature: string;
   issueName: string;
-  issuePath: string;
+  issuePath?: string;
   logPath?: string;
   metadataPath?: string;
   doneSentinelPath?: string;
@@ -370,12 +370,14 @@ export class CleanupPlanner {
         const isTerminal = isTerminalTicketStatus(issue.status, runtime);
         if (isTerminal) {
           const artifacts = runtimeArtifactTarget(this.input.repoRoot, issue.feature, issue.issueName);
-          issueDeletionTargets.push({
-            feature: issue.feature,
-            issueName: issue.issueName,
-            issuePath: issue.issuePath,
-            reason: `terminal status: ${issue.status}`,
-          });
+          if (issue.issuePath) {
+            issueDeletionTargets.push({
+              feature: issue.feature,
+              issueName: issue.issueName,
+              issuePath: issue.issuePath,
+              reason: `terminal status: ${issue.status}`,
+            });
+          }
           runtimeArtifactTargets.push(artifacts);
           terminalTargets.push({
             ...artifacts,
@@ -386,10 +388,12 @@ export class CleanupPlanner {
           });
         } else {
           hasPending = true;
-          preservedIssues.push(issue.issuePath);
+          if (issue.issuePath) preservedIssues.push(issue.issuePath);
         }
       }
-      if (!hasPending && featureIssues.length > 0) featureDirectoriesToDelete.push(path.join(scratchRoot, feature));
+      if (!hasPending && featureIssues.length > 0 && featureIssues.every((issue) => issue.issuePath)) {
+        featureDirectoriesToDelete.push(path.join(scratchRoot, feature));
+      }
     }
 
     for (const target of terminalTargets) {
