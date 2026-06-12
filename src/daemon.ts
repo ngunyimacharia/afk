@@ -9,9 +9,11 @@ import {
   createHarnessExecutor,
   type SelectableHarnessId,
 } from './harness-registry.js';
+import { LinearGraphqlClient, resolveLinearConfig } from './linear.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
+import { loadAfkProjectConfig } from './project-config.js';
 import { RuntimeStore } from './runtime-store.js';
 import { Scheduler } from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
@@ -50,11 +52,13 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
 
   const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
   const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+  const linearSyncer = await resolveDaemonLinearSyncer(repoRoot);
 
   const runner = new SingleTicketRunner(
     runtimeStore,
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     budgets,
+    linearSyncer,
   );
 
   const notificationPolicy = new NotificationPolicy();
@@ -113,6 +117,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
       wave: number,
       issueNames: string[],
       issueWorktreePaths: Record<string, string>,
+      issueCheckouts,
     ) => {
       const featureCheckout = checkoutsByFeature[feature];
       if (!featureCheckout) return;
@@ -122,7 +127,10 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
         return {
           feature,
           issueName,
-          branchName: `afk/${feature}/${issueName}`,
+          branchName:
+            issueCheckouts[issueName]?.effectiveBranchName ??
+            ticketSnapshot?.branchName ??
+            `afk/${feature}/${issueName}`,
           worktreePath: issueWorktreePaths[issueName] ?? ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
           dependsOn: ticketRecord?.dependsOn,
           metadataPath: path.join(
@@ -222,4 +230,12 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     clearInterval(heartbeatInterval);
     activeRunControlPlane.clear(runId);
   }
+}
+
+async function resolveDaemonLinearSyncer(repoRoot: string) {
+  const projectConfig = loadAfkProjectConfig(repoRoot).config;
+  if (!projectConfig?.linear) return undefined;
+  const client = new LinearGraphqlClient(process.env.LINEAR_API_KEY ?? '');
+  const resolvedConfig = await resolveLinearConfig({ config: projectConfig.linear, env: process.env, client });
+  return { resolvedConfig, client };
 }

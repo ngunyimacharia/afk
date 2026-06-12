@@ -8,6 +8,18 @@ export interface AfkProjectConfig {
   testEnvFile?: string;
   smokeTestCommand?: string;
   staticCheckCommands: string[];
+  linear?: LinearProjectConfig;
+}
+
+export interface LinearProjectConfig {
+  team: string;
+  afkLabel: string;
+  workflowStates: {
+    ready: string;
+    running: string;
+    done: string;
+    handoff: string;
+  };
 }
 
 export interface ProjectConfigLoadResult {
@@ -76,6 +88,9 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
     errors.push('staticCheckCommands must be an array of non-empty strings when present.');
   }
 
+  const linearValidation = validateLinearProjectConfig(record.linear);
+  errors.push(...linearValidation.errors);
+
   if (errors.length || typeof record.testsEnabled !== 'boolean') return { errors };
 
   return {
@@ -88,9 +103,58 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
       staticCheckCommands: Array.isArray(staticCheckCommands)
         ? staticCheckCommands.map((item) => String(item).trim())
         : [],
+      ...(linearValidation.config ? { linear: linearValidation.config } : {}),
     },
     errors: [],
   };
+}
+
+function validateLinearProjectConfig(value: unknown): { config?: LinearProjectConfig; errors: string[] } {
+  const errors: string[] = [];
+  if (value === undefined) return { errors };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { errors: ['linear must be an object when present.'] };
+  }
+
+  const record = value as Record<string, unknown>;
+  const team = requiredTrimmedString(record.team, 'linear.team', errors);
+  const afkLabel = requiredTrimmedString(record.afkLabel, 'linear.afkLabel', errors);
+
+  const workflowStates = record.workflowStates;
+  if (!workflowStates || typeof workflowStates !== 'object' || Array.isArray(workflowStates)) {
+    errors.push('linear.workflowStates must be an object.');
+  }
+
+  const statesRecord = workflowStates as Record<string, unknown> | undefined;
+  const ready = requiredTrimmedString(statesRecord?.ready, 'linear.workflowStates.ready', errors);
+  const running = requiredTrimmedString(statesRecord?.running, 'linear.workflowStates.running', errors);
+  const done = requiredTrimmedString(statesRecord?.done, 'linear.workflowStates.done', errors);
+  const handoff = requiredTrimmedString(statesRecord?.handoff, 'linear.workflowStates.handoff', errors);
+
+  if (errors.length) return { errors };
+
+  return {
+    config: {
+      team: team as string,
+      afkLabel: afkLabel as string,
+      workflowStates: {
+        ready: ready as string,
+        running: running as string,
+        done: done as string,
+        handoff: handoff as string,
+      },
+    },
+    errors: [],
+  };
+}
+
+function requiredTrimmedString(value: unknown, name: string, errors: string[]): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) {
+    errors.push(`${name} must be a non-empty string.`);
+    return undefined;
+  }
+
+  return value.trim();
 }
 
 function unknownPlaceholders(command: string): string[] {

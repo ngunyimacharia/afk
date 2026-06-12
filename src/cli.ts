@@ -29,7 +29,7 @@ import {
   resolveExecutables,
 } from './executable-resolution.js';
 import { type FeatureBaseMergeResult, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
-import type { FeatureExecutionGraph } from './feature-execution-graph.js';
+import { buildFeatureExecutionGraph, type FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import {
@@ -44,12 +44,20 @@ import {
 } from './harness-registry.js';
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
+import {
+  discoverLinearFeatures,
+  LinearGraphqlClient,
+  type LinearParentFeature,
+  type ResolvedLinearConfig,
+  resolveLinearConfig,
+} from './linear.js';
 import { createLiveRunView } from './live-run-view.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import type { OpenCodeSessionExecutor } from './opencode.js';
 import { formatDuration } from './opentui-dashboard.js';
 import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
+import { assertPathWithinRoot } from './path-validation.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
@@ -68,6 +76,145 @@ import {
   type WorkspaceExecutionGraph,
 } from './workspace-execution-graph.js';
 import { runGit, WorktreePreparationService, WorktreeReadinessBlockedError } from './worktree-preparation-service.js';
+
+export function formatLinearDiscoveryLines(features: LinearParentFeature[]): string[] {
+  const lines = features
+    .filter((feature) => feature.workItems.length > 0)
+    .flatMap((feature) => [
+      `- ${feature.featureSlug}: ${feature.key} - ${feature.title} (${feature.workItems.length} labeled subissues)`,
+      ...feature.workItems.map((item) => `  - ${item.key}: ${item.title}`),
+    ]);
+  return lines.length ? ['Linear discovery found labeled subissues:', ...lines] : [];
+}
+
+function linearIssueSlug(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function linearTicketContent(feature: LinearParentFeature, item: LinearParentFeature['workItems'][number]): string {
+  const body = item.body.trim();
+  const labels = item.labels.map((label) => label.name).join(', ') || 'None';
+  return [
+    `# ${item.title}`,
+    '',
+    `Linear issue ID: ${item.id}`,
+    `Linear issue key: ${item.key}`,
+    `Linear issue: ${item.url}`,
+    `Linear status: ${item.status}`,
+    `Linear parent: ${feature.key} - ${feature.title}`,
+    `Linear parent URL: ${feature.url}`,
+    `Linear labels: ${labels}`,
+    `Dependency summary: None discovered by AFK Linear discovery.`,
+    '',
+    body || '_No Linear description provided._',
+    '',
+  ].join('\n');
+}
+
+export function linearMirrorRoot(repoRoot: string): string {
+  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
+}
+
+export function linearMirrorPath(repoRoot: string, featureSlug: string, issueName: string): string {
+  const root = path.resolve(linearMirrorRoot(repoRoot));
+  const safeFeature = linearIssueSlug(featureSlug);
+  const safeIssue = linearIssueSlug(issueName);
+  if (!safeFeature || !safeIssue) throw new Error(`Invalid Linear mirror name for ${featureSlug}/${issueName}`);
+  const mirrorPath = path.join(root, `${safeFeature}-${safeIssue}.md`);
+  assertPathWithinRoot(mirrorPath, root, 'Linear mirror');
+  return mirrorPath;
+}
+
+export function materializeLinearTicketMirrors(repoRoot: string, tickets: TicketRecord[]): TicketRecord[] {
+  const root = path.resolve(linearMirrorRoot(repoRoot));
+  mkdirSync(root, { recursive: true });
+  return tickets.map((ticket) => {
+    if (ticket.source !== 'linear') return ticket;
+    const mirrorPath = linearMirrorPath(repoRoot, ticket.feature, ticket.issueName);
+    const providerIdentity = ticket.providerIdentity ? { ...ticket.providerIdentity, mirrorPath } : undefined;
+    const content = ticket.content ?? '';
+    writeFileSync(mirrorPath, content.endsWith('\n') ? content : `${content}\n`, 'utf8');
+    return { ...ticket, path: mirrorPath, content, providerIdentity };
+  });
+}
+
+export function linearFeaturesToTicketRecords(features: LinearParentFeature[]): TicketRecord[] {
+  return features.flatMap((feature) =>
+    feature.workItems.flatMap((item) => {
+      const issueName = linearIssueSlug(item.key);
+      if (!issueName) return [];
+      return [
+        {
+          path: `linear://${item.key}`,
+          feature: feature.featureSlug,
+          issueName,
+          label: `${feature.featureSlug}/${issueName}`,
+          status: 'ready-for-agent',
+          executorAfk: true,
+          dependsOn: (item.dependsOn ?? []).map(linearIssueSlug).filter(Boolean),
+          source: 'linear' as const,
+          linear: {
+            parentKey: feature.key,
+            issueKey: item.key,
+            parentBranchName: feature.branchName,
+            issueBranchName: item.branchName,
+          },
+          content: linearTicketContent(feature, item),
+          providerIdentity: {
+            provider: 'linear' as const,
+            issueId: item.id,
+            issueKey: item.key,
+            issueUrl: item.url,
+            parentKey: feature.key,
+          },
+        },
+      ];
+    }),
+  );
+}
+
+function isLinearTicket(ticket: TicketRecord): boolean {
+  return ticket.source === 'linear';
+}
+
+function buildLinearWorkspaceGraph(
+  selectedFeatures: string[],
+  linearFeatures: Set<string>,
+  localGraph: WorkspaceExecutionGraph | null,
+  concurrency: number,
+): WorkspaceExecutionGraph {
+  const localWaves = localGraph?.featureWaves ?? [];
+  const localWaveFeatures = new Set(localWaves.flat());
+  const linearWaves = selectedFeatures.filter(
+    (feature) => linearFeatures.has(feature) && !localWaveFeatures.has(feature),
+  );
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    selectedFeatures,
+    concurrency,
+    featureWaves: [...localWaves, ...(linearWaves.length ? [linearWaves] : [])],
+    features: {
+      ...(localGraph?.features ?? {}),
+      ...Object.fromEntries(
+        linearWaves.map((feature) => [
+          feature,
+          {
+            state: 'ready' as const,
+            dependsOnFeatures: [],
+            blockedByFeatures: [],
+            stackParent: null,
+            blockingIssues: [],
+          },
+        ]),
+      ),
+    },
+  };
+}
 
 function commandArg(): string | undefined {
   const knownCommands = new Set([
@@ -140,14 +287,24 @@ export async function runAfk(
     const planner = new CleanupPlanner({ repoRoot });
     const plan = planner.buildPlan();
     const logTargets = plan.terminalTargets
-      .flatMap((target) => [target.logPath, target.metadataPath, target.doneSentinelPath, target.failedSentinelPath])
+      .flatMap((target) => [
+        target.logPath,
+        target.metadataPath,
+        target.linearMirrorPath,
+        target.doneSentinelPath,
+        target.failedSentinelPath,
+      ])
       .filter(Boolean) as string[];
     if (plan.workspaceExecutionPath) logTargets.push(plan.workspaceExecutionPath);
     const dryRun = [
       'AFK Cleanup Plan',
       '',
       'Terminal tickets to delete',
-      ...(plan.terminalTargets.length ? plan.terminalTargets.map((target) => `- ${target.issuePath}`) : ['- none']),
+      ...(plan.terminalTargets.length
+        ? plan.terminalTargets.map(
+            (target) => `- ${target.issuePath ?? target.metadataPath ?? `${target.feature}/${target.issueName}`}`,
+          )
+        : ['- none']),
       '',
       'Matching logs / metadata to delete',
       ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
@@ -296,7 +453,25 @@ export async function runAfk(
     } catch (error) {
       return { code: 1, message: formatTicketMetadataError(error) };
     }
-    const tickets = allTickets.filter((ticket) => repository.isEligible(ticket));
+    let linearTickets: TicketRecord[] = [];
+    let resolvedLinearConfig: ResolvedLinearConfig | undefined;
+    if (activeProjectConfig.linear) {
+      try {
+        const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
+        const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
+        resolvedLinearConfig = resolvedConfig;
+        const linearFeatures = await discoverLinearFeatures({ resolvedConfig, client });
+        const discoveryLines = formatLinearDiscoveryLines(linearFeatures);
+        if (discoveryLines.length) io.stdout.write(`${discoveryLines.join('\n')}\n`);
+        linearTickets = linearFeaturesToTicketRecords(linearFeatures);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Unknown Linear discovery error';
+        return { code: 1, message: `Linear ticket discovery failed.\nReason: ${reason}` };
+      }
+    }
+    const localTickets = allTickets.filter((ticket) => repository.isEligible(ticket));
+    const tickets = [...localTickets, ...linearTickets];
+    let launchTickets = [...allTickets, ...linearTickets];
     if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
     const worktreePreparationService = new WorktreePreparationService();
     let model: LaunchModel | undefined;
@@ -368,18 +543,37 @@ export async function runAfk(
     );
     if (preflight) return { code: 1, message: preflight };
     const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
-    selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, allTickets);
+    selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, launchTickets);
+    selectedTickets = materializeLinearTicketMirrors(repoRoot, selectedTickets);
+    launchTickets = launchTickets.map(
+      (ticket) => selectedTickets.find((selected) => selected.label === ticket.label) ?? ticket,
+    );
     const refresh = new FeatureExecutionRefreshService(repoRoot);
     let featureGraphs: Record<string, FeatureExecutionGraph>;
+    const selectedLinearFeatures = new Set(selectedTickets.filter(isLinearTicket).map((ticket) => ticket.feature));
     try {
-      featureGraphs = Object.fromEntries(selectedFeatures.map((feature) => [feature, refresh.refresh(feature)]));
+      featureGraphs = Object.fromEntries(
+        selectedFeatures.map((feature) => {
+          const featureTickets = selectedTickets.filter((ticket) => ticket.feature === feature);
+          if (selectedLinearFeatures.has(feature)) {
+            return [feature, buildFeatureExecutionGraph(repoRoot, feature, featureTickets, false)];
+          }
+          return [feature, refresh.refresh(feature)];
+        }),
+      );
     } catch (error) {
       return { code: 1, message: formatTicketMetadataError(error) };
     }
-    const orderingBlock = validateSelectedTicketDependencies(selectedTickets, allTickets);
+    const orderingBlock = validateSelectedTicketDependencies(selectedTickets, launchTickets);
     if (orderingBlock) return { code: 1, message: orderingBlock };
     selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
-    const workspaceGraph = refreshWorkspaceExecutionGraph(repoRoot, selectedFeatures, concurrency);
+    const localSelectedFeatures = selectedFeatures.filter((feature) => !selectedLinearFeatures.has(feature));
+    const localWorkspaceGraph = localSelectedFeatures.length
+      ? refreshWorkspaceExecutionGraph(repoRoot, localSelectedFeatures, concurrency)
+      : null;
+    const workspaceGraph = selectedLinearFeatures.size
+      ? buildLinearWorkspaceGraph(selectedFeatures, selectedLinearFeatures, localWorkspaceGraph, concurrency)
+      : (localWorkspaceGraph as WorkspaceExecutionGraph);
     const featureBlock = validateSelectedFeatureDependencies(workspaceGraph, selectedFeatures);
     if (featureBlock) return { code: 1, message: featureBlock };
     const firstTicket = selectedTickets[0];
@@ -389,12 +583,15 @@ export async function runAfk(
     try {
       checkouts = checkoutFeatures.map((feature) => {
         const stackParent = workspaceGraph.features[feature]?.stackParent;
+        const linearTicket = selectedTickets.find((ticket) => ticket.feature === feature && ticket.source === 'linear');
         return worktreePreparationService.prepare({
           repoRoot,
           featureSlug: feature,
+          linearIssueKey: linearTicket?.linear?.parentKey,
+          linearIssueBranchName: linearTicket?.linear?.parentBranchName,
           baseRef: stackParent ? stackParent : undefined,
           selectedTicketPaths: selectedTickets
-            .filter((ticket) => ticket.feature === feature)
+            .filter((ticket) => ticket.feature === feature && !isLinearTicket(ticket))
             .map((ticket) => ticket.path),
           projectConfig: activeProjectConfig,
         });
@@ -476,6 +673,9 @@ export async function runAfk(
       runtimeStore,
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
       launchPreferences.budgets,
+      resolvedLinearConfig
+        ? { resolvedConfig: resolvedLinearConfig, client: new LinearGraphqlClient(env.LINEAR_API_KEY ?? '') }
+        : undefined,
     );
     const renderer: OpenTUIRenderer = {
       capabilities: { notifications: io.stdout.isTTY ?? false },
@@ -596,6 +796,7 @@ export async function runAfk(
         wave: number,
         issueNames: string[],
         issueWorktreePaths: Record<string, string>,
+        issueCheckouts: Record<string, ReturnType<ScratchWorktreeService['createScratchWorktree']>>,
       ) => {
         const featureCheckout = checkoutsByFeature[feature];
         if (!featureCheckout) return;
@@ -605,7 +806,10 @@ export async function runAfk(
           return {
             feature,
             issueName,
-            branchName: `afk/${feature}/${issueName}`,
+            branchName:
+              issueCheckouts[issueName]?.effectiveBranchName ??
+              ticketSnapshot?.branchName ??
+              `afk/${feature}/${issueName}`,
             worktreePath: issueWorktreePaths[issueName] ?? ticketSnapshot?.worktreePath ?? featureCheckout.worktreePath,
             dependsOn: ticketRecord?.dependsOn,
             metadataPath: path.join(

@@ -6,6 +6,7 @@ import type {
   BudgetExceededEvent,
   BudgetPolicy,
   LaunchPreferences,
+  LinearProviderIdentity,
   PhaseHistoryEntry,
   ReviewCycleHistoryEntry,
   ReviewTerminalOutcomeRecord,
@@ -22,6 +23,7 @@ export interface RuntimeTicketContext {
   issueName: string;
   ticketPath: string;
   runId?: string;
+  providerIdentity?: LinearProviderIdentity;
 }
 
 export interface RuntimeRecordHandle {
@@ -142,6 +144,16 @@ export class RuntimeStore {
       START_EPOCH: startEpoch,
       DONE_SENTINEL_PATH: doneSentinelPath,
       FAILED_SENTINEL_PATH: failedSentinelPath,
+      ...(context.providerIdentity?.provider === 'linear'
+        ? {
+            LINEAR_ISSUE_ID: context.providerIdentity.issueId,
+            LINEAR_ISSUE_KEY: context.providerIdentity.issueKey,
+            LINEAR_ISSUE_URL: context.providerIdentity.issueUrl,
+            LINEAR_PARENT_KEY: context.providerIdentity.parentKey,
+            LINEAR_MIRROR_PATH: context.providerIdentity.mirrorPath ?? context.ticketPath,
+            PROVIDER_IDENTITY: context.providerIdentity,
+          }
+        : {}),
       STATUS: 'running',
       EXECUTION_PROVIDER: 'opencode',
       PROVIDER_SESSION_ID: null,

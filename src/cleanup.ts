@@ -13,9 +13,10 @@ export interface CleanupPlannerInput {
 export interface CleanupTarget {
   feature: string;
   issueName: string;
-  issuePath: string;
+  issuePath?: string;
   logPath?: string;
   metadataPath?: string;
+  linearMirrorPath?: string;
   doneSentinelPath?: string;
   failedSentinelPath?: string;
   handoffSentinelPath?: string;
@@ -88,12 +89,37 @@ function parseStatus(content: string, frontmatter: Record<string, unknown>): str
   return undefined;
 }
 
-function ticketLogPath(repoRoot: string, feature: string, issueName: string): string {
-  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', `${feature}-${issueName}.log`);
+function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(rootPath, candidatePath);
+  return (
+    relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+  );
 }
 
-function ticketMetadataPath(repoRoot: string, feature: string, issueName: string): string {
-  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', `${feature}-${issueName}.json`);
+function resolvePathWithinRoot(rootPath: string, relativePath: string): string | undefined {
+  const root = path.resolve(rootPath);
+  const resolved = path.resolve(root, relativePath);
+  return isPathWithinRoot(resolved, root) ? resolved : undefined;
+}
+
+function existingFilePath(candidatePath: string | undefined): string | undefined {
+  return candidatePath && fileExists(candidatePath) ? candidatePath : undefined;
+}
+
+function ticketLogRoot(repoRoot: string): string {
+  return path.resolve(repoRoot, '.scratch', '.opencode-afk-logs');
+}
+
+function ticketLogPath(repoRoot: string, feature: string, issueName: string): string | undefined {
+  return resolvePathWithinRoot(ticketLogRoot(repoRoot), `${feature}-${issueName}.log`);
+}
+
+function ticketMetadataRoot(repoRoot: string): string {
+  return path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+}
+
+function ticketMetadataPath(repoRoot: string, feature: string, issueName: string): string | undefined {
+  return resolvePathWithinRoot(ticketMetadataRoot(repoRoot), `${feature}-${issueName}.json`);
 }
 
 function pendingPostMergeCleanupPath(repoRoot: string): string {
@@ -228,13 +254,14 @@ function ticketSentinelPath(
   feature: string,
   issueName: string,
   kind: 'done' | 'failed' | 'handoff',
-): string {
-  return path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', `${feature}-${issueName}.${kind}`);
+): string | undefined {
+  const sentinelRoot = path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels');
+  return resolvePathWithinRoot(sentinelRoot, `${feature}-${issueName}.${kind}`);
 }
 
 function readRuntimeMetadataRecord(repoRoot: string, feature: string, issueName: string): RuntimeMetadataRecord | null {
-  const metadataPath = ticketMetadataPath(repoRoot, feature, issueName);
-  if (!fileExists(metadataPath)) return null;
+  const metadataPath = existingFilePath(ticketMetadataPath(repoRoot, feature, issueName));
+  if (!metadataPath) return null;
   try {
     return JSON.parse(readFileSync(metadataPath, 'utf8')) as RuntimeMetadataRecord;
   } catch {
@@ -249,6 +276,24 @@ function isTerminalTicketStatus(status: string | undefined, runtime: RuntimeMeta
   if (runtime?.RUN_STATUS === 'handoff') return false;
   if (runtime?.IMPLEMENTATION_STATUS === 'completed' && runtime?.REVIEW_STATUS === 'unavailable') return false;
   return isFrontmatterTerminal;
+}
+
+function isTerminalRuntimeStatus(runtime: RuntimeMetadataRecord): boolean {
+  return ['completed', 'failed', 'blocked', 'interrupted'].includes(normalize(runtime.RUN_STATUS ?? runtime.STATUS));
+}
+
+function linearMirrorRoot(repoRoot: string): string {
+  return path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
+}
+
+function linearMirrorPath(repoRoot: string, runtime: RuntimeMetadataRecord | null): string | undefined {
+  const mirrorRoot = linearMirrorRoot(repoRoot);
+  for (const candidate of [runtime?.LINEAR_MIRROR_PATH, runtime?.TICKET_PATH]) {
+    if (!candidate) continue;
+    const resolved = path.resolve(candidate);
+    if (isPathWithinRoot(resolved, mirrorRoot) && fileExists(resolved)) return resolved;
+  }
+  return undefined;
 }
 
 export class CleanupPlanner {
@@ -289,25 +334,18 @@ export class CleanupPlanner {
             feature: featureDir.name,
             issueName,
             issuePath,
-            logPath: fileExists(ticketLogPath(this.input.repoRoot, featureDir.name, issueName))
-              ? ticketLogPath(this.input.repoRoot, featureDir.name, issueName)
-              : undefined,
-            metadataPath: fileExists(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName))
-              ? ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)
-              : undefined,
-            doneSentinelPath: fileExists(ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done'))
-              ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done')
-              : undefined,
-            failedSentinelPath: fileExists(
+            logPath: existingFilePath(ticketLogPath(this.input.repoRoot, featureDir.name, issueName)),
+            metadataPath: existingFilePath(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)),
+            linearMirrorPath: linearMirrorPath(this.input.repoRoot, runtime),
+            doneSentinelPath: existingFilePath(
+              ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done'),
+            ),
+            failedSentinelPath: existingFilePath(
               ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed'),
-            )
-              ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed')
-              : undefined,
-            handoffSentinelPath: fileExists(
+            ),
+            handoffSentinelPath: existingFilePath(
               ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'handoff'),
-            )
-              ? ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'handoff')
-              : undefined,
+            ),
             reason: `terminal status: ${status}`,
           });
         } else {
@@ -319,9 +357,45 @@ export class CleanupPlanner {
         featureDirectoriesToDelete.push(path.join(scratchRoot, featureDir.name));
     }
 
+    const plannedKeys = new Set(terminalTargets.map((target) => `${target.feature}/${target.issueName}`));
+    const metadataRoot = path.join(scratchRoot, '.opencode-afk-logs', 'runtime-metadata');
+    if (exists(metadataRoot)) {
+      for (const file of readdirSync(metadataRoot).filter((entry) => entry.endsWith('.json'))) {
+        const metadataPath = path.join(metadataRoot, file);
+        let runtime: RuntimeMetadataRecord;
+        try {
+          runtime = JSON.parse(readFileSync(metadataPath, 'utf8')) as RuntimeMetadataRecord;
+        } catch {
+          continue;
+        }
+        const key = `${runtime.FEATURE_SLUG}/${runtime.ISSUE_NAME}`;
+        if (!runtime.LINEAR_ISSUE_KEY || plannedKeys.has(key) || !isTerminalRuntimeStatus(runtime)) continue;
+        const mirrorPath = linearMirrorPath(this.input.repoRoot, runtime);
+        terminalTargets.push({
+          feature: runtime.FEATURE_SLUG,
+          issueName: runtime.ISSUE_NAME,
+          issuePath: mirrorPath,
+          logPath: existingFilePath(ticketLogPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME)),
+          metadataPath,
+          linearMirrorPath: mirrorPath,
+          doneSentinelPath: existingFilePath(
+            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'done'),
+          ),
+          failedSentinelPath: existingFilePath(
+            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'failed'),
+          ),
+          handoffSentinelPath: existingFilePath(
+            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'handoff'),
+          ),
+          reason: `terminal Linear run: ${runtime.RUN_STATUS ?? runtime.STATUS}`,
+        });
+      }
+    }
+
     for (const target of terminalTargets) {
       if (target.logPath) preservedArtifacts.push(target.logPath);
       if (target.metadataPath) preservedArtifacts.push(target.metadataPath);
+      if (target.linearMirrorPath) preservedArtifacts.push(target.linearMirrorPath);
       if (target.doneSentinelPath) preservedArtifacts.push(target.doneSentinelPath);
       if (target.failedSentinelPath) preservedArtifacts.push(target.failedSentinelPath);
       if (target.handoffSentinelPath) preservedArtifacts.push(target.handoffSentinelPath);
@@ -366,14 +440,17 @@ export class CleanupExecutor {
     writePendingPostMergeCleanupItems(repoRoot, remainingPending);
 
     for (const target of plan.terminalTargets) {
-      for (const filePath of [
-        target.issuePath,
-        target.logPath,
-        target.metadataPath,
-        target.doneSentinelPath,
-        target.failedSentinelPath,
-        target.handoffSentinelPath,
-      ].filter((value): value is string => Boolean(value))) {
+      for (const filePath of new Set(
+        [
+          target.issuePath,
+          target.logPath,
+          target.metadataPath,
+          target.linearMirrorPath,
+          target.doneSentinelPath,
+          target.failedSentinelPath,
+          target.handoffSentinelPath,
+        ].filter((value): value is string => Boolean(value)),
+      )) {
         try {
           rmSync(filePath, { force: true, recursive: false });
           deleted.push(filePath);

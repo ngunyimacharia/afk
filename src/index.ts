@@ -2,6 +2,14 @@ export { assertCommandAllowed, resolveAgentInvocationPolicy } from './agent-exec
 export { runAfk } from './cli.js';
 export { buildLaunchPlan } from './launch-context-builder.js';
 export { resolveLaunchModelSelection } from './launch-models.js';
+export {
+  discoverLinearFeatures,
+  LINEAR_API_KEY_ENV,
+  LinearGraphqlClient,
+  LinearStartupError,
+  resolveLinearConfig,
+  slugFromLinearKey,
+} from './linear.js';
 export { ModelSelector } from './model-selector.js';
 export {
   createManualPermissionPromptAdapter,

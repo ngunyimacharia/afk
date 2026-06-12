@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
   expandSelectedFeaturesToAllTickets,
+  formatLinearDiscoveryLines,
   formatManualPermissionReviewLines,
+  linearFeaturesToTicketRecords,
+  linearMirrorPath,
+  linearMirrorRoot,
+  materializeLinearTicketMirrors,
   orderSelectedTicketsByFeatureGraph,
   readRunMetadata,
   readRunOutcomeLines,
@@ -16,6 +21,162 @@ import {
 import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/interactive-launch.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { TicketRepository } from '../src/ticket-repository.js';
+
+test('formats Linear parent feature work items without materializing launch tickets', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-launch-'));
+
+  const lines = formatLinearDiscoveryLines([
+    {
+      provider: 'linear',
+      id: 'parent-1',
+      key: 'ENG-100',
+      url: 'https://linear.app/acme/issue/ENG-100/parent',
+      title: 'Parent feature',
+      status: 'Ready',
+      featureSlug: 'eng-100',
+      workItems: [
+        {
+          provider: 'linear',
+          id: 'child-1',
+          key: 'ENG-101',
+          url: 'https://linear.app/acme/issue/ENG-101/child',
+          title: 'Child work',
+          body: 'Implement child work.',
+          status: 'Ready',
+          parent: {
+            id: 'parent-1',
+            key: 'ENG-100',
+            url: 'https://linear.app/acme/issue/ENG-100/parent',
+            title: 'Parent feature',
+            featureSlug: 'eng-100',
+          },
+          labels: [{ id: 'label-1', name: 'AFK' }],
+          afkLabel: { id: 'label-1', name: 'AFK' },
+          dependsOn: [],
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(lines, [
+    'Linear discovery found labeled subissues:',
+    '- eng-100: ENG-100 - Parent feature (1 labeled subissues)',
+    '  - ENG-101: Child work',
+  ]);
+  assert.equal(existsSync(path.join(repoRoot, '.scratch')), false);
+});
+
+test('converts Linear parent work items into selectable launch tickets', () => {
+  const tickets = linearFeaturesToTicketRecords([
+    {
+      provider: 'linear',
+      id: 'parent-1',
+      key: 'ENG-100',
+      url: 'https://linear.app/acme/issue/ENG-100/parent',
+      title: 'Parent feature',
+      status: 'Ready',
+      featureSlug: 'eng-100',
+      workItems: [
+        {
+          provider: 'linear',
+          id: 'child-1',
+          key: 'ENG-101',
+          url: 'https://linear.app/acme/issue/ENG-101/child',
+          title: 'Child work',
+          body: 'Implement child work.',
+          status: 'Ready',
+          parent: {
+            id: 'parent-1',
+            key: 'ENG-100',
+            url: 'https://linear.app/acme/issue/ENG-100/parent',
+            title: 'Parent feature',
+            featureSlug: 'eng-100',
+          },
+          labels: [{ id: 'label-1', name: 'AFK' }],
+          afkLabel: { id: 'label-1', name: 'AFK' },
+          dependsOn: [],
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(
+    tickets.map((ticket) => ({
+      path: ticket.path,
+      feature: ticket.feature,
+      issueName: ticket.issueName,
+      label: ticket.label,
+      source: ticket.source,
+      status: ticket.status,
+      linear: ticket.linear,
+    })),
+    [
+      {
+        path: 'linear://ENG-101',
+        feature: 'eng-100',
+        issueName: 'eng-101',
+        label: 'eng-100/eng-101',
+        source: 'linear',
+        status: 'ready-for-agent',
+        linear: {
+          parentKey: 'ENG-100',
+          issueKey: 'ENG-101',
+          parentBranchName: undefined,
+          issueBranchName: undefined,
+        },
+      },
+    ],
+  );
+  assert.match(tickets[0]?.content ?? '', /Linear issue: https:\/\/linear\.app\/acme\/issue\/ENG-101\/child/);
+});
+
+test('materializes Linear mirrors with safe paths and provider identity', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-mirror-'));
+  const tickets = linearFeaturesToTicketRecords([
+    linearFeature({
+      featureSlug: '../ENG 100',
+      parentKey: 'ENG-100',
+      issueKey: '../../ENG-101',
+      issueId: 'child-1',
+      title: 'Child work',
+      labels: [
+        { id: 'label-1', name: 'AFK' },
+        { id: 'label-2', name: 'Backend' },
+      ],
+    }),
+  ]);
+
+  const [ticket] = materializeLinearTicketMirrors(repoRoot, tickets);
+  assert.ok(ticket);
+  assert.equal(path.relative(linearMirrorRoot(repoRoot), ticket.path).startsWith('..'), false);
+  assert.equal(ticket.providerIdentity?.mirrorPath, ticket.path);
+  assert.equal(ticket.providerIdentity?.issueId, 'child-1');
+  const mirror = readFileSync(ticket.path, 'utf8');
+  assert.match(mirror, /Linear issue ID: child-1/);
+  assert.match(mirror, /Linear issue key: ..\/..\/ENG-101/);
+  assert.match(mirror, /Linear parent: ENG-100 - Parent feature/);
+  assert.match(mirror, /Linear labels: AFK, Backend/);
+  assert.match(mirror, /Dependency summary: None discovered by AFK Linear discovery\./);
+});
+
+test('Linear mirror path generation cannot escape the mirror root', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-safe-'));
+  const mirrorPath = linearMirrorPath(repoRoot, '../../outside', '../ENG-101/../../escape');
+  assert.equal(path.relative(linearMirrorRoot(repoRoot), mirrorPath).startsWith('..'), false);
+  assert.equal(path.basename(mirrorPath), 'outside-eng-101-escape.md');
+});
+
+test('scratch ticket discovery ignores managed Linear mirrors', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-discovery-'));
+  materializeLinearTicketMirrors(
+    repoRoot,
+    linearFeaturesToTicketRecords([
+      linearFeature({ featureSlug: 'eng-100', parentKey: 'ENG-100', issueKey: 'ENG-101', issueId: 'child-1' }),
+    ]),
+  );
+
+  assert.deepEqual(new TicketRepository(repoRoot).discoverTickets(), []);
+});
 
 test('default afk launch fails early without interactive tty', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
@@ -350,6 +511,23 @@ test('selected features expand back to completed and eligible tickets', () => {
   assert.deepEqual(expanded.map((ticket) => ticket.issueName).sort(), ['01', '02']);
 });
 
+test('selected Linear feature tickets survive expansion without local scratch tickets', () => {
+  const linearTicket = {
+    path: 'linear://ENG-101',
+    feature: 'eng-100',
+    issueName: 'eng-101',
+    label: 'eng-100/eng-101',
+    status: 'ready-for-agent',
+    executorAfk: true,
+    source: 'linear' as const,
+    content: '# Child work',
+  };
+
+  const expanded = expandSelectedFeaturesToAllTickets([linearTicket], [linearTicket]);
+
+  assert.deepEqual(expanded, [linearTicket]);
+});
+
 test('selected feature tickets are ordered by dependency graph waves', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-feature-order-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
@@ -504,6 +682,46 @@ test('does not attach to stale active run with expired heartbeat', async () => {
   assert.doesNotMatch(result.message, /Attached to active run/);
   assert.match(result.message, /No pending AFK tickets found/);
 });
+
+function linearFeature(input: {
+  featureSlug: string;
+  parentKey: string;
+  issueKey: string;
+  issueId: string;
+  title?: string;
+  labels?: { id: string; name: string }[];
+}) {
+  const labels = input.labels ?? [{ id: 'label-1', name: 'AFK' }];
+  return {
+    provider: 'linear' as const,
+    id: 'parent-1',
+    key: input.parentKey,
+    url: `https://linear.app/acme/issue/${input.parentKey}/parent`,
+    title: 'Parent feature',
+    status: 'Ready',
+    featureSlug: input.featureSlug,
+    workItems: [
+      {
+        provider: 'linear' as const,
+        id: input.issueId,
+        key: input.issueKey,
+        url: `https://linear.app/acme/issue/${input.issueKey}/child`,
+        title: input.title ?? 'Child work',
+        body: 'Implement child work.',
+        status: 'Ready',
+        parent: {
+          id: 'parent-1',
+          key: input.parentKey,
+          url: `https://linear.app/acme/issue/${input.parentKey}/parent`,
+          title: 'Parent feature',
+          featureSlug: input.featureSlug,
+        },
+        labels,
+        afkLabel: labels[0],
+      },
+    ],
+  };
+}
 
 function writeMinimalAfkConfig(repoRoot: string): void {
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));

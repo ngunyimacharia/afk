@@ -42,12 +42,41 @@ export interface WorktreeReadinessMetadata {
 export interface WorktreePreparationInput {
   repoRoot: string;
   featureSlug: string;
+  linearIssueKey?: string;
+  linearIssueBranchName?: string | null;
   ticketOverrides?: { afk_worktree?: string; afk_branch?: string };
   baseRef?: string;
   selectedTicketPaths?: string[];
   testsDisabledByUser?: boolean;
   projectConfig?: AfkProjectConfig;
   readinessExecutor?: ReadinessCommandExecutor;
+}
+
+export function pathSafeCheckoutName(value: string): string {
+  return value
+    .trim()
+    .replace(/[\\/]+/g, '-')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
+
+export function isSafeCheckoutBranchName(value?: string | null): value is string {
+  const branchName = value?.trim();
+  if (!branchName) return false;
+  if (branchName.includes('..') || branchName.includes('@{') || branchName.endsWith('.')) return false;
+  if (/^[/.]|[/.]$/.test(branchName) || /[\\\s~^:?*[\]]/.test(branchName)) return false;
+  if ([...branchName].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
+    return false;
+  }
+  return branchName
+    .split('/')
+    .every((segment) => segment && segment !== '.' && segment !== '..' && !segment.endsWith('.lock'));
+}
+
+export function linearFallbackBranchName(issueKey: string): string {
+  return `afk/${pathSafeCheckoutName(issueKey)}`;
 }
 
 export class WorktreeReadinessBlockedError extends Error {
@@ -216,10 +245,12 @@ export function ensureIgnoredWorktreeRoot(repoRoot: string): string {
 
 export class WorktreePreparationService {
   prepare(input: WorktreePreparationInput): PreparedCheckoutContext {
-    const defaultWorktreeName = input.featureSlug;
+    const defaultBranchName = input.linearIssueKey ? linearFallbackBranchName(input.linearIssueKey) : input.featureSlug;
+    const effectiveBranchName =
+      input.ticketOverrides?.afk_branch?.trim() ||
+      (isSafeCheckoutBranchName(input.linearIssueBranchName) ? input.linearIssueBranchName.trim() : defaultBranchName);
+    const defaultWorktreeName = pathSafeCheckoutName(effectiveBranchName) || input.featureSlug;
     const effectiveWorktreeName = input.ticketOverrides?.afk_worktree?.trim() || defaultWorktreeName;
-    const defaultBranchName = defaultWorktreeName;
-    const effectiveBranchName = input.ticketOverrides?.afk_branch?.trim() || defaultBranchName;
     const worktreePath = path.join(ensureIgnoredWorktreeRoot(input.repoRoot), effectiveWorktreeName);
 
     ensureBranch(input.repoRoot, effectiveBranchName, input.baseRef);
