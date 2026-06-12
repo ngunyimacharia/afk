@@ -360,17 +360,25 @@ export async function resolveLinearConfig(options: ResolveLinearConfigOptions): 
   }
 
   const client = options.client ?? new LinearGraphqlClient(apiKey);
-  const team = await client.findTeam(config.team);
+  const teamIdentifier = config.team ?? config.teamId ?? config.teamKey;
+  if (!teamIdentifier) {
+    throw new LinearStartupError('Linear startup requires linear.team, linear.teamId, or linear.teamKey.');
+  }
+  const labelName = config.afkLabel ?? config.labelName;
+  if (!labelName) {
+    throw new LinearStartupError('Linear startup requires linear.afkLabel or linear.labelName.');
+  }
+  const team = await client.findTeam(teamIdentifier);
   if (!team) {
     throw new LinearStartupError(
-      `Linear team "${config.team}" was not found. Set linear.team to an existing Linear team key or ID.`,
+      `Linear team "${teamIdentifier}" was not found. Set linear.team to an existing Linear team key or ID.`,
     );
   }
 
-  const label = await client.findIssueLabel(team.id, config.afkLabel);
+  const label = await client.findIssueLabel(team.id, labelName);
   if (!label) {
     throw new LinearStartupError(
-      `Linear AFK label "${config.afkLabel}" was not found for team ${team.key}. Create the label in Linear or update linear.afkLabel.`,
+      `Linear AFK label "${labelName}" was not found for team ${team.key}. Create the label in Linear or update linear.afkLabel.`,
     );
   }
 

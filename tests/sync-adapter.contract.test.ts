@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
@@ -57,6 +57,24 @@ test('interview-me skill is a syncable artifact', async () => {
 
 test('afk-config skill is a syncable artifact', async () => {
   await assert.doesNotReject(access('artifacts/skills/afk-config.md'));
+});
+
+test('to-linear skill is a syncable Linear planning artifact', async () => {
+  const content = await readFile('artifacts/skills/to-linear.md', 'utf8');
+
+  assert.match(content, /name: to-linear/);
+  assert.match(content, /This skill uses Linear/);
+  assert.match(content, /does not write Local Markdown scratch packages/);
+  assert.match(content, /afk linear-plan/);
+  assert.match(content, /Do not call Linear GraphQL/);
+});
+
+test('to-scratch remains local markdown only', async () => {
+  const content = await readFile('artifacts/skills/to-scratch.md', 'utf8');
+
+  assert.match(content, /name: to-scratch/);
+  assert.match(content, /Local Markdown only/);
+  assert.doesNotMatch(content, /afk linear-plan/);
 });
 
 test('claude-code adapter provides mappings without hard-coded core paths', () => {

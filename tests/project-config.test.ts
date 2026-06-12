@@ -70,11 +70,66 @@ test('loads optional Linear project config', () => {
   assert.deepEqual(result.config?.linear, {
     team: 'ENG',
     afkLabel: 'AFK',
+    labelName: 'AFK',
     workflowStates: {
       ready: 'Ready',
       running: 'In Progress',
       done: 'Done',
       handoff: 'Handoff',
     },
+    afkLabelName: 'AFK',
+    readyStateName: 'Ready',
   });
+});
+
+test('validates linear readiness config without storing secrets', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    staticCheckCommands: [],
+    linear: {
+      teamId: ' team-1 ',
+      labelName: ' AFK ',
+      workflowStates: {
+        ready: 'Ready for AFK',
+        running: 'AFK Running',
+        done: 'Done',
+        handoff: 'Needs Human',
+      },
+      apiKeyEnv: 'AFK_LINEAR_API_KEY',
+    },
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.config?.linear, {
+    team: 'team-1',
+    afkLabel: 'AFK',
+    teamId: 'team-1',
+    labelName: 'AFK',
+    workflowStates: {
+      ready: 'Ready for AFK',
+      running: 'AFK Running',
+      done: 'Done',
+      handoff: 'Needs Human',
+    },
+    apiKeyEnv: 'AFK_LINEAR_API_KEY',
+    afkLabelName: 'AFK',
+    readyStateName: 'Ready for AFK',
+  });
+});
+
+test('reports incomplete linear setup and rejects inline secrets', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    staticCheckCommands: [],
+    linear: {
+      teamId: 'team-1',
+      apiKey: 'secret',
+      workflowStates: { ready: 'Ready', running: 'Running', done: 'Done' },
+    },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /dedicated AFK label/);
+  assert.match(result.errors.join('\n'), /workflowStates\.handoff/);
+  assert.match(result.errors.join('\n'), /must not include API keys or tokens/);
 });

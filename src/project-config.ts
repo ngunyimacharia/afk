@@ -12,14 +12,28 @@ export interface AfkProjectConfig {
 }
 
 export interface LinearProjectConfig {
-  team: string;
-  afkLabel: string;
+  team?: string;
+  afkLabel?: string;
+  teamId?: string;
+  teamKey?: string;
+  labelName?: string;
   workflowStates: {
     ready: string;
     running: string;
     done: string;
     handoff: string;
   };
+  apiKeyEnv?: string;
+  afkLabelName: string;
+  readyStateName: string;
+  applyAfkLabelToParents?: boolean;
+}
+
+export interface AfkLinearWorkflowStatesConfig {
+  ready: string;
+  running: string;
+  done: string;
+  handoff: string;
 }
 
 export interface ProjectConfigLoadResult {
@@ -88,8 +102,7 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
     errors.push('staticCheckCommands must be an array of non-empty strings when present.');
   }
 
-  const linearValidation = validateLinearProjectConfig(record.linear);
-  errors.push(...linearValidation.errors);
+  const linear = validateLinearProjectConfig(record.linear, errors);
 
   if (errors.length || typeof record.testsEnabled !== 'boolean') return { errors };
 
@@ -103,58 +116,131 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
       staticCheckCommands: Array.isArray(staticCheckCommands)
         ? staticCheckCommands.map((item) => String(item).trim())
         : [],
-      ...(linearValidation.config ? { linear: linearValidation.config } : {}),
+      ...(linear ? { linear } : {}),
     },
     errors: [],
   };
 }
 
-function validateLinearProjectConfig(value: unknown): { config?: LinearProjectConfig; errors: string[] } {
-  const errors: string[] = [];
-  if (value === undefined) return { errors };
+function validateLinearProjectConfig(value: unknown, errors: string[]): LinearProjectConfig | undefined {
+  if (value === undefined) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { errors: ['linear must be an object when present.'] };
-  }
-
-  const record = value as Record<string, unknown>;
-  const team = requiredTrimmedString(record.team, 'linear.team', errors);
-  const afkLabel = requiredTrimmedString(record.afkLabel, 'linear.afkLabel', errors);
-
-  const workflowStates = record.workflowStates;
-  if (!workflowStates || typeof workflowStates !== 'object' || Array.isArray(workflowStates)) {
-    errors.push('linear.workflowStates must be an object.');
-  }
-
-  const statesRecord = workflowStates as Record<string, unknown> | undefined;
-  const ready = requiredTrimmedString(statesRecord?.ready, 'linear.workflowStates.ready', errors);
-  const running = requiredTrimmedString(statesRecord?.running, 'linear.workflowStates.running', errors);
-  const done = requiredTrimmedString(statesRecord?.done, 'linear.workflowStates.done', errors);
-  const handoff = requiredTrimmedString(statesRecord?.handoff, 'linear.workflowStates.handoff', errors);
-
-  if (errors.length) return { errors };
-
-  return {
-    config: {
-      team: team as string,
-      afkLabel: afkLabel as string,
-      workflowStates: {
-        ready: ready as string,
-        running: running as string,
-        done: done as string,
-        handoff: handoff as string,
-      },
-    },
-    errors: [],
-  };
-}
-
-function requiredTrimmedString(value: unknown, name: string, errors: string[]): string | undefined {
-  if (typeof value !== 'string' || !value.trim()) {
-    errors.push(`${name} must be a non-empty string.`);
+    errors.push('linear must be an object when present.');
     return undefined;
   }
 
-  return value.trim();
+  const record = value as Record<string, unknown>;
+  if (hasLinearSecretField(record)) {
+    errors.push(
+      'linear config must not include API keys or tokens; set linear.apiKeyEnv and export that environment variable.',
+    );
+  }
+  if (!isNonEmptyString(record.team) && !isNonEmptyString(record.teamId) && !isNonEmptyString(record.teamKey)) {
+    errors.push(
+      'Linear setup incomplete: configure linear.team, linear.teamId, or linear.teamKey after confirming the Linear team exists.',
+    );
+  }
+  if (!isNonEmptyString(record.afkLabel) && !isNonEmptyString(record.labelName)) {
+    errors.push('Linear setup incomplete: configure linear.labelName for an existing dedicated AFK label.');
+  }
+  const workflowStates = validateLinearWorkflowStatesConfig(record.workflowStates, errors);
+  if (record.team !== undefined && !isNonEmptyString(record.team)) {
+    errors.push('linear.team must be a non-empty string when present.');
+  }
+  if (record.afkLabel !== undefined && !isNonEmptyString(record.afkLabel)) {
+    errors.push('linear.afkLabel must be a non-empty string when present.');
+  }
+  if (record.teamId !== undefined && !isNonEmptyString(record.teamId)) {
+    errors.push('linear.teamId must be a non-empty string when present.');
+  }
+  if (record.teamKey !== undefined && !isNonEmptyString(record.teamKey)) {
+    errors.push('linear.teamKey must be a non-empty string when present.');
+  }
+  if (record.apiKeyEnv !== undefined && (typeof record.apiKeyEnv !== 'string' || !record.apiKeyEnv.trim())) {
+    errors.push('linear.apiKeyEnv must be a non-empty string when present.');
+  }
+  const team = firstTrimmedString(record.team, record.teamId, record.teamKey);
+  const labelName = firstTrimmedString(record.labelName, record.afkLabel);
+  if (!team || !labelName) {
+    return undefined;
+  }
+  if (!workflowStates) return undefined;
+  if (record.afkLabelName !== undefined && !isNonEmptyString(record.afkLabelName)) {
+    errors.push('linear.afkLabelName must be a non-empty string when present.');
+  }
+  if (record.readyStateName !== undefined && !isNonEmptyString(record.readyStateName)) {
+    errors.push('linear.readyStateName must be a non-empty string when present.');
+  }
+  if (record.applyAfkLabelToParents !== undefined && typeof record.applyAfkLabelToParents !== 'boolean') {
+    errors.push('linear.applyAfkLabelToParents must be a boolean when present.');
+  }
+  if (record.afkLabelName !== undefined && !isNonEmptyString(record.afkLabelName)) return undefined;
+  if (record.readyStateName !== undefined && !isNonEmptyString(record.readyStateName)) return undefined;
+
+  return {
+    team,
+    afkLabel: firstTrimmedString(record.afkLabel, record.labelName) as string,
+    ...(isNonEmptyString(record.teamId) ? { teamId: record.teamId.trim() } : {}),
+    ...(isNonEmptyString(record.teamKey) ? { teamKey: record.teamKey.trim() } : {}),
+    labelName,
+    workflowStates,
+    ...(typeof record.apiKeyEnv === 'string' && record.apiKeyEnv.trim() ? { apiKeyEnv: record.apiKeyEnv.trim() } : {}),
+    afkLabelName: firstTrimmedString(record.afkLabelName, record.labelName, record.afkLabel) as string,
+    readyStateName: firstTrimmedString(record.readyStateName, workflowStates.ready) as string,
+    ...(typeof record.applyAfkLabelToParents === 'boolean'
+      ? { applyAfkLabelToParents: record.applyAfkLabelToParents }
+      : {}),
+  };
+}
+
+function validateLinearWorkflowStatesConfig(
+  value: unknown,
+  errors: string[],
+): AfkLinearWorkflowStatesConfig | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push(
+      'Linear setup incomplete: configure linear.workflowStates with existing ready, running, done, and handoff state names or IDs.',
+    );
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const states = ['ready', 'running', 'done', 'handoff'] as const;
+  for (const state of states) {
+    if (!isNonEmptyString(record[state])) {
+      errors.push(
+        `Linear setup incomplete: configure linear.workflowStates.${state} for an existing Linear workflow state.`,
+      );
+    }
+  }
+  if (states.some((state) => !isNonEmptyString(record[state]))) return undefined;
+
+  const ready = record.ready as string;
+  const running = record.running as string;
+  const done = record.done as string;
+  const handoff = record.handoff as string;
+
+  return {
+    ready: ready.trim(),
+    running: running.trim(),
+    done: done.trim(),
+    handoff: handoff.trim(),
+  };
+}
+
+function hasLinearSecretField(record: Record<string, unknown>): boolean {
+  return ['apiKey', 'token', 'accessToken'].some((field) => record[field] !== undefined);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function firstTrimmedString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (isNonEmptyString(value)) return value.trim();
+  }
+  return undefined;
 }
 
 function unknownPlaceholders(command: string): string[] {

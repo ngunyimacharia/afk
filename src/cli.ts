@@ -51,6 +51,13 @@ import {
   type ResolvedLinearConfig,
   resolveLinearConfig,
 } from './linear.js';
+import {
+  createLinearPlan,
+  createLinearProviderFromConfig,
+  type LinearPlanManifest,
+  loadLinearPlanManifest,
+} from './linear-plan.js';
+import type { LinearProvider } from './linear-provider.js';
 import { createLiveRunView } from './live-run-view.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
@@ -223,6 +230,7 @@ function commandArg(): string | undefined {
     'afk-summary',
     'afk-cleanup',
     'sync',
+    'linear-plan',
     'tui',
     'stop',
     'status',
@@ -244,6 +252,15 @@ function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
 }
 
+function linearPlanManifestPath(): string | undefined {
+  const manifestFlagIndex = process.argv.indexOf('--manifest');
+  if (manifestFlagIndex >= 0) return process.argv[manifestFlagIndex + 1];
+  const commandIndex = process.argv.indexOf('linear-plan');
+  if (commandIndex < 0) return undefined;
+  const next = process.argv[commandIndex + 1];
+  return next && !next.startsWith('-') ? next : undefined;
+}
+
 export interface SpawnDaemonHandle {
   pid: number | undefined;
   unref: () => void;
@@ -259,6 +276,8 @@ export async function runAfk(
     inlineLaunch?: boolean;
     stopTimeoutMs?: number;
     stopPollIntervalMs?: number;
+    linearProvider?: LinearProvider;
+    linearManifest?: LinearPlanManifest;
   } = {},
 ): Promise<{ code: number; message: string }> {
   const io = runtime.io ?? { stdin: process.stdin, stdout: process.stdout };
@@ -349,6 +368,32 @@ export async function runAfk(
     };
   }
   if (command === 'sync') return runSync();
+  if (command === 'linear-plan') {
+    const providerConfig = createLinearProviderFromConfig(repoRoot, env);
+    if (!providerConfig.provider || !providerConfig.teamId || !providerConfig.setup)
+      return { code: 1, message: providerConfig.errors.join('\n') };
+    const manifestPath = linearPlanManifestPath();
+    if (!runtime.linearManifest && !manifestPath) return { code: 1, message: 'Manifest path required.' };
+    const manifestResult = runtime.linearManifest
+      ? { manifest: runtime.linearManifest, errors: [] }
+      : loadLinearPlanManifest(manifestPath ?? '');
+    const manifest = manifestResult.manifest;
+    if (!manifest) {
+      return { code: 1, message: manifestResult.errors.join('\n') };
+    }
+    let result: Awaited<ReturnType<typeof createLinearPlan>>;
+    try {
+      result = await createLinearPlan({
+        manifest,
+        teamId: providerConfig.teamId,
+        provider: runtime.linearProvider ?? providerConfig.provider,
+        setup: providerConfig.setup,
+      });
+    } catch (error) {
+      return { code: 1, message: error instanceof Error ? error.message : String(error) };
+    }
+    return { code: 0, message: JSON.stringify(result, null, 2) };
+  }
   if (command === 'tui') {
     const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
     const activeRun = activeRunControlPlane.read();
