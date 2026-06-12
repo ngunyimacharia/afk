@@ -168,6 +168,54 @@ test('does not plan traversal-derived Linear runtime artifacts for deletion', ()
   assert.equal(existsSync(escapedLogPath), true);
 });
 
+test('plans scratch issue deletion separately from runtime artifact cleanup', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  mkdirSync(issuesDir, { recursive: true });
+  mkdirSync(metadataDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, 'done.md'), '---\nstatus: done\n---\n');
+  writeFileSync(path.join(logsDir, 'feat-done.log'), 'log');
+  writeFileSync(path.join(metadataDir, 'feat-done.json'), '{}');
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+
+  assert.deepEqual(
+    plan.issueDeletionTargets.map((item) => path.basename(item.issuePath)),
+    ['done.md'],
+  );
+  assert.deepEqual(
+    plan.runtimeArtifactTargets.map((item) => path.basename(item.logPath ?? '')),
+    ['feat-done.log'],
+  );
+  assert.equal(plan.terminalTargets.length, 1);
+});
+
+test('plans runtime artifact cleanup without issue deletion for provider records', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  mkdirSync(metadataDir, { recursive: true });
+  writeFileSync(path.join(logsDir, 'linear-done.log'), 'log');
+  writeFileSync(path.join(metadataDir, 'linear-done.json'), '{}');
+
+  const plan = new CleanupPlanner({
+    repoRoot,
+    issueSource: {
+      listCleanupIssues: () => [{ feature: 'linear', issueName: 'done', status: 'done' }],
+    },
+  }).buildPlan();
+
+  assert.deepEqual(plan.issueDeletionTargets, []);
+  assert.deepEqual(
+    plan.runtimeArtifactTargets.map((item) => path.basename(item.logPath ?? '')),
+    ['linear-done.log'],
+  );
+  assert.deepEqual(plan.featureDirectoriesToDelete, []);
+  assert.equal(plan.terminalTargets[0]?.issuePath, undefined);
+});
+
 test('preserves handoff tickets with runtime metadata RUN_STATUS handoff', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');

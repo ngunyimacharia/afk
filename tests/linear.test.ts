@@ -33,12 +33,15 @@ import type { RuntimeMetadataRecord } from '../src/types.js';
 const validConfig: LinearProjectConfig = {
   team: 'ENG',
   afkLabel: 'AFK',
+  labelName: 'AFK',
   workflowStates: {
     ready: 'Ready',
     running: 'In Progress',
     done: 'Done',
     handoff: 'Needs Handoff',
   },
+  afkLabelName: 'AFK',
+  readyStateName: 'Ready',
 };
 
 test('resolves stable Linear config IDs', async () => {

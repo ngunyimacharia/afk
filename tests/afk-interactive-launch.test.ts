@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
+  discoverLaunchTickets,
   expandSelectedFeaturesToAllTickets,
   formatLinearDiscoveryLines,
   formatManualPermissionReviewLines,
@@ -21,6 +22,7 @@ import {
 import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/interactive-launch.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { TicketRepository } from '../src/ticket-repository.js';
+import type { TrackerProvider, TrackerWorkItem } from '../src/tracker-contract.js';
 
 test('formats Linear parent feature work items without materializing launch tickets', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-launch-'));
@@ -528,6 +530,45 @@ test('selected Linear feature tickets survive expansion without local scratch ti
   assert.deepEqual(expanded, [linearTicket]);
 });
 
+test('launch ticket discovery uses fake provider items without scratch issue files', async () => {
+  const provider = makeFakeTrackerProvider([
+    makeTrackerWorkItem('feat', '01', 'done'),
+    makeTrackerWorkItem('feat', '02', 'ready-for-agent', ['01']),
+    makeTrackerWorkItem('other', '01', 'ready-for-agent'),
+  ]);
+
+  const { allTickets, eligibleTickets } = await discoverLaunchTickets(provider);
+  const expanded = expandSelectedFeaturesToAllTickets(
+    eligibleTickets.filter((ticket) => ticket.feature === 'feat'),
+    allTickets,
+  );
+
+  assert.deepEqual(
+    eligibleTickets.map((ticket) => ticket.label),
+    ['feat/02', 'other/01'],
+  );
+  assert.deepEqual(
+    expanded.map((ticket) => ticket.label),
+    ['feat/01', 'feat/02'],
+  );
+  assert.equal(validateSelectedTicketDependencies(expanded, allTickets), null);
+});
+
+test('provider-backed dependency validation blocks incomplete unselected dependencies', async () => {
+  const provider = makeFakeTrackerProvider([
+    makeTrackerWorkItem('feat', '01', 'ready-for-agent'),
+    makeTrackerWorkItem('feat', '02', 'ready-for-agent', ['01']),
+  ]);
+
+  const { allTickets, eligibleTickets } = await discoverLaunchTickets(provider);
+  const selectedWithoutDependency = eligibleTickets.filter((ticket) => ticket.issueName === '02');
+
+  assert.match(
+    validateSelectedTicketDependencies(selectedWithoutDependency, allTickets) ?? '',
+    /depends on incomplete unselected ticket feat\/01/,
+  );
+});
+
 test('selected feature tickets are ordered by dependency graph waves', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-feature-order-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
@@ -725,4 +766,67 @@ function linearFeature(input: {
 
 function writeMinimalAfkConfig(repoRoot: string): void {
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));
+}
+
+function makeFakeTrackerProvider(items: TrackerWorkItem[]): TrackerProvider {
+  return {
+    kind: 'linear-graphql',
+    capabilities: {
+      list: true,
+      get: true,
+      create: false,
+      update: false,
+      appendComment: false,
+      materialize: false,
+      applyRunResult: false,
+      summarize: true,
+      cleanupIssues: false,
+      parentChildIssues: true,
+    },
+    async list() {
+      return items;
+    },
+    isEligible(item) {
+      return item.status === 'ready-for-agent';
+    },
+    async get(key) {
+      return items.find((item) => item.key.provider === key.provider && item.key.id === key.id) ?? null;
+    },
+    async create() {
+      throw new Error('not implemented');
+    },
+    async update() {
+      throw new Error('not implemented');
+    },
+    async appendComment() {
+      throw new Error('not implemented');
+    },
+    async materialize() {
+      throw new Error('not implemented');
+    },
+    async applyRunResult() {
+      throw new Error('not implemented');
+    },
+  };
+}
+
+function makeTrackerWorkItem(
+  feature: string,
+  issueName: string,
+  status: string,
+  dependsOn: string[] = [],
+): TrackerWorkItem {
+  const key = { provider: 'linear-graphql' as const, id: `${feature}-${issueName}` };
+  return {
+    key,
+    feature,
+    issueName,
+    label: `${feature}/${issueName}`,
+    status,
+    executorAfk: false,
+    dependsOn,
+    title: `${feature}/${issueName}`,
+    body: '',
+    providerRef: { key, displayId: key.id },
+  };
 }

@@ -71,11 +71,13 @@ import { loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
+import { createDefaultTrackerProvider } from './scratch-tracker-provider.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
-import { TicketRepository } from './ticket-repository.js';
+import type { TrackerProvider } from './tracker-contract.js';
+import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
 import type { LaunchModel, TicketRecord } from './types.js';
 import {
   orderSelectedFeaturesByWaves,
@@ -273,6 +275,7 @@ export async function runAfk(
     io?: PromptIO;
     env?: NodeJS.ProcessEnv;
     spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
+    trackerProvider?: TrackerProvider;
     inlineLaunch?: boolean;
     stopTimeoutMs?: number;
     stopPollIntervalMs?: number;
@@ -491,32 +494,29 @@ export async function runAfk(
   let killPollInterval: ReturnType<typeof setInterval> | null = null;
   let clearOnExit = true;
   try {
-    const repository = new TicketRepository(repoRoot);
     let allTickets: TicketRecord[];
+    let tickets: TicketRecord[];
     try {
-      allTickets = repository.discoverTickets();
+      const provider =
+        runtime.trackerProvider ?? createDefaultTrackerProvider(repoRoot, activeProjectConfig.provider.kind);
+      const launchTickets = await discoverLaunchTickets(provider);
+      allTickets = launchTickets.allTickets;
+      tickets = launchTickets.eligibleTickets;
     } catch (error) {
       return { code: 1, message: formatTicketMetadataError(error) };
     }
-    let linearTickets: TicketRecord[] = [];
     let resolvedLinearConfig: ResolvedLinearConfig | undefined;
     if (activeProjectConfig.linear) {
       try {
         const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
         const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
         resolvedLinearConfig = resolvedConfig;
-        const linearFeatures = await discoverLinearFeatures({ resolvedConfig, client });
-        const discoveryLines = formatLinearDiscoveryLines(linearFeatures);
-        if (discoveryLines.length) io.stdout.write(`${discoveryLines.join('\n')}\n`);
-        linearTickets = linearFeaturesToTicketRecords(linearFeatures);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : 'Unknown Linear discovery error';
-        return { code: 1, message: `Linear ticket discovery failed.\nReason: ${reason}` };
+        const reason = error instanceof Error ? error.message : 'Unknown Linear config error';
+        return { code: 1, message: `Linear sync config failed.\nReason: ${reason}` };
       }
     }
-    const localTickets = allTickets.filter((ticket) => repository.isEligible(ticket));
-    const tickets = [...localTickets, ...linearTickets];
-    let launchTickets = [...allTickets, ...linearTickets];
+    let launchTickets = [...allTickets];
     if (!tickets.length) return { code: 0, message: 'No pending AFK tickets found' };
     const worktreePreparationService = new WorktreePreparationService();
     let model: LaunchModel | undefined;
@@ -1194,6 +1194,19 @@ function formatTicketMetadataError(error: unknown): string {
   ].join('\n');
 }
 
+export async function discoverLaunchTickets(provider: TrackerProvider): Promise<{
+  allTickets: TicketRecord[];
+  eligibleTickets: TicketRecord[];
+}> {
+  const items = await provider.list();
+  return {
+    allTickets: items.map((item) => trackerWorkItemToTicketRecord(item)),
+    eligibleTickets: items
+      .filter((item) => provider.isEligible(item))
+      .map((item) => trackerWorkItemToTicketRecord(item)),
+  };
+}
+
 export function formatManualPermissionReviewLines(history: readonly PermissionDecisionHistoryEntry[]): string[] {
   if (!history.length) return ['Manual permission review: none required.'];
 
@@ -1261,7 +1274,7 @@ export function validateSelectedTicketDependencies(
 
   for (const ticket of selectedTickets) {
     for (const dependency of ticket.dependsOn ?? []) {
-      const key = `${ticket.feature}/${dependency}`;
+      const key = normalizeDependencyLabel(ticket.feature, dependency);
       if (selected.has(key)) continue;
       const dependencyTicket = byKey.get(key);
       const status = dependencyTicket?.status?.trim().toLowerCase();
@@ -1272,6 +1285,10 @@ export function validateSelectedTicketDependencies(
   }
 
   return null;
+}
+
+function normalizeDependencyLabel(feature: string, dependency: string): string {
+  return dependency.includes('/') ? dependency : `${feature}/${dependency}`;
 }
 
 export function validateSelectedFeatureDependencies(

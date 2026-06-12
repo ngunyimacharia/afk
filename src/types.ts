@@ -18,6 +18,7 @@ export interface TicketRecord {
   };
   content?: string;
   providerIdentity?: LinearProviderIdentity;
+  provider?: TicketProviderContext;
 }
 
 export interface LinearProviderIdentity {
@@ -27,6 +28,22 @@ export interface LinearProviderIdentity {
   issueUrl: string;
   parentKey: string;
   mirrorPath?: string;
+}
+
+export interface TicketProviderContext {
+  kind: string;
+  id: string;
+  displayId?: string;
+  url?: string;
+  materializedFiles?: {
+    ticketPath?: string;
+    scratchFeaturePath?: string;
+    featurePrdPath?: string;
+    runtimeMetadataPath?: string;
+    logPath?: string;
+    runSummaryPath?: string;
+  };
+  runResultInstructions?: string[];
 }
 
 export interface LaunchBlockEvidence {

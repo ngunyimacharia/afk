@@ -2,11 +2,17 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { readPendingPostMergeCleanupItems } from './cleanup.js';
+import type { TrackerProvider } from './tracker-contract.js';
 import type { RuntimeMetadataRecord } from './types.js';
 
 export interface SummaryReporterInput {
   repoRoot: string;
+  source?: SummaryIssueSource;
   permission?: RawLogPermissionGate;
+}
+
+export interface SummaryIssueSource {
+  listIssueSummaries(): Promise<IssueFileRecord[]> | IssueFileRecord[];
 }
 
 export interface RawLogPermissionRequest {
@@ -23,7 +29,7 @@ export interface SummaryReport {
   rawLogsInspected: boolean;
 }
 
-interface IssueFileRecord {
+export interface IssueFileRecord {
   feature: string;
   issueName: string;
   filePath: string;
@@ -31,7 +37,7 @@ interface IssueFileRecord {
   summaries: SummaryAttempt[];
 }
 
-interface SummaryAttempt {
+export interface SummaryAttempt {
   text: string;
   fields: Record<string, string>;
   index: number;
@@ -191,6 +197,29 @@ function readIssueFiles(repoRoot: string): IssueFileRecord[] {
   });
 }
 
+export class ScratchSummaryIssueSource implements SummaryIssueSource {
+  constructor(private readonly repoRoot: string) {}
+
+  listIssueSummaries(): IssueFileRecord[] {
+    return readIssueFiles(this.repoRoot);
+  }
+}
+
+export class TrackerProviderSummaryIssueSource implements SummaryIssueSource {
+  constructor(private readonly provider: TrackerProvider) {}
+
+  async listIssueSummaries(): Promise<IssueFileRecord[]> {
+    const items = await this.provider.list();
+    return items.map((item) => ({
+      feature: item.feature,
+      issueName: item.issueName,
+      filePath: item.materializedFiles?.ticketPath ?? item.url ?? item.providerRef.url ?? item.label,
+      status: item.status,
+      summaries: extractSummaries(item.body),
+    }));
+  }
+}
+
 function readRuntimeMetadata(repoRoot: string): RuntimeMetadataRecord[] {
   const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   if (!exists(metadataRoot)) return [];
@@ -336,7 +365,8 @@ export class SummaryReporter {
   constructor(private readonly input: SummaryReporterInput) {}
 
   async summarize(): Promise<SummaryReport> {
-    const issues = readIssueFiles(this.input.repoRoot);
+    const source = this.input.source ?? new ScratchSummaryIssueSource(this.input.repoRoot);
+    const issues = await source.listIssueSummaries();
     const metadata = readRuntimeMetadata(this.input.repoRoot);
     const byTicket = new Map(metadata.map((entry) => [path.basename(entry.TICKET_PATH), entry]));
     const completed: string[] = [];

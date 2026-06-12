@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { SummaryReporter } from '../src/summary-reporter.js';
+import { SummaryReporter, TrackerProviderSummaryIssueSource } from '../src/summary-reporter.js';
+import type { TrackerProvider, TrackerWorkItem } from '../src/tracker-contract.js';
 
 test('extracts repeated summary blocks and missing summaries', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
@@ -392,3 +393,75 @@ Outcome: completed
   assert.match(report.message, /Completed or successful work[\s\S]*feat\/01/);
   assert.doesNotMatch(report.message, /Not yet started[\s\S]*feat\/01/);
 });
+
+test('can read summaries through a provider-backed source', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const provider = makeSummaryProvider([
+    {
+      key: { provider: 'linear-graphql', id: 'LIN-1' },
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      status: 'done',
+      executorAfk: true,
+      dependsOn: [],
+      title: 'Provider issue',
+      body: `## AFK Summary
+Timestamp: 2026-05-18T00:00:00.000Z
+Outcome: completed
+`,
+      providerRef: { key: { provider: 'linear-graphql', id: 'LIN-1' }, url: 'https://linear.example/LIN-1' },
+      url: 'https://linear.example/LIN-1',
+    },
+  ]);
+
+  const report = await new SummaryReporter({
+    repoRoot,
+    source: new TrackerProviderSummaryIssueSource(provider),
+  }).summarize();
+
+  assert.match(report.message, /Completed or successful work[\s\S]*feat\/01/);
+  assert.doesNotMatch(report.message, /Missing summaries[\s\S]*feat\/01/);
+});
+
+function makeSummaryProvider(items: TrackerWorkItem[]): TrackerProvider {
+  return {
+    kind: 'linear-graphql',
+    capabilities: {
+      list: true,
+      get: true,
+      create: false,
+      update: false,
+      appendComment: false,
+      materialize: false,
+      applyRunResult: false,
+      summarize: true,
+      cleanupIssues: false,
+      parentChildIssues: true,
+    },
+    async list() {
+      return items;
+    },
+    isEligible() {
+      return true;
+    },
+    async get(key) {
+      return items.find((item) => item.key.provider === key.provider && item.key.id === key.id) ?? null;
+    },
+    async create() {
+      throw new Error('not implemented');
+    },
+    async update() {
+      throw new Error('not implemented');
+    },
+    async appendComment() {
+      throw new Error('not implemented');
+    },
+    async materialize() {
+      throw new Error('not implemented');
+    },
+    async applyRunResult() {
+      throw new Error('not implemented');
+    },
+  };
+}

@@ -8,6 +8,35 @@ const TERMINAL_STATUSES = new Set(['done', 'closed', 'complete', 'resolved']);
 
 export interface CleanupPlannerInput {
   repoRoot: string;
+  issueSource?: CleanupIssueSource;
+}
+
+export interface CleanupIssueSource {
+  listCleanupIssues(): CleanupIssueRecord[];
+}
+
+export interface CleanupIssueRecord {
+  feature: string;
+  issueName: string;
+  issuePath?: string;
+  status?: string;
+}
+
+export interface CleanupIssueDeletionTarget {
+  feature: string;
+  issueName: string;
+  issuePath: string;
+  reason: string;
+}
+
+export interface RuntimeArtifactCleanupTarget {
+  feature: string;
+  issueName: string;
+  logPath?: string;
+  metadataPath?: string;
+  doneSentinelPath?: string;
+  failedSentinelPath?: string;
+  handoffSentinelPath?: string;
 }
 
 export interface CleanupTarget {
@@ -25,6 +54,8 @@ export interface CleanupTarget {
 
 export interface CleanupPlan {
   terminalTargets: CleanupTarget[];
+  issueDeletionTargets: CleanupIssueDeletionTarget[];
+  runtimeArtifactTargets: RuntimeArtifactCleanupTarget[];
   pendingPostMergeCleanupTargets: PendingPostMergeCleanupItem[];
   preservedIssues: string[];
   preservedArtifacts: string[];
@@ -269,6 +300,45 @@ function readRuntimeMetadataRecord(repoRoot: string, feature: string, issueName:
   }
 }
 
+function runtimeArtifactTarget(repoRoot: string, feature: string, issueName: string): RuntimeArtifactCleanupTarget {
+  return {
+    feature,
+    issueName,
+    logPath: existingFilePath(ticketLogPath(repoRoot, feature, issueName)),
+    metadataPath: existingFilePath(ticketMetadataPath(repoRoot, feature, issueName)),
+    doneSentinelPath: existingFilePath(ticketSentinelPath(repoRoot, feature, issueName, 'done')),
+    failedSentinelPath: existingFilePath(ticketSentinelPath(repoRoot, feature, issueName, 'failed')),
+    handoffSentinelPath: existingFilePath(ticketSentinelPath(repoRoot, feature, issueName, 'handoff')),
+  };
+}
+
+export class ScratchCleanupIssueSource implements CleanupIssueSource {
+  constructor(private readonly repoRoot: string) {}
+
+  listCleanupIssues(): CleanupIssueRecord[] {
+    const scratchRoot = path.join(this.repoRoot, '.scratch');
+    if (!exists(scratchRoot)) return [];
+    const features = readdirSync(scratchRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    return features.flatMap((featureDir) => {
+      const issuesDir = path.join(scratchRoot, featureDir.name, 'issues');
+      if (!exists(issuesDir)) return [];
+      return readdirSync(issuesDir)
+        .filter((file) => file.endsWith('.md'))
+        .map((file) => {
+          const issuePath = path.join(issuesDir, file);
+          const content = readFileSync(issuePath, 'utf8');
+          const frontmatter = parseFrontmatter(content);
+          return {
+            feature: featureDir.name,
+            issueName: path.basename(file, '.md'),
+            issuePath,
+            status: parseStatus(content, frontmatter),
+          };
+        });
+    });
+  }
+}
+
 function isTerminalTicketStatus(status: string | undefined, runtime: RuntimeMetadataRecord | null): boolean {
   const normalized = normalize(status);
   const isFrontmatterTerminal = TERMINAL_STATUSES.has(normalized);
@@ -304,57 +374,62 @@ export class CleanupPlanner {
     if (!exists(scratchRoot)) {
       return {
         terminalTargets: [],
+        issueDeletionTargets: [],
+        runtimeArtifactTargets: [],
         pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
         preservedIssues: [],
         preservedArtifacts: [],
         featureDirectoriesToDelete: [],
       };
     }
-    const features = readdirSync(scratchRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    const source = this.input.issueSource ?? new ScratchCleanupIssueSource(this.input.repoRoot);
+    const issues = source.listCleanupIssues();
     const terminalTargets: CleanupTarget[] = [];
+    const issueDeletionTargets: CleanupIssueDeletionTarget[] = [];
+    const runtimeArtifactTargets: RuntimeArtifactCleanupTarget[] = [];
     const preservedIssues: string[] = [];
     const preservedArtifacts: string[] = [];
     const featureDirectoriesToDelete: string[] = [];
 
-    for (const featureDir of features) {
-      const issuesDir = path.join(scratchRoot, featureDir.name, 'issues');
-      if (!exists(issuesDir)) continue;
-      const issueFiles = readdirSync(issuesDir).filter((file) => file.endsWith('.md'));
+    const byFeature = new Map<string, CleanupIssueRecord[]>();
+    for (const issue of issues) {
+      const featureIssues = byFeature.get(issue.feature) ?? [];
+      featureIssues.push(issue);
+      byFeature.set(issue.feature, featureIssues);
+    }
+
+    for (const [feature, featureIssues] of byFeature) {
       let hasPending = false;
-      for (const file of issueFiles) {
-        const issuePath = path.join(issuesDir, file);
-        const content = readFileSync(issuePath, 'utf8');
-        const frontmatter = parseFrontmatter(content);
-        const status = parseStatus(content, frontmatter);
-        const issueName = path.basename(file, '.md');
-        const runtime = readRuntimeMetadataRecord(this.input.repoRoot, featureDir.name, issueName);
-        const isTerminal = isTerminalTicketStatus(status, runtime);
+      for (const issue of featureIssues) {
+        const runtime = readRuntimeMetadataRecord(this.input.repoRoot, issue.feature, issue.issueName);
+        const isTerminal = isTerminalTicketStatus(issue.status, runtime);
         if (isTerminal) {
+          const artifacts = runtimeArtifactTarget(this.input.repoRoot, issue.feature, issue.issueName);
+          if (issue.issuePath) {
+            issueDeletionTargets.push({
+              feature: issue.feature,
+              issueName: issue.issueName,
+              issuePath: issue.issuePath,
+              reason: `terminal status: ${issue.status}`,
+            });
+          }
+          runtimeArtifactTargets.push(artifacts);
           terminalTargets.push({
-            feature: featureDir.name,
-            issueName,
-            issuePath,
-            logPath: existingFilePath(ticketLogPath(this.input.repoRoot, featureDir.name, issueName)),
-            metadataPath: existingFilePath(ticketMetadataPath(this.input.repoRoot, featureDir.name, issueName)),
+            ...artifacts,
+            feature: issue.feature,
+            issueName: issue.issueName,
+            issuePath: issue.issuePath,
             linearMirrorPath: linearMirrorPath(this.input.repoRoot, runtime),
-            doneSentinelPath: existingFilePath(
-              ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'done'),
-            ),
-            failedSentinelPath: existingFilePath(
-              ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'failed'),
-            ),
-            handoffSentinelPath: existingFilePath(
-              ticketSentinelPath(this.input.repoRoot, featureDir.name, issueName, 'handoff'),
-            ),
-            reason: `terminal status: ${status}`,
+            reason: `terminal status: ${issue.status}`,
           });
         } else {
           hasPending = true;
-          preservedIssues.push(issuePath);
+          if (issue.issuePath) preservedIssues.push(issue.issuePath);
         }
       }
-      if (!hasPending && issueFiles.length > 0)
-        featureDirectoriesToDelete.push(path.join(scratchRoot, featureDir.name));
+      if (!hasPending && featureIssues.length > 0 && featureIssues.every((issue) => issue.issuePath)) {
+        featureDirectoriesToDelete.push(path.join(scratchRoot, feature));
+      }
     }
 
     const plannedKeys = new Set(terminalTargets.map((target) => `${target.feature}/${target.issueName}`));
@@ -406,6 +481,8 @@ export class CleanupPlanner {
       : undefined;
     return {
       terminalTargets,
+      issueDeletionTargets,
+      runtimeArtifactTargets,
       pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
       preservedIssues,
       preservedArtifacts,
@@ -439,23 +516,23 @@ export class CleanupExecutor {
 
     writePendingPostMergeCleanupItems(repoRoot, remainingPending);
 
-    for (const target of plan.terminalTargets) {
-      for (const filePath of new Set(
-        [
-          target.issuePath,
-          target.logPath,
-          target.metadataPath,
-          target.linearMirrorPath,
-          target.doneSentinelPath,
-          target.failedSentinelPath,
-          target.handoffSentinelPath,
-        ].filter((value): value is string => Boolean(value)),
-      )) {
-        try {
-          rmSync(filePath, { force: true, recursive: false });
-          deleted.push(filePath);
-        } catch {}
-      }
+    const pathsToDelete = [
+      ...plan.issueDeletionTargets.map((target) => target.issuePath),
+      ...plan.runtimeArtifactTargets.flatMap((target) => [
+        target.logPath,
+        target.metadataPath,
+        target.doneSentinelPath,
+        target.failedSentinelPath,
+        target.handoffSentinelPath,
+      ]),
+      ...plan.terminalTargets.map((target) => target.linearMirrorPath),
+    ].filter((value): value is string => Boolean(value));
+
+    for (const filePath of new Set(pathsToDelete)) {
+      try {
+        rmSync(filePath, { force: true, recursive: false });
+        deleted.push(filePath);
+      } catch {}
     }
     for (const featureDir of plan.featureDirectoriesToDelete) {
       try {
