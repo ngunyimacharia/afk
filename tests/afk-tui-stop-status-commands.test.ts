@@ -196,6 +196,38 @@ test('afk status prints no active run when no run exists', async () => {
   assert.match(result.message, /No active AFK run/);
 });
 
+test('afk status shows pending post-merge cleanup debt count', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-cleanup-debt-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(
+    path.join(logsDir, 'pending-post-merge-cleanup.json'),
+    JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '01',
+        branchName: 'afk/feat/01',
+        worktreePath: '/tmp/afk-feat-01',
+        featureWorktreePath: '/tmp/afk-feat',
+        featureBranchName: 'afk/feat',
+        mergedIssueTip: 'abc123',
+        warning: 'merge proof failed: branch tip is not reachable from feature HEAD',
+        failedAt: '2026-06-11T00:00:00.000Z',
+      },
+    ]),
+    'utf8',
+  );
+
+  const originalArg = process.argv[2];
+  process.argv[2] = 'status';
+  const result = await runAfk(repoRoot);
+  process.argv[2] = originalArg;
+  assert.equal(result.code, 0);
+  assert.match(result.message, /No active AFK run/);
+  assert.match(result.message, /Pending post-merge cleanup debt:\s+1/);
+});
+
 test('afk status prints run details for an active run', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-active-'));
   writeMinimalAfkConfig(repoRoot);

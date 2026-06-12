@@ -255,7 +255,9 @@ test('detects conflicts, invokes reviewer agent, and resolves', async () => {
   const meta1 = setupTicketMetadata(store, feature, '001');
   const meta2 = setupTicketMetadata(store, feature, '002');
 
-  const agentProvider = new FakeAgentExecutionProvider(async () => {
+  const prompts: string[] = [];
+  const agentProvider = new FakeAgentExecutionProvider(async (request) => {
+    prompts.push(request.prompt);
     writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nbranch1\nbranch2\n');
     git(featureWorktreePath, ['add', 'shared.txt']);
     return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
@@ -264,7 +266,6 @@ test('detects conflicts, invokes reviewer agent, and resolves', async () => {
   const coordinator = new MergeBackCoordinator({
     agentExecutionProvider: agentProvider,
     runtimeStore: store,
-    conflictResolutionBudget: 2,
   });
 
   const result = await coordinator.mergeWave({
@@ -291,6 +292,47 @@ test('detects conflicts, invokes reviewer agent, and resolves', async () => {
 
   const metadata2 = store.readMetadata(meta2.metadataPath);
   assert.equal(metadata2.MERGE_STATUS, 'conflict-resolved');
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /Attempt: 1 of 50/);
+});
+
+test('base merge conflict resolution uses default budget in prompt', async () => {
+  const repoRoot = createRepo('feature-base-default-budget-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature work']);
+
+  writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nmain\n');
+  git(repoRoot, ['add', 'shared.txt']);
+  git(repoRoot, ['commit', '-m', 'main work']);
+
+  const prompts: string[] = [];
+  const agentProvider = new FakeAgentExecutionProvider(async (request) => {
+    prompts.push(request.prompt);
+    writeFileSync(path.join(repoRoot, 'shared.txt'), 'base\nfeature\nmain\n');
+    git(repoRoot, ['add', 'shared.txt']);
+    return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const result = await coordinator.mergeFeatureBranchToBase({
+    repoRoot,
+    baseBranch: 'main',
+    featureBranch: feature,
+    feature,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /Attempt: 1 of 50/);
 });
 
 test('marks ticket failed when conflict resolution exceeds budget', async () => {
@@ -354,6 +396,71 @@ test('marks ticket failed when conflict resolution exceeds budget', async () => 
   assert.equal(metadata2.MERGE_STATUS, 'failed');
   assert.ok(metadata2.MERGE_CONFLICT_PATHS);
   assert.equal(metadata2.MERGE_CONFLICT_PATHS?.length > 0, true);
+});
+
+test('describes unmerged index state when conflict markers are gone', async () => {
+  const repoRoot = createRepo('merge-back-unmerged-index-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'add-shared']);
+
+  const scratch1 = createScratchWorktree(repoRoot, feature, '001', feature);
+  writeFileSync(path.join(scratch1.worktreePath, 'shared.txt'), 'base\nbranch1\n');
+  git(scratch1.worktreePath, ['add', 'shared.txt']);
+  git(scratch1.worktreePath, ['commit', '-m', 'ticket-001']);
+
+  const scratch2 = createScratchWorktree(repoRoot, feature, '002', feature);
+  writeFileSync(path.join(scratch2.worktreePath, 'shared.txt'), 'base\nbranch2\n');
+  git(scratch2.worktreePath, ['add', 'shared.txt']);
+  git(scratch2.worktreePath, ['commit', '-m', 'ticket-002']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const meta1 = setupTicketMetadata(store, feature, '001');
+  const meta2 = setupTicketMetadata(store, feature, '002');
+  const prompts: string[] = [];
+
+  const agentProvider = new FakeAgentExecutionProvider(async (request) => {
+    prompts.push(request.prompt);
+    if (prompts.length === 1) {
+      writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nbranch1\nbranch2\n');
+    }
+    return { status: 'completed', sessionId: null, removable: true, output: ['not staged'] };
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: store,
+    conflictResolutionBudget: 2,
+  });
+
+  const result = await coordinator.mergeWave({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    wave: 0,
+    tickets: [
+      { feature, issueName: '001', branchName: scratch1.branchName, worktreePath: scratch1.worktreePath, ...meta1 },
+      { feature, issueName: '002', branchName: scratch2.branchName, worktreePath: scratch2.worktreePath, ...meta2 },
+    ],
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /Unmerged index entries \(git diff --name-only --diff-filter=U\):\n\n- shared\.txt/);
+  assert.match(prompts[1], /Conflict markers remain: no/);
+  assert.match(prompts[1], /unresolved Git index state/);
+
+  const metadata2 = store.readMetadata(meta2.metadataPath);
+  assert.deepEqual(metadata2.MERGE_CONFLICT_PATHS, ['shared.txt']);
+  assert.equal(metadata2.MERGE_FINAL_DIAGNOSTICS?.markersRemain, false);
+  assert.deepEqual(metadata2.MERGE_FINAL_DIAGNOSTICS?.unmergedIndexPaths, ['shared.txt']);
+  assert.match(metadata2.MERGE_FINAL_DIAGNOSTICS?.summary ?? '', /unresolved Git index state/);
+  assert.match(readFileSync(meta2.logPath, 'utf8'), /"unmergedIndexPaths":\["shared.txt"\]/);
 });
 
 test('fails merge when readiness checks fail after conflict resolution', async () => {

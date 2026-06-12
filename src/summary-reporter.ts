@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import { readPendingPostMergeCleanupItems } from './cleanup.js';
 import type { RuntimeMetadataRecord } from './types.js';
 
 export interface SummaryReporterInput {
@@ -295,6 +296,15 @@ function summarizeFailureKinds(metadata: RuntimeMetadataRecord[]): string[] {
     : ['- none'];
 }
 
+function summarizePendingPostMergeCleanup(repoRoot: string): string[] {
+  const items = readPendingPostMergeCleanupItems(repoRoot);
+  if (!items.length) return ['- none'];
+  return items.map(
+    (item) =>
+      `- ${item.feature}/${item.issueName} branch=${item.branchName} worktree=${item.worktreePath} reason=${item.warning ?? item.error ?? 'pending retry'}`,
+  );
+}
+
 export class SummaryReporter {
   constructor(private readonly input: SummaryReporterInput) {}
 
@@ -372,6 +382,9 @@ export class SummaryReporter {
       '',
       'Failure kind totals',
       ...summarizeFailureKinds(metadata),
+      '',
+      'Pending post-merge cleanup debt',
+      ...summarizePendingPostMergeCleanup(this.input.repoRoot),
     ];
 
     const permission = this.input.permission;

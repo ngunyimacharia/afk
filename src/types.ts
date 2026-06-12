@@ -244,6 +244,13 @@ export interface RuntimeMetadataRecord {
   SNAPSHOT_GENERATED_AT?: string;
   MERGE_STATUS?: 'merged' | 'conflict-resolved' | 'failed' | 'blocked' | null;
   MERGE_CONFLICT_PATHS?: string[] | null;
+  MERGE_FINAL_DIAGNOSTICS?: {
+    conflictPaths: string[];
+    statusShort: string;
+    markersRemain: boolean;
+    unmergedIndexPaths: string[];
+    summary: string;
+  } | null;
   MERGE_RESOLUTION_OUTPUT?: string | null;
   SNAPSHOT_SAFE_FIELDS?: {
     ticketLabel: string;

@@ -66,6 +66,7 @@ Outcome: completed
   assert.match(result.message, /completed/);
   assert.match(result.message, /Phase timing highlights/);
   assert.match(result.message, /feat\/01 execution#1: 9000ms/);
+  assert.match(result.message, /Pending post-merge cleanup debt\n- none/);
 });
 
 test('afk summary subcommand is supported by the single executable entrypoint', async () => {
@@ -145,4 +146,39 @@ Outcome: completed
   assert.match(result.message, /Won't fix/);
   assert.match(result.message, /Legacy \/ malformed/);
   assert.match(result.message, /Missing summaries/);
+});
+
+test('afk summary includes pending post-merge cleanup debt details', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-summary-cleanup-debt-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(
+    path.join(logsDir, 'pending-post-merge-cleanup.json'),
+    JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '06-cleanup',
+        branchName: 'afk/feat/06-cleanup',
+        worktreePath: '/tmp/afk-feat-06-cleanup',
+        featureWorktreePath: '/tmp/afk-feat',
+        featureBranchName: 'afk/feat',
+        mergedIssueTip: 'def456',
+        warning: 'merge proof failed: branch tip is not reachable from feature HEAD',
+        failedAt: '2026-06-11T00:00:00.000Z',
+      },
+    ]),
+    'utf8',
+  );
+
+  const originalArg = process.argv[2];
+  process.argv[2] = 'afk-summary';
+  const result = await runAfk(repoRoot);
+  process.argv[2] = originalArg;
+
+  assert.equal(result.code, 0);
+  assert.match(result.message, /Pending post-merge cleanup debt/);
+  assert.match(result.message, /feat\/06-cleanup/);
+  assert.match(result.message, /branch=afk\/feat\/06-cleanup/);
+  assert.match(result.message, /worktree=\/tmp\/afk-feat-06-cleanup/);
+  assert.match(result.message, /reason=merge proof failed: branch tip is not reachable from feature HEAD/);
 });
