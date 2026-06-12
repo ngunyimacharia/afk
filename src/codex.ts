@@ -123,9 +123,9 @@ export function buildCodexThreadOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): ThreadOptions {
   const options: ThreadOptions = {
-    sandboxMode: parseCodexSandboxMode(env.AFK_CODEX_SANDBOX_MODE),
-    approvalPolicy: parseCodexApprovalPolicy(env.AFK_CODEX_APPROVAL_POLICY),
-    networkAccessEnabled: parseCodexBoolean(env.AFK_CODEX_NETWORK_ACCESS),
+    sandboxMode: parseCodexSandboxMode(env.AFK_CODEX_SANDBOX),
+    approvalPolicy: parseCodexApprovalPolicy(env.AFK_CODEX_APPROVAL),
+    networkAccessEnabled: parseCodexBoolean(env.AFK_CODEX_NETWORK),
   };
   const codexModel = parseCodexModel(model.id);
   if (codexModel) options.model = codexModel;

@@ -132,9 +132,9 @@ describe('CodexSessionExecutor', () => {
 
     assert.deepEqual(
       buildCodexThreadOptions({ id: 'codex/gpt-5.1-codex' }, '/repo/worktree', {
-        AFK_CODEX_APPROVAL_POLICY: 'on-failure',
-        AFK_CODEX_NETWORK_ACCESS: 'true',
-        AFK_CODEX_SANDBOX_MODE: 'read-only',
+        AFK_CODEX_APPROVAL: 'on-failure',
+        AFK_CODEX_NETWORK: 'true',
+        AFK_CODEX_SANDBOX: 'read-only',
       }),
       {
         approvalPolicy: 'on-failure',

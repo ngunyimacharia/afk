@@ -181,9 +181,9 @@ Codex execution defaults are chosen for autonomous AFK runs inside prepared work
 
 Override them only when the repo and ticket require different Codex behavior:
 
-- `AFK_CODEX_SANDBOX_MODE`: `read-only`, `workspace-write`, or `danger-full-access`
-- `AFK_CODEX_APPROVAL_POLICY`: `never`, `on-request`, `on-failure`, or `untrusted`
-- `AFK_CODEX_NETWORK_ACCESS`: `true`, `false`, `1`, `0`, `yes`, or `no`
+- `AFK_CODEX_SANDBOX`: `read-only`, `workspace-write`, or `danger-full-access`
+- `AFK_CODEX_APPROVAL`: `never`, `on-request`, `on-failure`, or `untrusted`
+- `AFK_CODEX_NETWORK`: `true`, `false`, `1`, `0`, `yes`, or `no`
 
 Invalid override values are ignored and fall back to the defaults above.
 
