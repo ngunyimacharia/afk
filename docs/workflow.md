@@ -5,7 +5,7 @@
 AFK is implemented as one coordinated local workflow:
 
 1. Discover eligible tickets from `.scratch/*/issues/*.md`
-2. Select a model and one or more feature directories
+2. Select a harness, model, reviewer model, and one or more feature directories
 3. Prepare deterministic worktree and branch state in TypeScript
 4. Launch one run per selected ticket
 5. Persist logs and runtime metadata
@@ -53,11 +53,14 @@ The launch flow currently lives in `src/cli.ts` with support modules:
 
 The produced launch plan contains:
 
+- selected harness
 - selected model
 - selected tickets
 - repository root
 - recent git context
 - prepared checkout context
+
+Codex is selectable when its discovery path returns at least `codex/default`. Set `AFK_CODEX_MODELS` to a comma-separated list of explicit model names when operators should choose a concrete Codex model instead of the configured Codex default.
 
 ## Checkout Preparation
 
@@ -70,6 +73,7 @@ Current rules:
 - `afk_worktree` and `afk_branch` overrides are supported
 - worktrees are created or reused before execution
 - branches are local-only and use `git branch --no-track`
+- Codex runs receive the prepared worktree path as their `workingDirectory`
 
 Normal preparation does not:
 

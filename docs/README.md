@@ -4,8 +4,8 @@ This directory documents the AFK implementation that exists in this repository t
 
 ## Guides
 
-- `workflow.md`: launch flow, ticket lifecycle, and execution boundaries
-- `operations.md`: summary, cleanup, sync, and runtime artifact behavior
+- `workflow.md`: launch flow, harness selection, ticket lifecycle, and execution boundaries
+- `operations.md`: summary, cleanup, sync, Codex skill locations, and runtime artifact behavior
 
 ## Source Landmarks
 
@@ -19,3 +19,4 @@ This directory documents the AFK implementation that exists in this repository t
 - `src/summary-reporter.ts`: issue-file-first summary reporting
 - `src/cleanup.ts`: cleanup planning and execution
 - `src/sync/`: adapter-based asset sync
+- `src/codex.ts`: Codex model discovery, environment parsing, and SDK execution defaults

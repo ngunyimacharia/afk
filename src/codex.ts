@@ -1,9 +1,14 @@
 import { Codex } from '@openai/codex-sdk';
-import type { ThreadEvent, ThreadOptions } from '@openai/codex-sdk';
+import type { ApprovalMode, SandboxMode, ThreadEvent, ThreadOptions } from '@openai/codex-sdk';
 import type { OpenCodeSessionExecutor, OpenCodeSessionProgressEvent } from './opencode.js';
 import type { LaunchModel } from './types.js';
 
 const DEFAULT_CODEX_MODEL: LaunchModel = { id: 'codex/default', label: 'Default' };
+const DEFAULT_CODEX_SANDBOX_MODE: SandboxMode = 'workspace-write';
+const DEFAULT_CODEX_APPROVAL_POLICY: ApprovalMode = 'never';
+const DEFAULT_CODEX_NETWORK_ACCESS = false;
+const CODEX_SANDBOX_MODES = new Set<SandboxMode>(['read-only', 'workspace-write', 'danger-full-access']);
+const CODEX_APPROVAL_POLICIES = new Set<ApprovalMode>(['never', 'on-request', 'on-failure', 'untrusted']);
 
 interface CodexThreadLike {
   readonly id: string | null;
@@ -112,8 +117,16 @@ export class CodexSessionExecutor implements OpenCodeSessionExecutor {
   }
 }
 
-export function buildCodexThreadOptions(model: LaunchModel, workDir?: string): ThreadOptions {
-  const options: ThreadOptions = {};
+export function buildCodexThreadOptions(
+  model: LaunchModel,
+  workDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ThreadOptions {
+  const options: ThreadOptions = {
+    sandboxMode: parseCodexSandboxMode(env.AFK_CODEX_SANDBOX_MODE),
+    approvalPolicy: parseCodexApprovalPolicy(env.AFK_CODEX_APPROVAL_POLICY),
+    networkAccessEnabled: parseCodexBoolean(env.AFK_CODEX_NETWORK_ACCESS),
+  };
   const codexModel = parseCodexModel(model.id);
   if (codexModel) options.model = codexModel;
   if (workDir) options.workingDirectory = workDir;
@@ -125,6 +138,27 @@ export function parseCodexModel(modelId: string): string | null {
   if (!modelId.startsWith(prefix)) return modelId.trim() || null;
   const model = modelId.slice(prefix.length).trim();
   return model && model !== 'default' ? model : null;
+}
+
+export function parseCodexSandboxMode(value: string | undefined): SandboxMode {
+  const normalized = value?.trim();
+  return normalized && CODEX_SANDBOX_MODES.has(normalized as SandboxMode)
+    ? (normalized as SandboxMode)
+    : DEFAULT_CODEX_SANDBOX_MODE;
+}
+
+export function parseCodexApprovalPolicy(value: string | undefined): ApprovalMode {
+  const normalized = value?.trim();
+  return normalized && CODEX_APPROVAL_POLICIES.has(normalized as ApprovalMode)
+    ? (normalized as ApprovalMode)
+    : DEFAULT_CODEX_APPROVAL_POLICY;
+}
+
+export function parseCodexBoolean(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return DEFAULT_CODEX_NETWORK_ACCESS;
 }
 
 function extractAgentMessageText(event: CodexThreadEventLike): string | null {

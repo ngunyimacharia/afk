@@ -7,7 +7,7 @@ It currently provides four core behaviors:
 - AFK ticket discovery and launch planning
 - deterministic worktree and branch preparation in TypeScript
 - runtime logging, summary reporting, and conservative cleanup
-- asset sync for vendored OpenCode commands, prompts, and agents
+- asset sync for vendored harness commands, prompts, agents, and skills
 - independent execution and reviewer model resolution with a deterministic reviewer prompt catalog
 
 ## Current Surface Area
@@ -15,7 +15,7 @@ It currently provides four core behaviors:
 - `afk`: interactive launch wizard (harness, model, feature multiselect, concurrency) followed by dependency-aware scheduled work
 - `afk summary`: read-only summary of AFK work from ticket files plus runtime metadata
 - `afk cleanup`: dry-run-first cleanup for terminal AFK tickets and attributable runtime artifacts
-- `afk sync`: sync vendored OpenCode assets into the global OpenCode config directory and configure Git global ignores for AFK runtime directories
+- `afk sync`: sync vendored harness assets into supported user-level harness config directories and configure Git global ignores for AFK runtime directories
 
 The current entrypoint is `runAfk()` in `src/cli.ts`. The implementation already supports the command behaviors above, but this repo is not yet packaged as an installed shell binary.
 
@@ -25,6 +25,7 @@ Requirements:
 
 - Bun
 - git
+- OpenCode, Claude Code, Kimi Code, or Codex installed and authenticated for the harnesses you want to execute
 
 Install dependencies and verify the checkout:
 
@@ -66,16 +67,17 @@ The internal runner still recognizes the older command names for compatibility w
 
 Typical workflow:
 
-1. Run the synced OpenCode slash command `/afk-config` once per repo to create local `afk.json`.
-2. Add or update issue files under `.scratch/<feature-slug>/issues/`.
-3. Mark tickets with an eligible status such as `ready-for-agent`.
-4. Run AFK in an interactive terminal and complete the prompts for harness, model, and tickets.
-5. Run `afk summary` to inspect issue summaries and runtime metadata.
-6. Run `afk cleanup` first as a dry run, then repeat with `confirm cleanup plan` only when the plan is correct.
+1. Run `afk sync` to install AFK harness assets.
+2. Run the synced `/afk-config` command once per repo to create local `afk.json`.
+3. Add or update issue files under `.scratch/<feature-slug>/issues/`.
+4. Mark tickets with an eligible status such as `ready-for-agent`.
+5. Run AFK in an interactive terminal and complete the prompts for harness, model, and tickets.
+6. Run `afk summary` to inspect issue summaries and runtime metadata.
+7. Run `afk cleanup` first as a dry run, then repeat with `confirm cleanup plan` only when the plan is correct.
 
 ## Project Config
 
-`afk` requires `afk.json` in the repo root before launching work. If it is missing, AFK exits and asks you to run `/afk-config` in OpenCode. The config file is added to AFK's global Git ignore entries because it represents local project preferences. The `/afk-config` slash command inspects the repo, generates the readiness config, writes `afk.json`, and reports the chosen commands.
+`afk` requires `afk.json` in the repo root before launching work. If it is missing, AFK exits and asks you to run `/afk-config` in a synced harness. The config file is added to AFK's global Git ignore entries because it represents local project preferences. The `/afk-config` slash command inspects the repo, generates the readiness config, writes `afk.json`, and reports the chosen commands.
 
 Example:
 
@@ -153,12 +155,37 @@ Launch behavior notes:
 - `afk` launch is interactive-only and requires a TTY (no CI/non-interactive launch mode in this pass).
 - `afk` launch requires repo-local `afk.json`; run `/afk-config` first.
 - prompt order is harness -> model -> reviewer model -> feature multiselect -> global concurrency.
-- the only harness currently supported is `OpenCode`.
+- selectable harnesses are `OpenCode`, `Claude-Kimi`, and `Codex` when their model discovery returns at least one launch model.
+- Codex appears in the harness prompt with the built-in `codex/default` model option. Install and authenticate Codex before launching Codex tickets so the SDK-backed execution can start real threads.
 - no prompt preselects a default option.
 - canceling any prompt exits without creating worktrees or runtime artifacts.
 - global concurrency defaults to `3` and is persisted as a launch preference.
 - selected features run through dependency-aware ticket waves; independent tickets may run in parallel.
 - dependent feature branches use a linear stack from `afk/<upstream-feature>`; fan-in branch automation is deferred.
+
+## Codex Configuration
+
+Codex model discovery always includes `codex/default`, which lets Codex use its configured default model. Set `AFK_CODEX_MODELS` to a comma-separated list of explicit Codex model names to add more launch choices; AFK prefixes each entry with `codex/` in the model picker and sends only the suffix to Codex.
+
+Example:
+
+```bash
+AFK_CODEX_MODELS="gpt-5.1-codex,gpt-5.1-codex-mini" afk
+```
+
+Codex execution defaults are chosen for autonomous AFK runs inside prepared worktrees:
+
+- `sandboxMode`: `workspace-write`
+- `approvalPolicy`: `never`
+- `networkAccessEnabled`: `false`
+
+Override them only when the repo and ticket require different Codex behavior:
+
+- `AFK_CODEX_SANDBOX_MODE`: `read-only`, `workspace-write`, or `danger-full-access`
+- `AFK_CODEX_APPROVAL_POLICY`: `never`, `on-request`, `on-failure`, or `untrusted`
+- `AFK_CODEX_NETWORK_ACCESS`: `true`, `false`, `1`, `0`, `yes`, or `no`
+
+Invalid override values are ignored and fall back to the defaults above.
 
 ## Runtime Artifacts
 

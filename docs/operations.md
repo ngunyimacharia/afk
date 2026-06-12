@@ -80,6 +80,9 @@ into each harness's config directory:
 - OpenCode: `$XDG_CONFIG_HOME/opencode/`, or `~/.config/opencode/`
 - Claude Code: `~/.claude/`
 - Kimi Code: `$KIMI_CODE_HOME/`, or `~/.kimi-code/`
+- Codex: `$HOME/.agents/skills/<skill>/SKILL.md`
+
+Codex skills are synced at the user level because current Codex skill discovery reads from `$HOME/.agents/skills/`; AFK does not install repo-local Codex skills in this pass.
 
 Current sync behavior:
 
@@ -110,3 +113,4 @@ Tests cover:
 - summary reporting and summary-presence gating
 - cleanup planning and execution
 - asset sync engine and harness sync mappings
+- Codex configuration parsing and SDK thread option defaults

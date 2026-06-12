@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { buildCodexThreadOptions, CodexSessionExecutor, discoverCodexModels, parseCodexModel } from '../src/codex.js';
+import {
+  buildCodexThreadOptions,
+  CodexSessionExecutor,
+  discoverCodexModels,
+  parseCodexApprovalPolicy,
+  parseCodexBoolean,
+  parseCodexModel,
+  parseCodexSandboxMode,
+} from '../src/codex.js';
 
 class FakeCodexThread {
   runInputs: string[] = [];
@@ -95,17 +103,47 @@ describe('CodexSessionExecutor', () => {
 
   test('parses codex/default without an explicit model option', () => {
     assert.equal(parseCodexModel('codex/default'), null);
-    assert.deepEqual(buildCodexThreadOptions({ id: 'codex/default' }, '/repo/worktree'), {
+    assert.deepEqual(buildCodexThreadOptions({ id: 'codex/default' }, '/repo/worktree', {}), {
+      approvalPolicy: 'never',
+      networkAccessEnabled: false,
+      sandboxMode: 'workspace-write',
       workingDirectory: '/repo/worktree',
     });
   });
 
   test('parses codex model suffix and forwards workdir', () => {
     assert.equal(parseCodexModel('codex/some-model'), 'some-model');
-    assert.deepEqual(buildCodexThreadOptions({ id: 'codex/some-model' }, '/repo/worktree'), {
+    assert.deepEqual(buildCodexThreadOptions({ id: 'codex/some-model' }, '/repo/worktree', {}), {
+      approvalPolicy: 'never',
       model: 'some-model',
+      networkAccessEnabled: false,
+      sandboxMode: 'workspace-write',
       workingDirectory: '/repo/worktree',
     });
+  });
+
+  test('parses Codex environment overrides and falls back on invalid values', () => {
+    assert.equal(parseCodexSandboxMode('danger-full-access'), 'danger-full-access');
+    assert.equal(parseCodexSandboxMode('invalid'), 'workspace-write');
+    assert.equal(parseCodexApprovalPolicy('on-request'), 'on-request');
+    assert.equal(parseCodexApprovalPolicy('prompt-me'), 'never');
+    assert.equal(parseCodexBoolean('yes'), true);
+    assert.equal(parseCodexBoolean('maybe'), false);
+
+    assert.deepEqual(
+      buildCodexThreadOptions({ id: 'codex/gpt-5.1-codex' }, '/repo/worktree', {
+        AFK_CODEX_APPROVAL_POLICY: 'on-failure',
+        AFK_CODEX_NETWORK_ACCESS: 'true',
+        AFK_CODEX_SANDBOX_MODE: 'read-only',
+      }),
+      {
+        approvalPolicy: 'on-failure',
+        model: 'gpt-5.1-codex',
+        networkAccessEnabled: true,
+        sandboxMode: 'read-only',
+        workingDirectory: '/repo/worktree',
+      },
+    );
   });
 
   test('returns final Codex agent message text in output fields', async () => {
