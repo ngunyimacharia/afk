@@ -6,6 +6,7 @@ export interface DashboardTicketSnapshot {
   label: string;
   feature: string;
   issueName: string;
+  title?: string;
   path: string;
   status?: string;
   latestMessage: string;
@@ -33,6 +34,7 @@ export interface SelectedTicketDetails {
   label: string;
   feature: string;
   issueName: string;
+  title?: string;
   path: string;
   status?: string;
   dependencies: string[];
@@ -460,6 +462,7 @@ export class RunDashboardState {
       label: ticket.record.label,
       feature: ticket.record.feature,
       issueName: ticket.record.issueName,
+      ...(ticket.record.title ? { title: ticket.record.title } : {}),
       path: ticket.record.path,
       status: ticket.record.status,
       latestMessage: ticket.latestMessage,
@@ -479,6 +482,7 @@ export class RunDashboardState {
       label: ticket.label,
       feature: ticket.feature,
       issueName: ticket.issueName,
+      ...(ticket.title ? { title: ticket.title } : {}),
       path: ticket.path,
       status: ticket.status,
       dependencies: internal?.record.dependsOn ?? [],

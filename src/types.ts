@@ -7,6 +7,7 @@ export interface TicketRecord {
   featureTitle?: string;
   issueName: string;
   label: string;
+  title?: string;
   status?: string;
   executorAfk: boolean;
   dependsOn?: string[];

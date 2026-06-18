@@ -193,7 +193,10 @@ function formatTickets(snap: DashboardSnapshot, frameCounter: number): StyledTex
         ? cyan(SPINNER_FRAMES[frameCounter % SPINNER_FRAMES.length])
         : TICKET_STATE_ICONS[ticket.runtimeState];
     const selected = snap.selectedTicket?.label === ticket.label ? '>' : ' ';
-    return t`${selected} ${stripFeaturePrefix(ticket.label)} ${icon}`;
+    const displayLabel = ticket.title
+      ? `${stripFeaturePrefix(ticket.label)}: ${ticket.title}`
+      : stripFeaturePrefix(ticket.label);
+    return t`${selected} ${displayLabel} ${icon}`;
   });
   return joinStyledTexts(parts, '\n');
 }
@@ -226,6 +229,7 @@ function formatDetails(snap: DashboardSnapshot, repoRoot: string): StyledText {
   const stateIcon =
     details.runtimeState === 'running' ? cyan(TICKET_STATE_ICONS.running) : TICKET_STATE_ICONS[details.runtimeState];
   lines.push(t`${stripFeaturePrefix(details.label)} ${stateIcon}`);
+  if (details.title) lines.push(t`${dim('Title:')} ${details.title}`);
   lines.push(t`${dim('Path:')} ${formatPath(details.path, repoRoot)}`);
   if (details.status) lines.push(t`${dim('Status:')} ${details.status}`);
   if (details.sessionId) lines.push(t`${dim('Session:')} ${details.sessionId}`);
