@@ -336,6 +336,13 @@ export async function runAfk(
           )
         : ['- none']),
       '',
+      'Orphaned issue worktrees to remove',
+      ...(plan.orphanedWorktreeTargets.length
+        ? plan.orphanedWorktreeTargets.map(
+            (item) => `- ${item.feature}/${item.issueName} branch=${item.branchName} worktree=${item.worktreePath}`,
+          )
+        : ['- none']),
+      '',
       'Preserved tickets',
       ...(plan.preservedIssues.length ? plan.preservedIssues.map((issuePath) => `- ${issuePath}`) : ['- none']),
       '',
@@ -362,9 +369,19 @@ export async function runAfk(
           )
         : ['- none']),
     ].join('\n');
+    const orphanedWorktreeResults = [
+      'Orphaned issue worktree cleanup results',
+      ...(result.orphanedWorktreeResults.length
+        ? result.orphanedWorktreeResults.map((item) =>
+            item.success
+              ? `- ${item.feature}/${item.issueName}: removed`
+              : `- ${item.feature}/${item.issueName}: skipped (${item.warning ?? item.error ?? 'unknown error'})`,
+          )
+        : ['- none']),
+    ].join('\n');
     return {
       code: 0,
-      message: `${dryRun}\n\n${retryResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
+      message: `${dryRun}\n\n${retryResults}\n\n${orphanedWorktreeResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
     };
   }
   if (command === 'sync') return runSync();

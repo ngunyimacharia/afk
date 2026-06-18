@@ -1,9 +1,26 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { CleanupExecutor, CleanupPlanner } from '../src/cleanup.js';
+import { resolveExecutable } from '../src/executable-resolution.js';
+
+const GIT_PATH = resolveExecutable('git');
+
+function git(repoRoot: string, args: string[]): string {
+  return execFileSync(GIT_PATH, args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+}
+
+function initRepo(repoRoot: string): void {
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+}
 
 test('classifies only terminal tickets for cleanup', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
@@ -286,4 +303,93 @@ test('includes pending failed post-merge cleanup items in plan', () => {
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
   assert.equal(plan.pendingPostMergeCleanupTargets.length, 1);
   assert.equal(plan.pendingPostMergeCleanupTargets[0]?.issueName, '001');
+});
+
+test('plans orphaned issue worktree by exact runtime metadata worktreePath', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  initRepo(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(issuesDir, { recursive: true });
+  mkdirSync(metadataDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, 'done.md'), '---\nstatus: done\n---\n');
+
+  git(repoRoot, ['branch', 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', '--detach', issueWorktreePath]);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName]);
+  git(issueWorktreePath, ['checkout', branchName]);
+
+  writeFileSync(
+    path.join(metadataDir, 'feat-done.json'),
+    JSON.stringify({
+      FEATURE_SLUG: 'feat',
+      ISSUE_NAME: 'done',
+      TICKET_PATH: path.join(issuesDir, 'done.md'),
+      LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-done.log'),
+      STATUS: 'completed',
+      RUN_STATUS: 'completed',
+      SNAPSHOT_SAFE_FIELDS: {
+        ticketLabel: 'feat/done',
+        featureSlug: 'feat',
+        ticketPath: path.join(issuesDir, 'done.md'),
+        scratchFeaturePath: path.join(repoRoot, '.scratch', 'feat'),
+        repoRoot,
+        worktreePath: issueWorktreePath,
+        worktreeName: 'feat-001',
+        branchName,
+        head: git(repoRoot, ['rev-parse', 'HEAD']),
+        ticketOutsideWorktree: false,
+        dependencyCount: 0,
+        readinessSourcePath: null,
+      },
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.orphanedWorktreeTargets.length, 1);
+  assert.equal(plan.orphanedWorktreeTargets[0]?.feature, 'feat');
+  assert.equal(plan.orphanedWorktreeTargets[0]?.issueName, 'done');
+  assert.equal(plan.orphanedWorktreeTargets[0]?.branchName, branchName);
+  assert.equal(plan.orphanedWorktreeTargets[0]?.worktreePath, realpathSync(issueWorktreePath));
+});
+
+test('plans orphaned issue worktree by branch naming convention', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  initRepo(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '001.md'), '---\nstatus: done\n---\n');
+
+  git(repoRoot, ['branch', 'feat']);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.orphanedWorktreeTargets.length, 1);
+  assert.equal(plan.orphanedWorktreeTargets[0]?.feature, 'feat');
+  assert.equal(plan.orphanedWorktreeTargets[0]?.issueName, '001');
+  assert.equal(plan.orphanedWorktreeTargets[0]?.branchName, branchName);
+  assert.equal(plan.orphanedWorktreeTargets[0]?.worktreePath, realpathSync(issueWorktreePath));
+});
+
+test('preserves non-terminal issue worktree by branch naming convention', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  initRepo(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '001.md'), '---\nstatus: ready-for-agent\n---\n');
+
+  git(repoRoot, ['branch', 'feat']);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  assert.equal(plan.orphanedWorktreeTargets.length, 0);
+  assert.equal(plan.preservedIssues.length, 1);
 });

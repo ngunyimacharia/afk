@@ -1,4 +1,13 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import type { RuntimeMetadataRecord } from './types.js';
@@ -39,6 +48,22 @@ export interface RuntimeArtifactCleanupTarget {
   handoffSentinelPath?: string;
 }
 
+export interface OrphanedWorktreeCleanupTarget {
+  feature: string;
+  issueName: string;
+  branchName: string;
+  worktreePath: string;
+  reason: string;
+}
+
+export interface OrphanedWorktreeCleanupResult extends OrphanedWorktreeCleanupTarget {
+  success: boolean;
+  deletedBranch: boolean;
+  deletedWorktree: boolean;
+  warning?: string;
+  error?: string;
+}
+
 export interface CleanupTarget {
   feature: string;
   issueName: string;
@@ -56,6 +81,7 @@ export interface CleanupPlan {
   terminalTargets: CleanupTarget[];
   issueDeletionTargets: CleanupIssueDeletionTarget[];
   runtimeArtifactTargets: RuntimeArtifactCleanupTarget[];
+  orphanedWorktreeTargets: OrphanedWorktreeCleanupTarget[];
   pendingPostMergeCleanupTargets: PendingPostMergeCleanupItem[];
   preservedIssues: string[];
   preservedArtifacts: string[];
@@ -280,6 +306,153 @@ function retryPostMergeCleanup(repoRoot: string, item: PendingPostMergeCleanupIt
   };
 }
 
+function resolveGitDir(worktreePath: string): string {
+  const gitFile = path.join(worktreePath, '.git');
+  try {
+    const content = readFileSync(gitFile, 'utf8').trim();
+    if (content.startsWith('gitdir:')) {
+      return content.slice(7).trim();
+    }
+  } catch {
+    // .git is a directory
+  }
+  return gitFile;
+}
+
+function checkWorktreeLocked(worktreePath: string): { ok: true } | { ok: false; reason: string } {
+  const gitDir = resolveGitDir(worktreePath);
+  if (existsSync(path.join(gitDir, 'MERGE_HEAD'))) {
+    return { ok: false, reason: `worktree is in a merge: ${worktreePath}` };
+  }
+  if (existsSync(path.join(gitDir, 'index.lock'))) {
+    return { ok: false, reason: `worktree index is locked: ${worktreePath}` };
+  }
+  return { ok: true };
+}
+
+interface GitWorktreeEntry {
+  worktreePath: string;
+  branchName?: string;
+}
+
+function parseGitWorktreeList(repoRoot: string): GitWorktreeEntry[] {
+  try {
+    const output = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
+    return output
+      .split('\n\n')
+      .map((block) => block.trim())
+      .filter(Boolean)
+      .map((block) => {
+        const lines = block.split('\n');
+        const worktreeLine = lines.find((line) => line.startsWith('worktree '));
+        const branchLine = lines.find((line) => line.startsWith('branch refs/heads/'));
+        return {
+          worktreePath: worktreeLine ? worktreeLine.slice('worktree '.length) : '',
+          branchName: branchLine ? branchLine.slice('branch refs/heads/'.length) : undefined,
+        };
+      })
+      .filter((entry) => entry.worktreePath);
+  } catch {
+    return [];
+  }
+}
+
+function parseAfkIssueBranch(branchName: string): { feature: string; issueName: string } | null {
+  const segments = branchName.split('/');
+  if (segments.length !== 3 || segments[0] !== 'afk') return null;
+  return { feature: segments[1], issueName: segments[2] };
+}
+
+function safeRealpath(target: string): string {
+  try {
+    return realpathSync(target);
+  } catch {
+    return path.resolve(target);
+  }
+}
+
+function isWithinRepoLocalWorktree(worktreePath: string, repoRoot: string): boolean {
+  const resolvedRoot = safeRealpath(repoRoot);
+  const resolvedWorktree = safeRealpath(worktreePath);
+  const relative = path.relative(resolvedRoot, resolvedWorktree).split(path.sep).join('/');
+  return relative.startsWith('.worktree/') && relative !== '.worktree';
+}
+
+function buildTerminalRuntimeWorktreeMap(repoRoot: string): Map<string, { feature: string; issueName: string }> {
+  const result = new Map<string, { feature: string; issueName: string }>();
+  const metadataRoot = ticketMetadataRoot(repoRoot);
+  if (!exists(metadataRoot)) return result;
+  for (const file of readdirSync(metadataRoot).filter((entry) => entry.endsWith('.json'))) {
+    const metadataPath = path.join(metadataRoot, file);
+    let runtime: RuntimeMetadataRecord;
+    try {
+      runtime = JSON.parse(readFileSync(metadataPath, 'utf8')) as RuntimeMetadataRecord;
+    } catch {
+      continue;
+    }
+    if (!isTerminalRuntimeStatus(runtime)) continue;
+    const safeWorktreePath = runtime.SNAPSHOT_SAFE_FIELDS?.worktreePath;
+    if (!safeWorktreePath) continue;
+    result.set(safeRealpath(safeWorktreePath), { feature: runtime.FEATURE_SLUG, issueName: runtime.ISSUE_NAME });
+  }
+  return result;
+}
+
+function buildOrphanedWorktreeTargets(repoRoot: string, terminalKeys: Set<string>): OrphanedWorktreeCleanupTarget[] {
+  const pending = readPendingPostMergeCleanupItems(repoRoot);
+  const pendingWorktreePaths = new Set(pending.map((item) => safeRealpath(item.worktreePath)));
+  const pendingBranchNames = new Set(pending.map((item) => item.branchName));
+  const runtimeWorktreeMap = buildTerminalRuntimeWorktreeMap(repoRoot);
+  const targets: OrphanedWorktreeCleanupTarget[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const entry of parseGitWorktreeList(repoRoot)) {
+    if (!isWithinRepoLocalWorktree(entry.worktreePath, repoRoot)) continue;
+    const resolvedWorktreePath = safeRealpath(entry.worktreePath);
+    if (
+      pendingWorktreePaths.has(resolvedWorktreePath) ||
+      (entry.branchName && pendingBranchNames.has(entry.branchName))
+    ) {
+      continue;
+    }
+
+    let match: { feature: string; issueName: string } | null = null;
+    let reason: string | null = null;
+
+    const runtimeMatch = runtimeWorktreeMap.get(resolvedWorktreePath);
+    if (runtimeMatch) {
+      match = runtimeMatch;
+      reason = 'terminal runtime metadata worktreePath';
+    }
+
+    if (!match && entry.branchName) {
+      const branchMatch = parseAfkIssueBranch(entry.branchName);
+      if (branchMatch && terminalKeys.has(`${branchMatch.feature}/${branchMatch.issueName}`)) {
+        match = branchMatch;
+        reason = `terminal branch convention ${entry.branchName}`;
+      }
+    }
+
+    if (!match) continue;
+    const key = `${match.feature}/${match.issueName}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    targets.push({
+      feature: match.feature,
+      issueName: match.issueName,
+      branchName: entry.branchName ?? branchFromConvention(match.feature, match.issueName),
+      worktreePath: resolvedWorktreePath,
+      reason: reason ?? 'terminal issue worktree',
+    });
+  }
+
+  return targets;
+}
+
+function branchFromConvention(feature: string, issueName: string): string {
+  return `afk/${feature}/${issueName}`;
+}
+
 function ticketSentinelPath(
   repoRoot: string,
   feature: string,
@@ -376,6 +549,7 @@ export class CleanupPlanner {
         terminalTargets: [],
         issueDeletionTargets: [],
         runtimeArtifactTargets: [],
+        orphanedWorktreeTargets: [],
         pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
         preservedIssues: [],
         preservedArtifacts: [],
@@ -433,6 +607,7 @@ export class CleanupPlanner {
     }
 
     const plannedKeys = new Set(terminalTargets.map((target) => `${target.feature}/${target.issueName}`));
+    const orphanedWorktreeTargets = buildOrphanedWorktreeTargets(this.input.repoRoot, plannedKeys);
     const metadataRoot = path.join(scratchRoot, '.opencode-afk-logs', 'runtime-metadata');
     if (exists(metadataRoot)) {
       for (const file of readdirSync(metadataRoot).filter((entry) => entry.endsWith('.json'))) {
@@ -483,6 +658,7 @@ export class CleanupPlanner {
       terminalTargets,
       issueDeletionTargets,
       runtimeArtifactTargets,
+      orphanedWorktreeTargets,
       pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
       preservedIssues,
       preservedArtifacts,
@@ -492,13 +668,56 @@ export class CleanupPlanner {
   }
 }
 
+function removeOrphanedWorktree(
+  repoRoot: string,
+  target: OrphanedWorktreeCleanupTarget,
+): OrphanedWorktreeCleanupResult {
+  const locked = checkWorktreeLocked(target.worktreePath);
+  if (!locked.ok) {
+    return { ...target, success: false, deletedBranch: false, deletedWorktree: false, warning: locked.reason };
+  }
+  const cleanWorktree = checkWorktreeClean(repoRoot, target.worktreePath);
+  if (!cleanWorktree.ok) {
+    return { ...target, success: false, deletedBranch: false, deletedWorktree: false, warning: cleanWorktree.reason };
+  }
+
+  let deletedWorktree = false;
+  let deletedBranch = false;
+  const errors: string[] = [];
+  try {
+    runGit(repoRoot, ['worktree', 'remove', '-f', target.worktreePath]);
+    deletedWorktree = true;
+  } catch (error) {
+    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    runGit(repoRoot, ['branch', '-D', target.branchName]);
+    deletedBranch = true;
+  } catch (error) {
+    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return {
+    ...target,
+    success: deletedWorktree && deletedBranch,
+    deletedBranch,
+    deletedWorktree,
+    error: errors.length > 0 ? errors.join(' | ') : undefined,
+    warning: undefined,
+  };
+}
+
 export class CleanupExecutor {
   execute(
     plan: CleanupPlan,
     repoRoot: string,
-  ): { deleted: string[]; postMergeCleanupResults: PendingPostMergeCleanupResult[] } {
+  ): {
+    deleted: string[];
+    postMergeCleanupResults: PendingPostMergeCleanupResult[];
+    orphanedWorktreeResults: OrphanedWorktreeCleanupResult[];
+  } {
     const deleted: string[] = [];
     const postMergeCleanupResults: PendingPostMergeCleanupResult[] = [];
+    const orphanedWorktreeResults: OrphanedWorktreeCleanupResult[] = [];
     const remainingPending: PendingPostMergeCleanupItem[] = [];
 
     for (const pending of plan.pendingPostMergeCleanupTargets) {
@@ -515,6 +734,13 @@ export class CleanupExecutor {
     }
 
     writePendingPostMergeCleanupItems(repoRoot, remainingPending);
+
+    for (const target of plan.orphanedWorktreeTargets) {
+      const result = removeOrphanedWorktree(repoRoot, target);
+      orphanedWorktreeResults.push(result);
+      if (result.deletedWorktree) deleted.push(target.worktreePath);
+      if (result.deletedBranch) deleted.push(`branch ${target.branchName}`);
+    }
 
     const pathsToDelete = [
       ...plan.issueDeletionTargets.map((target) => target.issuePath),
@@ -546,6 +772,6 @@ export class CleanupExecutor {
         deleted.push(plan.workspaceExecutionPath);
       } catch {}
     }
-    return { deleted, postMergeCleanupResults };
+    return { deleted, postMergeCleanupResults, orphanedWorktreeResults };
   }
 }

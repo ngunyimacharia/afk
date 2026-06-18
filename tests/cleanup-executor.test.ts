@@ -27,6 +27,7 @@ test('executes only approved cleanup targets', () => {
       issueDeletionTargets: [{ feature: 'feat', issueName: 'done', issuePath, reason: 'done' }],
       runtimeArtifactTargets: [{ feature: 'feat', issueName: 'done', logPath }],
       pendingPostMergeCleanupTargets: [],
+      orphanedWorktreeTargets: [],
       preservedIssues: [],
       preservedArtifacts: [],
       featureDirectoriesToDelete: [],
@@ -86,4 +87,84 @@ test('retries pending post-merge cleanup and clears successful entries', () => {
   assert.equal(git(repoRoot, ['branch', '--list', branchName]), '');
   const persisted = JSON.parse(readFileSync(pendingPath, 'utf8')) as unknown[];
   assert.equal(persisted.length, 0);
+});
+
+test('removes planned orphaned issue worktree and branch', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+  git(repoRoot, ['branch', 'feat']);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+
+  const result = new CleanupExecutor().execute(
+    {
+      terminalTargets: [],
+      issueDeletionTargets: [],
+      runtimeArtifactTargets: [],
+      orphanedWorktreeTargets: [
+        { feature: 'feat', issueName: '001', branchName, worktreePath: issueWorktreePath, reason: 'terminal' },
+      ],
+      pendingPostMergeCleanupTargets: [],
+      preservedIssues: [],
+      preservedArtifacts: [],
+      featureDirectoriesToDelete: [],
+    },
+    repoRoot,
+  );
+
+  assert.equal(result.orphanedWorktreeResults.length, 1);
+  assert.equal(result.orphanedWorktreeResults[0]?.success, true);
+  assert.equal(result.orphanedWorktreeResults[0]?.deletedWorktree, true);
+  assert.equal(result.orphanedWorktreeResults[0]?.deletedBranch, true);
+  assert.equal(existsSync(issueWorktreePath), false);
+  assert.equal(git(repoRoot, ['branch', '--list', branchName]), '');
+  assert.ok(result.deleted.some((item) => item === issueWorktreePath));
+  assert.ok(result.deleted.some((item) => item === `branch ${branchName}`));
+});
+
+test('skips dirty orphaned issue worktree and reports reason', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+  git(repoRoot, ['branch', 'feat']);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+  writeFileSync(path.join(issueWorktreePath, 'dirty.txt'), 'dirty\n');
+
+  const result = new CleanupExecutor().execute(
+    {
+      terminalTargets: [],
+      issueDeletionTargets: [],
+      runtimeArtifactTargets: [],
+      orphanedWorktreeTargets: [
+        { feature: 'feat', issueName: '001', branchName, worktreePath: issueWorktreePath, reason: 'terminal' },
+      ],
+      pendingPostMergeCleanupTargets: [],
+      preservedIssues: [],
+      preservedArtifacts: [],
+      featureDirectoriesToDelete: [],
+    },
+    repoRoot,
+  );
+
+  assert.equal(result.orphanedWorktreeResults.length, 1);
+  assert.equal(result.orphanedWorktreeResults[0]?.success, false);
+  assert.equal(result.orphanedWorktreeResults[0]?.deletedWorktree, false);
+  assert.equal(result.orphanedWorktreeResults[0]?.deletedBranch, false);
+  assert.match(result.orphanedWorktreeResults[0]?.warning ?? '', /uncommitted changes/);
+  assert.equal(existsSync(issueWorktreePath), true);
+  assert.ok(git(repoRoot, ['branch', '--list', branchName]).includes(branchName));
 });
