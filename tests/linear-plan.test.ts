@@ -75,10 +75,33 @@ test('requires Linear config before creating a provider', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-config-'));
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));
 
-  const result = createLinearProviderFromConfig(repoRoot, {});
+  const result = createLinearProviderFromConfig(repoRoot);
 
   assert.equal(result.provider, undefined);
   assert.match(result.errors.join('\n'), /Linear config missing/);
+});
+
+test('requires linear.apiKey before creating a provider', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-linear-api-key-'));
+  writeFileSync(
+    path.join(repoRoot, 'afk.json'),
+    JSON.stringify({
+      testsEnabled: false,
+      staticCheckCommands: [],
+      linear: {
+        teamId: 'team-1',
+        labelName: 'AFK',
+        afkLabelName: 'AFK',
+        readyStateName: 'Ready',
+        workflowStates: { ready: 'Ready', running: 'Running', done: 'Done', handoff: 'Handoff' },
+      },
+    }),
+  );
+
+  const result = createLinearProviderFromConfig(repoRoot);
+
+  assert.equal(result.provider, undefined);
+  assert.match(result.errors.join('\n'), /Linear API key missing: add linear.apiKey to afk.json/);
 });
 
 test('creates parent and sub-issues through the Linear provider boundary', async () => {
@@ -299,6 +322,7 @@ test('linear-plan command returns machine-readable created issue output', async 
         labelName: 'AFK',
         afkLabelName: 'AFK',
         readyStateName: 'Ready',
+        apiKey: 'test-key',
         workflowStates: {
           ready: 'Ready for AFK',
           running: 'AFK Running',
@@ -313,7 +337,6 @@ test('linear-plan command returns machine-readable created issue output', async 
   process.argv = ['bun', 'afk', 'linear-plan', manifestPath];
   try {
     const result = await runAfk(repoRoot, {
-      env: { LINEAR_API_KEY: 'test-key' },
       linearProvider: new FakeLinearProvider(),
     });
     const output = JSON.parse(result.message) as {

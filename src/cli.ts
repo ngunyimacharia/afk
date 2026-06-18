@@ -372,7 +372,7 @@ export async function runAfk(
   }
   if (command === 'sync') return runSync();
   if (command === 'linear-plan') {
-    const providerConfig = createLinearProviderFromConfig(repoRoot, env);
+    const providerConfig = createLinearProviderFromConfig(repoRoot);
     if (!providerConfig.provider || !providerConfig.teamId || !providerConfig.setup)
       return { code: 1, message: providerConfig.errors.join('\n') };
     const manifestPath = linearPlanManifestPath();
