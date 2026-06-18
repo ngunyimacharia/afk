@@ -40,8 +40,8 @@ function resolveClaudeCodeExecutablePath(): string | undefined {
   }
 }
 
-export async function discoverClaudeKimiModels(): Promise<LaunchModel[]> {
-  // Uses ANTHROPIC_API_KEY because the Claude-Kimi variant runs via the Anthropic SDK
+export async function discoverClaudeModels(): Promise<LaunchModel[]> {
+  // Uses ANTHROPIC_API_KEY because the Claude harness runs via the Anthropic SDK
   // routed to Kimi's endpoint (see KIMI_BASE_URL override in the executor).
   if (!process.env.ANTHROPIC_API_KEY) return [];
   return [{ id: 'kimi/kimi-for-coding', label: 'Kimi for Coding' }];

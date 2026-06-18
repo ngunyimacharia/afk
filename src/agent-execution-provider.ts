@@ -239,14 +239,14 @@ export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
   }
 }
 
-export class ClaudeKimiAgentExecutionProvider implements AgentExecutionProvider {
+export class ClaudeAgentExecutionProvider implements AgentExecutionProvider {
   private readonly base: BaseSDKAgentExecutionProvider;
 
   constructor(executor: OpenCodeSessionExecutor, permissionCoordinator?: PermissionCoordinator) {
     this.base = new BaseSDKAgentExecutionProvider(
       executor,
       {
-        providerName: 'claude-kimi',
+        providerName: 'claude',
         failureDetector: detectClaudeCodeFailure,
         sessionIdUnavailableReason: 'session id unavailable from claude',
       },
