@@ -215,10 +215,14 @@ test('integrates config resolution, plan creation, and discovery with a shared p
     },
     teamId: resolved.teamId,
     provider: planProvider,
-    setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+    setup: { afkLabelName: 'AFK', readyStateName: 'Ready', projectId: resolved.projectId },
   });
   assert.equal(plan.parents[0]?.issue.key, 'AFK-1');
   assert.equal(plan.parents[0]?.subIssues[0]?.issue.key, 'AFK-2');
+  assert.deepEqual(
+    planProvider.createdIssues.map((issue) => issue.projectId),
+    ['project-1', 'project-1'],
+  );
 
   const capturedInputs: { teamId: string; labelId: string; projectId: string }[] = [];
   const capturingClient: LinearDiscoveryClient = {
@@ -696,6 +700,7 @@ class FakeLinearRunSyncClient implements LinearRunSyncClient {
 
 class FakeLinearPlanProvider implements LinearProvider {
   private issueCounter = 0;
+  readonly createdIssues: LinearIssueInput[] = [];
 
   async resolveIssueLabelId(): Promise<string | undefined> {
     return 'label-1';
@@ -705,8 +710,9 @@ class FakeLinearPlanProvider implements LinearProvider {
     return 'state-ready';
   }
 
-  async createIssue(_input: LinearIssueInput): Promise<LinearIssueResult> {
+  async createIssue(input: LinearIssueInput): Promise<LinearIssueResult> {
     this.issueCounter += 1;
+    this.createdIssues.push(input);
     const key = `AFK-${this.issueCounter}`;
     return { id: `issue-${this.issueCounter}`, key, url: `https://linear.app/acme/issue/${key}` };
   }

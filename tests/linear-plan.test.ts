@@ -113,7 +113,7 @@ test('creates parent and sub-issues through the Linear provider boundary', async
     manifest,
     teamId: 'team-1',
     provider,
-    setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+    setup: { afkLabelName: 'AFK', readyStateName: 'Ready', projectId: 'project-1' },
   });
 
   assert.deepEqual(
@@ -122,11 +122,12 @@ test('creates parent and sub-issues through the Linear provider boundary', async
       parentId: issue.parentId,
       labelIds: issue.labelIds,
       stateId: issue.stateId,
+      projectId: issue.projectId,
     })),
     [
-      { title: 'Parent issue', parentId: undefined, labelIds: undefined, stateId: undefined },
-      { title: 'Build API', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready' },
-      { title: 'Build UI', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready' },
+      { title: 'Parent issue', parentId: undefined, labelIds: undefined, stateId: undefined, projectId: 'project-1' },
+      { title: 'Build API', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready', projectId: 'project-1' },
+      { title: 'Build UI', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready', projectId: 'project-1' },
     ],
   );
   assert.deepEqual(provider.dependencies, [{ issueId: 'issue-3', dependsOnIssueId: 'issue-2' }]);
@@ -323,6 +324,7 @@ test('linear-plan command returns machine-readable created issue output', async 
         afkLabelName: 'AFK',
         readyStateName: 'Ready',
         apiKey: 'test-key',
+        projectId: 'project-1',
         workflowStates: {
           ready: 'Ready for AFK',
           running: 'AFK Running',
@@ -335,9 +337,10 @@ test('linear-plan command returns machine-readable created issue output', async 
   writeFileSync(manifestPath, JSON.stringify(validManifest));
   const originalArgv = process.argv;
   process.argv = ['bun', 'afk', 'linear-plan', manifestPath];
+  const provider = new FakeLinearProvider();
   try {
     const result = await runAfk(repoRoot, {
-      linearProvider: new FakeLinearProvider(),
+      linearProvider: provider,
     });
     const output = JSON.parse(result.message) as {
       parents: Array<{
@@ -359,6 +362,10 @@ test('linear-plan command returns machine-readable created issue output', async 
         type: 'blocked-by',
       },
     ]);
+    assert.deepEqual(
+      provider.issues.map((issue) => issue.projectId),
+      ['project-1', 'project-1', 'project-1'],
+    );
   } finally {
     process.argv = originalArgv;
   }
