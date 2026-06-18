@@ -19,7 +19,11 @@ import {
   validateSelectedFeatureDependencies,
   validateSelectedTicketDependencies,
 } from '../src/cli.js';
-import { formatModelSelectionTitle, prioritizeModelChoices } from '../src/interactive-launch.js';
+import {
+  formatFeatureSelectionTitle,
+  formatModelSelectionTitle,
+  prioritizeModelChoices,
+} from '../src/interactive-launch.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { TicketRepository } from '../src/ticket-repository.js';
 import type { TrackerProvider, TrackerWorkItem } from '../src/tracker-contract.js';
@@ -106,6 +110,7 @@ test('converts Linear parent work items into selectable launch tickets', () => {
     tickets.map((ticket) => ({
       path: ticket.path,
       feature: ticket.feature,
+      featureTitle: ticket.featureTitle,
       issueName: ticket.issueName,
       label: ticket.label,
       source: ticket.source,
@@ -116,6 +121,7 @@ test('converts Linear parent work items into selectable launch tickets', () => {
       {
         path: 'linear://ENG-101',
         feature: 'eng-100',
+        featureTitle: 'Parent feature',
         issueName: 'eng-101',
         label: 'eng-100/eng-101',
         source: 'linear',
@@ -243,6 +249,26 @@ test('model selection title includes provider and model label', () => {
 
 test('model selection title falls back to model id segment', () => {
   assert.equal(formatModelSelectionTitle({ id: 'openai/gpt-5.5' }), 'openai - gpt-5.5');
+});
+
+test('feature selection title includes slug, title, and count', () => {
+  assert.equal(
+    formatFeatureSelectionTitle('eng-100', 'Parent feature', 2),
+    'eng-100 — Parent feature (2 eligible tickets)',
+  );
+});
+
+test('feature selection title omits title when it matches the slug', () => {
+  assert.equal(formatFeatureSelectionTitle('feat', 'feat', 1), 'feat (1 eligible tickets)');
+});
+
+test('feature selection title omits title when undefined', () => {
+  assert.equal(formatFeatureSelectionTitle('feat', undefined, 3), 'feat (3 eligible tickets)');
+});
+
+test('feature selection title truncates long titles', () => {
+  const longTitle = 'A'.repeat(60);
+  assert.equal(formatFeatureSelectionTitle('feat', longTitle, 1), `feat — ${'A'.repeat(49)}… (1 eligible tickets)`);
 });
 
 test('prioritizes preferred model choice when available', () => {

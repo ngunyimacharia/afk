@@ -80,6 +80,42 @@ test('converts scheduler ticket records to scratch provider work items', () => {
   });
 });
 
+test('preserves featureTitle when converting provider work items to ticket records', () => {
+  const item: TrackerWorkItem = {
+    key: { provider: 'linear', id: 'LIN-42' },
+    feature: 'tracker-provider-contract',
+    featureTitle: 'Tracker Provider Contract',
+    issueName: '01-define-contract',
+    label: 'tracker-provider-contract/01-define-contract',
+    status: 'ready-for-agent',
+    executorAfk: false,
+    dependsOn: [],
+    title: 'Define tracker contract',
+    body: '',
+    providerRef: { key: { provider: 'linear', id: 'LIN-42' }, displayId: 'LIN-42' },
+  };
+
+  assert.equal(trackerWorkItemToTicketRecord(item).featureTitle, 'Tracker Provider Contract');
+});
+
+test('preserves featureTitle when converting ticket records to scratch provider work items', () => {
+  const item = ticketRecordToTrackerWorkItem(
+    {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      featureTitle: 'Feature Title',
+      issueName: '01',
+      label: 'feat/01',
+      status: 'ready-for-agent',
+      executorAfk: true,
+      dependsOn: [],
+    },
+    '# Ticket body',
+  );
+
+  assert.equal(item.featureTitle, 'Feature Title');
+});
+
 test('round-trips scratch ticket paths through provider work items', () => {
   const ticketPath = '/repo/.scratch/feat/issues/01.md';
   const item = ticketRecordToTrackerWorkItem(
