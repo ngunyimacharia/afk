@@ -5,6 +5,7 @@ import { loadAfkProjectConfig } from './project-config.js';
 export interface LinearExecutionSetup {
   afkLabelName: string;
   readyStateName: string;
+  projectId?: string;
   applyAfkLabelToParents?: boolean;
 }
 
@@ -153,6 +154,7 @@ export function createLinearProviderFromConfig(
     setup: {
       afkLabelName: config.config.linear.afkLabelName,
       readyStateName: config.config.linear.readyStateName,
+      ...(config.config.linear.projectId ? { projectId: config.config.linear.projectId } : {}),
       ...(config.config.linear.applyAfkLabelToParents !== undefined
         ? { applyAfkLabelToParents: config.config.linear.applyAfkLabelToParents }
         : {}),
@@ -182,6 +184,7 @@ export async function createLinearPlan(input: {
       title: parent.title,
       description: appendUpdateIntent(parent.description, parent.updateIntent),
       ...(input.setup.applyAfkLabelToParents ? { labelIds: [afkLabelId] } : {}),
+      ...(input.setup.projectId ? { projectId: input.setup.projectId } : {}),
     });
     const issueByRef = new Map<string, LinearIssueResult>();
     const subIssues: Array<{ ref: string; issue: LinearIssueResult; dependsOn: string[] }> = [];
@@ -194,6 +197,7 @@ export async function createLinearPlan(input: {
         parentId: parentIssue.id,
         labelIds: [afkLabelId],
         stateId: readyStateId,
+        ...(input.setup.projectId ? { projectId: input.setup.projectId } : {}),
       });
       issueByRef.set(subIssue.ref, created);
       subIssues.push({ ref: subIssue.ref, issue: created, dependsOn: subIssue.dependsOn ?? [] });

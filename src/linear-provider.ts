@@ -5,6 +5,7 @@ export interface LinearIssueInput {
   parentId?: string;
   labelIds?: string[];
   stateId?: string;
+  projectId?: string;
 }
 
 export interface LinearIssueResult {
@@ -98,6 +99,7 @@ export class GraphQLLinearProvider implements LinearProvider {
           ...(input.parentId ? { parentId: input.parentId } : {}),
           ...(input.labelIds?.length ? { labelIds: input.labelIds } : {}),
           ...(input.stateId ? { stateId: input.stateId } : {}),
+          ...(input.projectId ? { projectId: input.projectId } : {}),
         },
       },
     );
