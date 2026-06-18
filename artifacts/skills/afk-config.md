@@ -22,7 +22,7 @@ Write `afk.json` at the repository root with this exact schema:
 }
 ```
 
-When the repository context, user request, or existing workflow shows that Linear support is desired, include a `linear` block. Do not include this block unless Linear setup is requested or clearly intended.
+When the repository context, user request, or existing workflow shows that Linear support is desired, include a `linear` block. Do not include this block unless Linear setup is requested or clearly intended. The presence of a `linear` block enables Linear tracker mode; omitting it keeps AFK in scratch/local mode. There is no `provider` block.
 
 ```json
 {
@@ -77,7 +77,8 @@ Rules:
 - `smokeTestCommand` is required only when `testsEnabled=true`.
 - `smokeTestCommand` must use a concrete deterministic test file path from the repo. Do not use `{testFile}`.
 - `staticCheckCommands` is optional but must be an array when present.
-- `linear` is optional. Include it only when Linear support is desired.
+- `linear` is optional. Include it only when Linear support is desired. Its presence selects the Linear tracker; omitting it selects the scratch/local tracker.
+- Do not include a `provider` block; `afk.json` has no `provider.kind` or `provider` key.
 - `linear.teamId` is preferred for Linear execution. `linear.teamKey` may be used only when the consuming workflow supports resolving a team key; otherwise use the team ID.
 - `linear.labelName` must name an existing dedicated AFK label.
 - `linear.workflowStates.ready`, `running`, `done`, and `handoff` must name or identify existing Linear workflow states.
