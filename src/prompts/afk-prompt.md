@@ -36,5 +36,6 @@ Implement the provided ticket autonomously. Do not ask questions or wait for app
 
 1. Commit ticket-owned changes using conventional commits. Never commit `.scratch/` and never attribute AI, models, Claude, opencode, or other tools in commit messages. Do not add `Co-Authored-By`, `Generated-By`, or similar attribution trailers.
 2. Update only the local run result artifact named by Runtime Context with timestamp, session/run ID, status, outcome, commits, changed areas, verification, blockers/errors, and next action.
-3. Do not read or edit `.scratch/` except the provider, ticket, summary, and scheduler-generated status files explicitly named by the launcher.
-4. Do not run broad process cleanup or delete external temp/system paths. Only stop explicit processes you created for this ticket.
+3. When marking a ticket complete, update the ticket mirror file to start with YAML frontmatter containing `status: done` (for example, `---\nstatus: done\n---`). Do not rely solely on a "Linear status: Done" line in the body; the reviewer checks for the frontmatter field.
+4. Do not read or edit `.scratch/` except the provider, ticket, summary, and scheduler-generated status files explicitly named by the launcher.
+5. Do not run broad process cleanup or delete external temp/system paths. Only stop explicit processes you created for this ticket.
