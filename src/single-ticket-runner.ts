@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import YAML from 'yaml';
 import type { AgentExecutionProvider } from './agent-execution-provider.js';
 import { providerNameForHarness } from './harness-registry.js';
 import type { LinearRunSyncClient, ResolvedLinearConfig } from './linear.js';
@@ -580,6 +581,18 @@ export class SingleTicketRunner {
               REVIEW_STATUS: 'approved',
               RUN_STATUS: 'completed',
             });
+            // The reviewer is responsible for finalizing the ticket status and committing any
+            // leftover source changes. Verify it happened and apply safety-net fixes if needed.
+            const ticketPath =
+              ticket.provider?.materializedFiles?.ticketPath ??
+              ticket.provider?.materializedFiles?.runSummaryPath ??
+              ticket.path;
+            if (ticketPath) {
+              this.ensureTicketStatusDone(ticketPath, record.logPath);
+            }
+            if (this.hasUncommittedChanges(plan.checkout.worktreePath)) {
+              this.commitUncommittedChanges(plan.checkout.worktreePath, ticket.label, record.logPath);
+            }
             // Attempt merge-back into feature branch so subsequent waves can build on this work
             const featureCheckout = plan.checkouts?.[ticket.feature];
             if (featureCheckout && featureCheckout.effectiveBranchName !== plan.checkout.effectiveBranchName) {
@@ -1110,6 +1123,64 @@ export class SingleTicketRunner {
         .filter(Boolean);
     } catch {
       return [];
+    }
+  }
+
+  private ensureTicketStatusDone(ticketPath: string, logPath: string): boolean {
+    try {
+      const content = readFileSync(ticketPath, 'utf8');
+      if (!content.startsWith('---\n')) {
+        this.runtimeStore.appendLog(logPath, `ticket finalization skipped: ${ticketPath} has no YAML frontmatter`);
+        return false;
+      }
+      const end = content.indexOf('\n---\n', 4);
+      if (end === -1) {
+        this.runtimeStore.appendLog(
+          logPath,
+          `ticket finalization skipped: ${ticketPath} has unclosed YAML frontmatter`,
+        );
+        return false;
+      }
+      const frontmatterText = content.slice(4, end);
+      const parsed = YAML.parse(frontmatterText) as Record<string, unknown> | null;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this.runtimeStore.appendLog(logPath, `ticket finalization skipped: ${ticketPath} frontmatter is not a mapping`);
+        return false;
+      }
+      const currentStatus = String(parsed.status ?? '').trim();
+      if (currentStatus === 'done') {
+        return true;
+      }
+      parsed.status = 'done';
+      const newFrontmatter = YAML.stringify(parsed, { lineWidth: 0 }).trimEnd();
+      const newContent = `---\n${newFrontmatter}\n---\n${content.slice(end + 5)}`;
+      writeFileSync(ticketPath, newContent, 'utf8');
+      this.runtimeStore.appendLog(logPath, `ticket finalization: set status to done in ${ticketPath}`);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.runtimeStore.appendLog(logPath, `ticket finalization failed: ${message}`);
+      return false;
+    }
+  }
+
+  private hasUncommittedChanges(worktreePath: string): boolean {
+    try {
+      const status = runGit(worktreePath, ['status', '--porcelain']).trim();
+      return status.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private commitUncommittedChanges(worktreePath: string, ticketLabel: string, logPath: string): void {
+    try {
+      runGit(worktreePath, ['add', '-A']);
+      runGit(worktreePath, ['commit', '-m', `chore(ticket): finalize ${ticketLabel}`]);
+      this.runtimeStore.appendLog(logPath, `ticket finalization: committed uncommitted changes for ${ticketLabel}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.runtimeStore.appendLog(logPath, `ticket finalization commit failed: ${message}`);
     }
   }
 
