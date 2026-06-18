@@ -160,15 +160,16 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
   ) {}
 
   async findTeam(identifier: string): Promise<LinearTeam | null> {
+    const looksLikeId = /^[0-9a-f-]{36}$/i.test(identifier);
     const result = await this.request<{
       teams: { nodes: LinearTeam[] };
     }>(
-      `query AfkFindLinearTeam($identifier: String!) {
-        teams(first: 1, filter: { or: [{ id: { eq: $identifier } }, { key: { eq: $identifier } }] }) {
+      `query AfkFindLinearTeam($id: ID, $key: String) {
+        teams(first: 1, filter: { or: [{ id: { eq: $id } }, { key: { eq: $key } }] }) {
           nodes { id key name }
         }
       }`,
-      { identifier },
+      { id: looksLikeId ? identifier : null, key: looksLikeId ? null : identifier },
     );
 
     return result.teams.nodes[0] ?? null;
@@ -178,7 +179,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
     const result = await this.request<{
       issueLabels: { nodes: LinearEntity[] };
     }>(
-      `query AfkFindLinearIssueLabel($teamId: String!, $name: String!) {
+      `query AfkFindLinearIssueLabel($teamId: ID!, $name: String!) {
         issueLabels(first: 1, filter: { team: { id: { eq: $teamId } }, name: { eq: $name } }) {
           nodes { id name }
         }
@@ -190,15 +191,16 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
   }
 
   async findWorkflowState(teamId: string, identifier: string): Promise<LinearWorkflowState | null> {
+    const looksLikeId = /^[0-9a-f-]{36}$/i.test(identifier);
     const result = await this.request<{
       workflowStates: { nodes: LinearWorkflowState[] };
     }>(
-      `query AfkFindLinearWorkflowState($teamId: String!, $identifier: String!) {
-        workflowStates(first: 1, filter: { team: { id: { eq: $teamId } }, or: [{ id: { eq: $identifier } }, { name: { eq: $identifier } }] }) {
+      `query AfkFindLinearWorkflowState($teamId: ID!, $id: ID, $name: String) {
+        workflowStates(first: 1, filter: { team: { id: { eq: $teamId } }, or: [{ id: { eq: $id } }, { name: { eq: $name } }] }) {
           nodes { id name team { id } }
         }
       }`,
-      { teamId, identifier },
+      { teamId, id: looksLikeId ? identifier : null, name: looksLikeId ? null : identifier },
     );
 
     const state = result.workflowStates.nodes[0];
@@ -255,7 +257,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
         nodes: LinearParentIssueGraphqlNode[];
       };
     }>(
-      `query AfkDiscoverLinearIssues($teamId: String!, $labelId: String!, $projectId: String!) {
+      `query AfkDiscoverLinearIssues($teamId: ID!, $labelId: ID!, $projectId: ID!) {
         issues(
           first: 100
           filter: {
@@ -322,7 +324,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
     }));
   }
 
-  private async request<T>(query: string, variables: Record<string, string>): Promise<T> {
+  private async request<T>(query: string, variables: Record<string, string | null>): Promise<T> {
     const response = await fetch(this.endpoint, {
       method: 'POST',
       headers: {
