@@ -40,6 +40,7 @@ const validConfig: LinearProjectConfig = {
     done: 'Done',
     handoff: 'Needs Handoff',
   },
+  apiKey: 'linear-key',
   afkLabelName: 'AFK',
   readyStateName: 'Ready',
 };
@@ -47,7 +48,6 @@ const validConfig: LinearProjectConfig = {
 test('resolves stable Linear config IDs', async () => {
   const resolved = await resolveLinearConfig({
     config: validConfig,
-    env: { LINEAR_API_KEY: 'linear-key' },
     client: new FakeLinearClient(),
   });
 
@@ -66,8 +66,9 @@ test('resolves stable Linear config IDs', async () => {
 
 test('fails Linear startup when credentials are absent', async () => {
   await assert.rejects(
-    () => resolveLinearConfig({ config: validConfig, env: {}, client: new FakeLinearClient() }),
-    (error) => error instanceof LinearStartupError && /LINEAR_API_KEY/.test(error.message),
+    () =>
+      resolveLinearConfig({ config: { ...validConfig, apiKey: undefined }, env: {}, client: new FakeLinearClient() }),
+    (error) => error instanceof LinearStartupError && /linear\.apiKey/.test(error.message),
   );
 });
 
@@ -76,7 +77,6 @@ test('fails Linear startup when configured team cannot be resolved', async () =>
     () =>
       resolveLinearConfig({
         config: { ...validConfig, team: 'MISSING' },
-        env: { LINEAR_API_KEY: 'linear-key' },
         client: new FakeLinearClient(),
       }),
     (error) => error instanceof LinearStartupError && /team "MISSING" was not found/.test(error.message),
@@ -88,7 +88,6 @@ test('fails Linear startup when configured AFK label cannot be resolved', async 
     () =>
       resolveLinearConfig({
         config: { ...validConfig, afkLabel: 'Missing Label' },
-        env: { LINEAR_API_KEY: 'linear-key' },
         client: new FakeLinearClient(),
       }),
     (error) => error instanceof LinearStartupError && /AFK label "Missing Label" was not found/.test(error.message),
@@ -100,7 +99,6 @@ test('fails Linear startup when a workflow state cannot be resolved', async () =
     () =>
       resolveLinearConfig({
         config: { ...validConfig, workflowStates: { ...validConfig.workflowStates, handoff: 'Missing Handoff' } },
-        env: { LINEAR_API_KEY: 'linear-key' },
         client: new FakeLinearClient(),
       }),
     (error) =>
