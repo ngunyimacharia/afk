@@ -1,6 +1,6 @@
 import type { TicketRecord } from './types.js';
 
-export type TrackerProviderKind = 'scratch' | 'linear-graphql' | 'jira';
+export type TrackerProviderKind = 'scratch' | 'linear' | 'jira';
 
 export interface TrackerWorkItemKey {
   provider: TrackerProviderKind;

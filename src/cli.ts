@@ -13,13 +13,7 @@ import {
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
-import {
-  type AgentExecutionProvider,
-  ClaudeKimiAgentExecutionProvider,
-  CompositeAgentExecutionProvider,
-  OpenCodeAgentExecutionProvider,
-} from './agent-execution-provider.js';
-import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
+import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
 import { CleanupExecutor, CleanupPlanner, readPendingPostMergeCleanupItems } from './cleanup.js';
 import { type DaemonLaunchContext, runDaemon } from './daemon.js';
 import {
@@ -45,7 +39,6 @@ import {
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
 import {
-  discoverLinearFeatures,
   LinearGraphqlClient,
   type LinearParentFeature,
   type ResolvedLinearConfig,
@@ -76,7 +69,7 @@ import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
-import type { TrackerProvider, TrackerProviderKind } from './tracker-contract.js';
+import type { TrackerProvider } from './tracker-contract.js';
 import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
 import type { LaunchModel, TicketRecord } from './types.js';
 import {
@@ -499,7 +492,7 @@ export async function runAfk(
     try {
       const provider =
         runtime.trackerProvider ??
-        createDefaultTrackerProvider(repoRoot, inferTrackerProviderKind(activeProjectConfig) as TrackerProviderKind);
+        createDefaultTrackerProvider(repoRoot, inferTrackerProviderKind(activeProjectConfig));
       const launchTickets = await discoverLaunchTickets(provider);
       allTickets = launchTickets.allTickets;
       tickets = launchTickets.eligibleTickets;
@@ -713,8 +706,16 @@ export async function runAfk(
       ticketLabel: selectedTickets[0]?.label,
       autoApprove: true,
     });
-    const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-    const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+    const executionProvider = createHarnessAgentExecutionProvider(
+      harness,
+      implementationExecutor,
+      permissionCoordinator,
+    );
+    const reviewerProvider = createHarnessAgentExecutionProvider(
+      reviewerHarness,
+      reviewerExecutor,
+      permissionCoordinator,
+    );
     const runner = new SingleTicketRunner(
       runtimeStore,
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),

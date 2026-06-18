@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import type { TrackerProviderKind } from './tracker-contract.js';
+
 export const AFK_CONFIG_FILE = 'afk.json';
 
 export interface AfkProjectConfig {
@@ -10,8 +12,6 @@ export interface AfkProjectConfig {
   staticCheckCommands: string[];
   linear?: LinearProjectConfig;
 }
-
-export type TrackerProviderKind = 'scratch' | 'linear';
 
 export function inferTrackerProviderKind(config: AfkProjectConfig): TrackerProviderKind {
   return config.linear ? 'linear' : 'scratch';
