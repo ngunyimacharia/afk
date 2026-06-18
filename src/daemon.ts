@@ -10,7 +10,7 @@ import {
   type SelectableHarnessId,
 } from './harness-registry.js';
 import { LinearGraphqlClient, resolveLinearConfig } from './linear.js';
-import { MergeBackCoordinator } from './merge-back-coordinator.js';
+import { isMergeInProgress, MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
@@ -38,6 +38,10 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
 
   const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
   activeRunControlPlane.transition(runId, 'running');
+
+  const heartbeatInterval = setInterval(() => {
+    activeRunControlPlane.heartbeat(runId);
+  }, 30_000);
 
   const eventStream = new ActiveRunEventStream(repoRoot, runId);
   const runtimeStore = new RuntimeStore({ repoRoot });
@@ -83,6 +87,41 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
   const checkoutsByFeature = plan.checkouts ?? {};
   const gitMergeBackProvider = new GitFeatureMergeBackProvider(repoRoot, checkoutsByFeature);
   const gitLockProvider = new GitFeatureLockProvider(checkoutsByFeature);
+
+  for (const [feature, checkout] of Object.entries(checkoutsByFeature)) {
+    if (!isMergeInProgress(checkout.worktreePath)) continue;
+
+    onProgress({
+      ticketLabel: `${feature}/startup-conflict`,
+      message: `Feature worktree ${checkout.effectiveWorktreeName} has unresolved merge conflicts; starting conflict resolution`,
+    });
+
+    const conflictResult = await mergeBackCoordinator.resolveFeatureWorktreeConflicts({
+      repoRoot,
+      feature,
+      featureWorktreePath: checkout.worktreePath,
+      featureBranchName: checkout.effectiveBranchName,
+      model: plan.model,
+      reviewerModel: plan.reviewerModel,
+      reviewerPrompt: plan.reviewerPrompt,
+      onProgress,
+    });
+
+    if (!conflictResult.success) {
+      const reason = conflictResult.reason ?? 'Unresolved merge conflicts could not be resolved';
+      onProgress({
+        ticketLabel: `${feature}/startup-conflict`,
+        message: `run handoff: ${reason}`,
+        kind: 'failure',
+      });
+      return;
+    }
+
+    onProgress({
+      ticketLabel: `${feature}/startup-conflict`,
+      message: `Merge conflicts resolved for ${checkout.effectiveWorktreeName}`,
+    });
+  }
 
   let currentRunState: 'running' | 'paused' = 'running';
 
@@ -174,10 +213,6 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
       killController.abort();
     }
   }, 500);
-
-  const heartbeatInterval = setInterval(() => {
-    activeRunControlPlane.heartbeat(runId);
-  }, 30_000);
 
   try {
     commandPollInterval = setInterval(() => {

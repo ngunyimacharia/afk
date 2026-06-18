@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AgentExecutionProvider } from './agent-execution-provider.js';
+import type { AgentExecutionProvider, AgentInvocationMode } from './agent-execution-provider.js';
 import { withBranchMergeLock } from './branch-merge-lock.js';
 import { persistFailedPostMergeCleanupItem } from './cleanup.js';
 import type { ReadinessCommandExecutor } from './readiness-service.js';
@@ -71,6 +71,24 @@ export interface MergeBackCleanupResult {
   deletedWorktree: boolean;
   warning?: string;
   error?: string;
+}
+
+export interface ResolveFeatureConflictsInput {
+  repoRoot: string;
+  feature: string;
+  featureWorktreePath: string;
+  featureBranchName: string;
+  model: LaunchModel;
+  reviewerModel?: LaunchModel;
+  reviewerPrompt?: { id: string; label: string; path: string; content?: string };
+  invocationMode?: AgentInvocationMode;
+  onProgress?: AgentExecutionProgressCallback;
+}
+
+export interface ResolveFeatureConflictsResult {
+  success: boolean;
+  reason?: string;
+  conflictPaths?: string[];
 }
 
 interface MergeConflictDiagnostics {
@@ -312,6 +330,84 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
     });
   }
 
+  async resolveFeatureWorktreeConflicts(input: ResolveFeatureConflictsInput): Promise<ResolveFeatureConflictsResult> {
+    const { featureWorktreePath } = input;
+
+    if (!isMergeInProgress(featureWorktreePath)) {
+      return { success: true };
+    }
+
+    const budget = this.deps.conflictResolutionBudget ?? DEFAULT_CONFLICT_RESOLUTION_BUDGET;
+    const ticket: MergeBackTicket = {
+      feature: input.feature,
+      issueName: 'startup-conflict',
+      branchName: input.featureBranchName,
+      worktreePath: featureWorktreePath,
+      metadataPath: '',
+      logPath: '',
+    };
+
+    let finalDiagnostics = getMergeConflictDiagnostics(featureWorktreePath);
+
+    for (let attempt = 1; attempt <= budget; attempt++) {
+      const diagnostics = getMergeConflictDiagnostics(featureWorktreePath);
+      finalDiagnostics = diagnostics;
+      const prompt = buildConflictResolutionPrompt(ticket, diagnostics, attempt, budget);
+      const agentResult = await this.invokeConflictResolutionAgent(input, ticket, prompt, 'execution');
+
+      if (agentResult.status === 'completed') {
+        const remainingDiagnostics = getMergeConflictDiagnostics(featureWorktreePath);
+        finalDiagnostics = remainingDiagnostics;
+
+        if (remainingDiagnostics.conflictPaths.length === 0 && !remainingDiagnostics.markersRemain) {
+          const readiness = runReadinessCommands({
+            cwd: featureWorktreePath,
+            executor: this.deps.readinessExecutor,
+          });
+          const failed = [...readiness.staticStyleChecks, readiness.smoke].find((r) => r.status === 'failed');
+          if (!failed) {
+            if (isMergeInProgress(featureWorktreePath)) {
+              commitMerge(featureWorktreePath, `Resolve merge conflicts for ${input.featureBranchName}`);
+            }
+            return { success: true };
+          }
+
+          if (attempt === budget) {
+            abortMerge(featureWorktreePath);
+            return {
+              success: false,
+              reason: `Readiness checks failed after conflict resolution: ${failed.command}`,
+              conflictPaths: remainingDiagnostics.conflictPaths,
+            };
+          }
+          continue;
+        }
+
+        if (attempt === budget) {
+          abortMerge(featureWorktreePath);
+          return {
+            success: false,
+            reason: `Conflicts remain after ${budget} resolution attempts`,
+            conflictPaths: remainingDiagnostics.conflictPaths,
+          };
+        }
+        continue;
+      }
+
+      if (attempt === budget) {
+        abortMerge(featureWorktreePath);
+        return {
+          success: false,
+          reason: `Reviewer agent failed to resolve conflicts after ${budget} attempts`,
+          conflictPaths: finalDiagnostics.conflictPaths,
+        };
+      }
+    }
+
+    abortMerge(featureWorktreePath);
+    return { success: false, reason: 'Unexpected merge failure', conflictPaths: finalDiagnostics.conflictPaths };
+  }
+
   private async mergeSingleTicket(
     input: MergeWaveInput,
     ticket: MergeBackTicket,
@@ -484,12 +580,31 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
     ticket: MergeBackTicket,
     prompt: string,
   ): Promise<AgentExecutionResult> {
+    return this.invokeConflictResolutionAgent(input, ticket, prompt, 'reviewer');
+  }
+
+  private async invokeConflictResolutionAgent(
+    input: Pick<
+      MergeWaveInput,
+      | 'repoRoot'
+      | 'feature'
+      | 'featureWorktreePath'
+      | 'featureBranchName'
+      | 'model'
+      | 'reviewerModel'
+      | 'reviewerPrompt'
+      | 'onProgress'
+    > & { invocationMode?: AgentInvocationMode },
+    ticket: MergeBackTicket,
+    prompt: string,
+    invocationMode: AgentInvocationMode = input.invocationMode ?? 'reviewer',
+  ): Promise<AgentExecutionResult> {
     const plan = buildAgentPlan(input, ticket);
     return this.deps.agentExecutionProvider.execute({
       plan,
       ticketIndex: 0,
       prompt,
-      invocationMode: 'reviewer',
+      invocationMode,
       onProgress: input.onProgress,
     });
   }
@@ -739,7 +854,7 @@ function hasConflictMarkers(worktreePath: string): boolean {
   }
 }
 
-function isMergeInProgress(worktreePath: string): boolean {
+export function isMergeInProgress(worktreePath: string): boolean {
   const gitDir = resolveGitDir(worktreePath);
   return existsSync(path.join(gitDir, 'MERGE_HEAD'));
 }
@@ -827,7 +942,13 @@ ${promptTemplate.content ?? ''}
 `;
 }
 
-function buildAgentPlan(input: MergeWaveInput, ticket: MergeBackTicket): LaunchPlan {
+function buildAgentPlan(
+  input: Pick<
+    MergeWaveInput,
+    'repoRoot' | 'feature' | 'featureWorktreePath' | 'featureBranchName' | 'model' | 'reviewerModel' | 'reviewerPrompt'
+  >,
+  ticket: MergeBackTicket,
+): LaunchPlan {
   const ticketRecord: TicketRecord = {
     path: ticket.metadataPath,
     feature: ticket.feature,
