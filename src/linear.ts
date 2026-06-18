@@ -348,15 +348,14 @@ function isMissingBranchNameGraphqlError(error: unknown): boolean {
 }
 
 export async function resolveLinearConfig(options: ResolveLinearConfigOptions): Promise<ResolvedLinearConfig> {
-  const env = options.env ?? process.env;
-  const apiKey = env[LINEAR_API_KEY_ENV]?.trim();
-  if (!apiKey) {
-    throw new LinearStartupError(`Linear startup requires ${LINEAR_API_KEY_ENV} to be set.`);
-  }
-
   const config = options.config;
   if (!config) {
     throw new LinearStartupError('Linear startup requires afk.json linear configuration.');
+  }
+
+  const apiKey = config.apiKey?.trim();
+  if (!apiKey) {
+    throw new LinearStartupError('Linear startup requires linear.apiKey to be configured.');
   }
 
   const client = options.client ?? new LinearGraphqlClient(apiKey);

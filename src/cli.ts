@@ -508,7 +508,7 @@ export async function runAfk(
     let resolvedLinearConfig: ResolvedLinearConfig | undefined;
     if (activeProjectConfig.linear) {
       try {
-        const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
+        const client = new LinearGraphqlClient(activeProjectConfig.linear.apiKey ?? '');
         const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
         resolvedLinearConfig = resolvedConfig;
       } catch (error) {
@@ -712,14 +712,25 @@ export async function runAfk(
       ticketLabel: selectedTickets[0]?.label,
       autoApprove: true,
     });
-    const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-    const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+    const executionProvider = createHarnessAgentExecutionProvider(
+      harness,
+      implementationExecutor,
+      permissionCoordinator,
+    );
+    const reviewerProvider = createHarnessAgentExecutionProvider(
+      reviewerHarness,
+      reviewerExecutor,
+      permissionCoordinator,
+    );
     const runner = new SingleTicketRunner(
       runtimeStore,
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
       launchPreferences.budgets,
       resolvedLinearConfig
-        ? { resolvedConfig: resolvedLinearConfig, client: new LinearGraphqlClient(env.LINEAR_API_KEY ?? '') }
+        ? {
+            resolvedConfig: resolvedLinearConfig,
+            client: new LinearGraphqlClient(activeProjectConfig.linear?.apiKey ?? ''),
+          }
         : undefined,
     );
     const renderer: OpenTUIRenderer = {

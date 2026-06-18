@@ -51,7 +51,11 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
   const reviewerExecutor = createHarnessExecutor(reviewerHarness);
 
   const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-  const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+  const reviewerProvider = createHarnessAgentExecutionProvider(
+    reviewerHarness,
+    reviewerExecutor,
+    permissionCoordinator,
+  );
   const linearSyncer = await resolveDaemonLinearSyncer(repoRoot);
 
   const runner = new SingleTicketRunner(
@@ -235,7 +239,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
 async function resolveDaemonLinearSyncer(repoRoot: string) {
   const projectConfig = loadAfkProjectConfig(repoRoot).config;
   if (!projectConfig?.linear) return undefined;
-  const client = new LinearGraphqlClient(process.env.LINEAR_API_KEY ?? '');
+  const client = new LinearGraphqlClient(projectConfig.linear.apiKey ?? '');
   const resolvedConfig = await resolveLinearConfig({ config: projectConfig.linear, env: process.env, client });
   return { resolvedConfig, client };
 }
