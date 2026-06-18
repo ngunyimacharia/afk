@@ -1020,6 +1020,100 @@ test('createOpenTuiDashboard strips feature prefix from labels and formats paths
   view?.done();
 });
 
+test('createOpenTuiDashboard renders ticket title alongside issue name', async () => {
+  const writes: string[] = [];
+  const stdout = fakeStdout(true, writes);
+
+  const boxes: Array<{ title: string; children: Array<{ content: string }> }> = [];
+
+  const module: OpenTuiDashboardModule = {
+    createCliRenderer: async () =>
+      ({
+        root: { add: () => {} },
+        destroy: () => {},
+        addInputHandler: () => {},
+        removeInputHandler: () => {},
+      }) as unknown as CliRenderer,
+    BoxRenderable: class FakeBox {
+      title = '';
+      children: Array<{ content: string }> = [];
+      constructor(_ctx: unknown, options: { title?: string }) {
+        this.title = options.title ?? '';
+        boxes.push(this);
+      }
+      add(child: { content?: string }) {
+        this.children.push(child as { content: string });
+      }
+    } as unknown as OpenTuiDashboardModule['BoxRenderable'],
+    TextRenderable: class FakeText {
+      _content = '';
+      get content(): string {
+        return this._content;
+      }
+      set content(value: string | { toString(): string }) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'chunks' in value &&
+          Array.isArray((value as Record<string, unknown>).chunks)
+        ) {
+          this._content = ((value as Record<string, unknown>).chunks as Array<{ text: string }>)
+            .map((c) => c.text)
+            .join('');
+        } else {
+          this._content = String(value);
+        }
+      }
+      constructor(_ctx: unknown, options: { content?: string }) {
+        this._content = options.content ?? '';
+      }
+      add() {
+        return 0;
+      }
+      remove() {}
+      clear() {}
+      destroy() {}
+      onLifecyclePass = () => {};
+      textNode = undefined as unknown as TextRenderable['textNode'];
+      chunks = [];
+      getTextChildren() {
+        return [];
+      }
+      insertBefore(): number {
+        return 0;
+      }
+    } as unknown as OpenTuiDashboardModule['TextRenderable'],
+  };
+
+  const tickets: TicketRecord[] = [
+    {
+      path: '/tmp/feat-a-001.md',
+      feature: 'feat-a',
+      issueName: 'afk-123',
+      label: 'feat-a/afk-123',
+      title: 'Fix the thing',
+      executorAfk: true,
+    },
+  ];
+
+  const view = await createOpenTuiDashboard({ stdout, selectedTickets: tickets, repoRoot: '/tmp' }, module);
+  assert.ok(view);
+
+  view?.update({ ticketLabel: 'feat-a/afk-123', message: 'starting' });
+
+  const ticketsBox = boxes.find((b) => b.title === 'Tickets [j/k]');
+  assert.ok(ticketsBox, 'Tickets box should exist');
+  const ticketsContent = ticketsBox.children.map((c) => c.content).join('\n');
+  assert.match(ticketsContent, /> afk-123: Fix the thing/);
+
+  const detailsBox = boxes.find((b) => b.title === 'Details');
+  assert.ok(detailsBox, 'Details box should exist');
+  const detailsContent = detailsBox.children.map((c) => c.content).join('\n');
+  assert.match(detailsContent, /Title: Fix the thing/);
+
+  view?.done();
+});
+
 test('createOpenTuiDashboard renders panel titles with keyboard hints', async () => {
   const writes: string[] = [];
   const stdout = fakeStdout(true, writes);

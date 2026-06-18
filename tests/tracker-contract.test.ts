@@ -39,6 +39,7 @@ test('converts provider work items to scheduler ticket records', () => {
     feature: 'tracker-provider-contract',
     issueName: '01-define-contract',
     label: 'tracker-provider-contract/01-define-contract',
+    title: 'Define tracker contract',
     status: 'ready-for-agent',
     executorAfk: false,
     dependsOn: ['tracker-provider-contract/00-prereq', 'other-feature/02-external'],

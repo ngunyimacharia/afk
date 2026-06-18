@@ -587,6 +587,23 @@ test('healthCheck does not transition running ticket without sessionId', () => {
   assert.equal(state.snapshot().tickets.find((t) => t.label === 'feat-a/001')?.runtimeState, 'running');
 });
 
+test('ticket title is reflected in snapshot', () => {
+  const tickets: TicketRecord[] = [
+    {
+      path: '/tmp/a-1.md',
+      feature: 'feat-a',
+      issueName: '001',
+      label: 'feat-a/001',
+      title: 'Do the thing',
+      executorAfk: true,
+    },
+  ];
+  const state = new RunDashboardState({}, tickets);
+  const snap = state.snapshot();
+  assert.equal(snap.tickets[0]?.title, 'Do the thing');
+  assert.equal(snap.selectedTicketDetails?.title, 'Do the thing');
+});
+
 test('completed run state renders without crashes', () => {
   const state = new RunDashboardState({}, makeTickets());
   state.setTicketOutcome('feat-a/001', 'completed');
