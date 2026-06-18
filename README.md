@@ -155,7 +155,7 @@ Launch behavior notes:
 - `afk` launch is interactive-only and requires a TTY (no CI/non-interactive launch mode in this pass).
 - `afk` launch requires repo-local `afk.json`; run `/afk-config` first.
 - prompt order is harness -> model -> reviewer model -> feature multiselect -> global concurrency.
-- selectable harnesses are `OpenCode`, `Claude-Kimi`, and `Codex` when their model discovery returns at least one launch model.
+- selectable harnesses are `OpenCode`, `Claude`, and `Codex` when their model discovery returns at least one launch model.
 - Codex appears in the harness prompt with the built-in `codex/default` model option. Install and authenticate Codex before launching Codex tickets so the SDK-backed execution can start real threads.
 - no prompt preselects a default option.
 - canceling any prompt exits without creating worktrees or runtime artifacts.
