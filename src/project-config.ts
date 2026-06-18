@@ -12,6 +12,7 @@ export interface ScratchTrackerProviderConfig {
 export interface LinearGraphqlTrackerProviderConfig {
   kind: 'linear-graphql';
   team: LinearGraphqlTeamConfig;
+  projectId?: string;
   afkLabelName: string;
   workflowStates: LinearGraphqlWorkflowStatesConfig;
 }
@@ -42,6 +43,7 @@ export interface LinearProjectConfig {
   teamId?: string;
   teamKey?: string;
   labelName?: string;
+  projectId?: string;
   workflowStates: {
     ready: string;
     running: string;
@@ -184,6 +186,9 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
   if (record.teamKey !== undefined && !isNonEmptyString(record.teamKey)) {
     errors.push('linear.teamKey must be a non-empty string when present.');
   }
+  if (record.projectId !== undefined && !isNonEmptyString(record.projectId)) {
+    errors.push('linear.projectId must be a non-empty string when present.');
+  }
   if (record.apiKeyEnv !== undefined && (typeof record.apiKeyEnv !== 'string' || !record.apiKeyEnv.trim())) {
     errors.push('linear.apiKeyEnv must be a non-empty string when present.');
   }
@@ -210,6 +215,7 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
     afkLabel: firstTrimmedString(record.afkLabel, record.labelName) as string,
     ...(isNonEmptyString(record.teamId) ? { teamId: record.teamId.trim() } : {}),
     ...(isNonEmptyString(record.teamKey) ? { teamKey: record.teamKey.trim() } : {}),
+    ...(isNonEmptyString(record.projectId) ? { projectId: record.projectId.trim() } : {}),
     labelName,
     workflowStates,
     ...(typeof record.apiKeyEnv === 'string' && record.apiKeyEnv.trim() ? { apiKeyEnv: record.apiKeyEnv.trim() } : {}),
@@ -298,6 +304,9 @@ function validateProviderConfig(value: unknown): { config?: AfkTrackerProviderCo
   if (typeof afkLabelName !== 'string' || !afkLabelName.trim()) {
     errors.push('provider.afkLabelName must be a non-empty string.');
   }
+  if (record.projectId !== undefined && !isNonEmptyString(record.projectId)) {
+    errors.push('provider.projectId must be a non-empty string when present.');
+  }
 
   if (errors.length || !team.config || !workflowStates.config || typeof afkLabelName !== 'string') return { errors };
 
@@ -307,6 +316,7 @@ function validateProviderConfig(value: unknown): { config?: AfkTrackerProviderCo
       team: team.config,
       afkLabelName: afkLabelName.trim(),
       workflowStates: workflowStates.config,
+      ...(isNonEmptyString(record.projectId) ? { projectId: record.projectId.trim() } : {}),
     },
     errors: [],
   };
