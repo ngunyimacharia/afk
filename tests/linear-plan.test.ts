@@ -126,8 +126,20 @@ test('creates parent and sub-issues through the Linear provider boundary', async
     })),
     [
       { title: 'Parent issue', parentId: undefined, labelIds: undefined, stateId: undefined, projectId: 'project-1' },
-      { title: 'Build API', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready', projectId: 'project-1' },
-      { title: 'Build UI', parentId: 'issue-1', labelIds: ['label-afk'], stateId: 'state-ready', projectId: 'project-1' },
+      {
+        title: 'Build API',
+        parentId: 'issue-1',
+        labelIds: ['label-afk'],
+        stateId: 'state-ready',
+        projectId: 'project-1',
+      },
+      {
+        title: 'Build UI',
+        parentId: 'issue-1',
+        labelIds: ['label-afk'],
+        stateId: 'state-ready',
+        projectId: 'project-1',
+      },
     ],
   );
   assert.deepEqual(provider.dependencies, [{ issueId: 'issue-3', dependsOnIssueId: 'issue-2' }]);
