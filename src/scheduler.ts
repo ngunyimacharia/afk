@@ -104,26 +104,8 @@ export class Scheduler {
       featureWaveTickets.set(feature, waveTickets);
     }
 
-    const shouldResumeCompletedTicket = (ticket: TicketRecord): boolean => {
-      if (!isComplete(ticket.status) || !this.deps.featureMergeBackProvider) return false;
-      const ticketWave = featureWaves.get(ticket.feature)?.get(ticket.issueName) ?? 0;
-      const waveTicketKeys = featureWaveTickets.get(ticket.feature)?.get(ticketWave) ?? [];
-      if (waveTicketKeys.length === 0) return false;
-      const laterIncompleteTicketExists = plan.tickets.some(
-        (candidate) =>
-          candidate.feature === ticket.feature &&
-          !isComplete(candidate.status) &&
-          (featureWaves.get(candidate.feature)?.get(candidate.issueName) ?? 0) > ticketWave,
-      );
-      if (!laterIncompleteTicketExists) return false;
-      const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
-      return !this.deps.featureMergeBackProvider.isWaveMerged(ticket.feature, ticketWave, issueNames);
-    };
-
-    const completedTickets = plan.tickets.filter(
-      (ticket) => isComplete(ticket.status) && !shouldResumeCompletedTicket(ticket),
-    );
-    const pending = plan.tickets.filter((ticket) => !isComplete(ticket.status) || shouldResumeCompletedTicket(ticket));
+    const completedTickets = plan.tickets.filter((ticket) => isComplete(ticket.status));
+    const pending = plan.tickets.filter((ticket) => !isComplete(ticket.status));
     const completed = new Set(completedTickets.map((ticket) => ticketKey(ticket)));
     const completedFeatures = new Set<string>();
     for (const feature of new Set(plan.tickets.map((t) => t.feature))) {
@@ -149,16 +131,7 @@ export class Scheduler {
         if (!waveTicketKeys) break;
         if (waveTicketKeys.every((key) => completed.has(key))) {
           highestCompleted = wave;
-          if (this.deps.featureMergeBackProvider) {
-            const issueNames = waveTicketKeys.map(issueNameFromTicketKey);
-            if (this.deps.featureMergeBackProvider.isWaveMerged(feature, wave, issueNames)) {
-              highestMerged = wave;
-            } else {
-              break;
-            }
-          } else {
-            highestMerged = wave;
-          }
+          highestMerged = wave;
         } else {
           break;
         }

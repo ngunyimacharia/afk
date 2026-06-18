@@ -238,7 +238,7 @@ test('skips completed tickets and marks them completed in scheduler results', as
   assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/002')?.outcome, 'completed');
 });
 
-test('resumes completed dependency ticket when its wave is not merged and blocks later work', async () => {
+test('skips completed dependency ticket when its wave is not merged and continues later work', async () => {
   const started: string[] = [];
   const mergedWaves = new Set<string>();
   const scheduler = createScheduler(
@@ -286,8 +286,11 @@ test('resumes completed dependency ticket when its wave is not merged and blocks
   const result = await scheduler.launch(plan as never);
 
   assert.equal(result.scheduled, true);
-  assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
-  assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/001')?.message, 'feat-a/001');
+  assert.deepEqual(started, ['feat-a/002']);
+  assert.equal(
+    result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/001')?.message,
+    'Skipped feat-a/001: ticket already done',
+  );
   assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/002')?.outcome, 'completed');
 });
 
