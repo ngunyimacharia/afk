@@ -67,7 +67,7 @@ import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-noti
 import { assertPathWithinRoot } from './path-validation.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
-import { loadAfkProjectConfig } from './project-config.js';
+import { inferTrackerProviderKind, loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
@@ -76,7 +76,7 @@ import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
-import type { TrackerProvider } from './tracker-contract.js';
+import type { TrackerProvider, TrackerProviderKind } from './tracker-contract.js';
 import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
 import type { LaunchModel, TicketRecord } from './types.js';
 import {
@@ -498,7 +498,8 @@ export async function runAfk(
     let tickets: TicketRecord[];
     try {
       const provider =
-        runtime.trackerProvider ?? createDefaultTrackerProvider(repoRoot, activeProjectConfig.provider.kind);
+        runtime.trackerProvider ??
+        createDefaultTrackerProvider(repoRoot, inferTrackerProviderKind(activeProjectConfig) as TrackerProviderKind);
       const launchTickets = await discoverLaunchTickets(provider);
       allTickets = launchTickets.allTickets;
       tickets = launchTickets.eligibleTickets;

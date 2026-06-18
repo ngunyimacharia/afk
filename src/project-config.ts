@@ -3,37 +3,18 @@ import path from 'node:path';
 
 export const AFK_CONFIG_FILE = 'afk.json';
 
-export type AfkTrackerProviderConfig = ScratchTrackerProviderConfig | LinearGraphqlTrackerProviderConfig;
-
-export interface ScratchTrackerProviderConfig {
-  kind: 'scratch';
-}
-
-export interface LinearGraphqlTrackerProviderConfig {
-  kind: 'linear-graphql';
-  team: LinearGraphqlTeamConfig;
-  afkLabelName: string;
-  workflowStates: LinearGraphqlWorkflowStatesConfig;
-}
-
-export type LinearGraphqlTeamConfig = { key: string; id?: string } | { key?: string; id: string };
-
-export interface LinearGraphqlWorkflowStatesConfig {
-  ready: LinearGraphqlWorkflowStateConfig;
-  running: LinearGraphqlWorkflowStateConfig;
-  done: LinearGraphqlWorkflowStateConfig;
-  handoff: LinearGraphqlWorkflowStateConfig;
-}
-
-export type LinearGraphqlWorkflowStateConfig = { name: string; id?: string } | { name?: string; id: string };
-
 export interface AfkProjectConfig {
   testsEnabled: boolean;
   testEnvFile?: string;
   smokeTestCommand?: string;
   staticCheckCommands: string[];
   linear?: LinearProjectConfig;
-  provider: AfkTrackerProviderConfig;
+}
+
+export type TrackerProviderKind = 'scratch' | 'linear';
+
+export function inferTrackerProviderKind(config: AfkProjectConfig): TrackerProviderKind {
+  return config.linear ? 'linear' : 'scratch';
 }
 
 export interface LinearProjectConfig {
@@ -128,10 +109,11 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
   }
 
   const linear = validateLinearProjectConfig(record.linear, errors);
-  const providerValidation = validateProviderConfig(record.provider);
-  errors.push(...providerValidation.errors);
+  if (record.provider !== undefined) {
+    errors.push('provider is no longer supported; configure the linear block instead.');
+  }
 
-  if (errors.length || typeof record.testsEnabled !== 'boolean' || !providerValidation.config) return { errors };
+  if (errors.length || typeof record.testsEnabled !== 'boolean') return { errors };
 
   return {
     config: {
@@ -144,7 +126,6 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
         ? staticCheckCommands.map((item) => String(item).trim())
         : [],
       ...(linear ? { linear } : {}),
-      provider: providerValidation.config,
     },
     errors: [],
   };
@@ -269,154 +250,6 @@ function firstTrimmedString(...values: unknown[]): string | undefined {
     if (isNonEmptyString(value)) return value.trim();
   }
   return undefined;
-}
-
-function validateProviderConfig(value: unknown): { config?: AfkTrackerProviderConfig; errors: string[] } {
-  if (value === undefined) return { config: { kind: 'scratch' }, errors: [] };
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { errors: ['provider must be an object when present.'] };
-  }
-
-  const record = value as Record<string, unknown>;
-  const credentialErrors = credentialFields(record, 'provider');
-  if (record.kind !== 'scratch' && record.kind !== 'linear-graphql') {
-    return {
-      errors: [`provider.kind must be one of: scratch, linear-graphql.`, ...credentialErrors],
-    };
-  }
-
-  if (record.kind === 'scratch') {
-    return credentialErrors.length ? { errors: credentialErrors } : { config: { kind: 'scratch' }, errors: [] };
-  }
-
-  const errors = [...credentialErrors];
-  const team = validateTeamConfig(record.team);
-  const workflowStates = validateWorkflowStates(record.workflowStates);
-  const afkLabelName = record.afkLabelName;
-
-  errors.push(...team.errors, ...workflowStates.errors);
-  if (typeof afkLabelName !== 'string' || !afkLabelName.trim()) {
-    errors.push('provider.afkLabelName must be a non-empty string.');
-  }
-
-  if (errors.length || !team.config || !workflowStates.config || typeof afkLabelName !== 'string') return { errors };
-
-  return {
-    config: {
-      kind: 'linear-graphql',
-      team: team.config,
-      afkLabelName: afkLabelName.trim(),
-      workflowStates: workflowStates.config,
-    },
-    errors: [],
-  };
-}
-
-function validateWorkflowStates(value: unknown): { config?: LinearGraphqlWorkflowStatesConfig; errors: string[] } {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { errors: ['provider.workflowStates must be an object.'] };
-  }
-
-  const record = value as Record<string, unknown>;
-  const ready = validateWorkflowStateConfig(record.ready, 'provider.workflowStates.ready');
-  const running = validateWorkflowStateConfig(record.running, 'provider.workflowStates.running');
-  const done = validateWorkflowStateConfig(record.done, 'provider.workflowStates.done');
-  const handoff = validateWorkflowStateConfig(record.handoff, 'provider.workflowStates.handoff');
-  const errors = [
-    ...credentialFields(record, 'provider.workflowStates'),
-    ...ready.errors,
-    ...running.errors,
-    ...done.errors,
-    ...handoff.errors,
-  ];
-
-  if (errors.length || !ready.config || !running.config || !done.config || !handoff.config) return { errors };
-
-  return {
-    config: {
-      ready: ready.config,
-      running: running.config,
-      done: done.config,
-      handoff: handoff.config,
-    },
-    errors: [],
-  };
-}
-
-function validateTeamConfig(value: unknown): { config?: LinearGraphqlTeamConfig; errors: string[] } {
-  const result = validateKeyOrId(value, 'provider.team');
-  return { config: result.config as LinearGraphqlTeamConfig | undefined, errors: result.errors };
-}
-
-function validateWorkflowStateConfig(
-  value: unknown,
-  field: string,
-): { config?: LinearGraphqlWorkflowStateConfig; errors: string[] } {
-  const result = validateKeyOrId(value, field, 'name');
-  return { config: result.config as LinearGraphqlWorkflowStateConfig | undefined, errors: result.errors };
-}
-
-function validateKeyOrId(
-  value: unknown,
-  field: string,
-  primaryKey: 'key' | 'name' = 'key',
-): {
-  config?:
-    | { key: string; id?: string }
-    | { name: string; id?: string }
-    | { key?: string; id: string }
-    | { name?: string; id: string };
-  errors: string[];
-} {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { errors: [`${field} must be an object with ${primaryKey} or id.`] };
-  }
-
-  const record = value as Record<string, unknown>;
-  const id = record.id;
-  const primary = record[primaryKey];
-  const errors = credentialFields(record, field);
-  if (primary !== undefined && (typeof primary !== 'string' || !primary.trim())) {
-    errors.push(`${field}.${primaryKey} must be a non-empty string when present.`);
-  }
-  if (id !== undefined && (typeof id !== 'string' || !id.trim())) {
-    errors.push(`${field}.id must be a non-empty string when present.`);
-  }
-  if ((typeof primary !== 'string' || !primary.trim()) && (typeof id !== 'string' || !id.trim())) {
-    errors.push(`${field} must include ${primaryKey} or id.`);
-  }
-  if (errors.length) return { errors };
-
-  return {
-    config: {
-      ...(typeof primary === 'string' && primary.trim() ? { [primaryKey]: primary.trim() } : {}),
-      ...(typeof id === 'string' && id.trim() ? { id: id.trim() } : {}),
-    } as
-      | { key: string; id?: string }
-      | { name: string; id?: string }
-      | { key?: string; id: string }
-      | { name?: string; id: string },
-    errors: [],
-  };
-}
-
-function credentialFields(record: Record<string, unknown>, field: string, seen = new WeakSet<object>()): string[] {
-  if (seen.has(record)) return [];
-  seen.add(record);
-
-  return Object.entries(record).flatMap(([key, value]) => {
-    const nestedField = `${field}.${key}`;
-    const credentialKey = key.replace(/[-_]/g, '');
-    const errors = /token|secret|password|credential|apikey/i.test(credentialKey)
-      ? [`${nestedField} must not be stored in ${AFK_CONFIG_FILE}; use environment variables or an auth store.`]
-      : [];
-
-    if (value && typeof value === 'object') {
-      errors.push(...credentialFields(value as Record<string, unknown>, nestedField, seen));
-    }
-
-    return errors;
-  });
 }
 
 function unknownPlaceholders(command: string): string[] {
