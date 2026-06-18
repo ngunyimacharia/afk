@@ -164,6 +164,63 @@ test('installs commit hook that strips AI attribution trailers', async () => {
   assert.doesNotMatch(git(repoRoot, ['log', '-1', '--format=%B']), /Co-Authored-By/i);
 });
 
+test('finalizes ticket status and commits leftover changes on reviewer approval', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-finalize-'));
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'base\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', '001.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(
+    ticketPath,
+    '---\nstatus: ready-for-agent\n---\n\n## Ticket\n\n## AFK Summary\n\n### Reviewer Notes\nDone.\n',
+  );
+
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: 'review-session',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      // Implementor leaves source changes uncommitted and does not mark ticket done.
+      writeFileSync(path.join(repoRoot, 'feature.txt'), 'feature work\n');
+      git(repoRoot, ['add', 'feature.txt']);
+      return { status: 'completed', sessionId: 'execution-session', removable: true };
+    },
+  });
+
+  const result = await runner.launch({
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      worktreePath: repoRoot,
+    },
+  });
+
+  assert.equal(result.outcome, 'completed');
+  assert.match(readFileSync(ticketPath, 'utf8'), /status: done/);
+  assert.doesNotMatch(git(repoRoot, ['status', '--porcelain']), /feature\.txt/);
+  assert.match(git(repoRoot, ['log', '-1', '--format=%s']), /finalize feat\/001/);
+});
+
 test('persists provider session id as soon as progress observes it', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-session-observed-'));
   const store = new RuntimeStore({ repoRoot });
@@ -717,7 +774,7 @@ test('records clean approval metadata when reviewer confirms done with no findin
   assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[\]/);
 });
 
-test('hands off without fixup when reviewer returns no findings and done:false', async () => {
+test('retries then hands off when reviewer returns no findings and done:false', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-findings-handoff-'));
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, 'ticket.md');
@@ -778,7 +835,8 @@ test('hands off without fixup when reviewer returns no findings and done:false',
   await runner.launch(plan as never);
 
   assert.equal(executionCalls, 1);
-  assert.equal(reviewerCalls, 1);
+  // Initial review + 2 malformed retries from the default budget.
+  assert.equal(reviewerCalls, 3);
   const metadataPath = path.join(
     repoRoot,
     '.scratch',
@@ -789,10 +847,10 @@ test('hands off without fixup when reviewer returns no findings and done:false',
   const metadata = readFileSync(metadataPath, 'utf8');
   assert.match(metadata, /"STATUS": "blocked"/);
   assert.match(metadata, /"FINAL_REVIEW_OUTCOME": "needs-human"/);
-  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "missing-findings-handoff"/);
-  assert.match(metadata, /"classification": "missing-findings-handoff"/);
+  assert.match(metadata, /"FINAL_REVIEW_CLASSIFICATION": "malformed-output-handoff"/);
+  assert.match(metadata, /"classification": "malformed-output-handoff"/);
   assert.match(metadata, /"FINAL_REVIEW_FINDINGS": \[\]/);
-  assert.match(metadata, /Reviewer output had no actionable findings/);
+  assert.match(metadata, /Malformed reviewer output repeated after format-repair retry/);
 });
 
 test('records real-finding loop and handoff metadata for unresolved major findings', async () => {

@@ -200,7 +200,7 @@ test('generated prompt includes scratch artifact completion checklist', () => {
     ticketContent: '---\nstatus: ready-for-agent\n---\n',
   });
   assert.match(prompt, /## Scratch Artifact Completion Checklist/);
-  assert.match(prompt, /`status` field is updated to `done`/);
+  assert.match(prompt, /`status` field is NOT set to `done`/);
   assert.match(prompt, /scratch artifacts created are local-only under `\.scratch\//);
   assert.match(prompt, /Source code changes are committed using conventional commits/);
   assert.match(prompt, /Commit messages contain no AI, model, Claude, opencode/);

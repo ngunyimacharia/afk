@@ -185,20 +185,6 @@ test('loops on done:false even with minor findings', () => {
   assert.equal(decideReviewOutcome(minorReview, { cycle: 1 }).decision, 'loop');
 });
 
-test('hands off when done:false with empty findings even below cycle cap', () => {
-  const incompleteReview = parseReviewerOutput({
-    done: false,
-    summary: 'Ticket incomplete: missing AFK Summary',
-    findings: [],
-  });
-
-  assert.equal(incompleteReview.fallback, false);
-  assert.equal(incompleteReview.done, false);
-  const decision = decideReviewOutcome(incompleteReview, { cycle: 1 });
-  assert.equal(decision.decision, 'needs-human');
-  assert.match(decision.reason, /no actionable findings/);
-});
-
 test('parses single-object arrays and common finding aliases', () => {
   const review = parseReviewerOutput(
     JSON.stringify([
@@ -228,17 +214,16 @@ test('does not accept prompt-disallowed legacy severities', () => {
   }
 });
 
-test('hands off with no actionable findings and preserves empty findings array', () => {
+test('treats done:false with empty findings and substantive summary as malformed', () => {
   const emptyFindingsReview = parseReviewerOutput({
     done: false,
-    summary: 'No specific issues to report',
+    summary: 'Ticket incomplete: missing AFK Summary',
     findings: [],
   });
 
-  const decision = decideReviewOutcome(emptyFindingsReview, { cycle: 1, maxCycles: 3 });
-  assert.equal(decision.decision, 'needs-human');
-  assert.equal(decision.findings.length, 0);
-  assert.match(decision.reason, /no actionable findings/);
+  assert.equal(emptyFindingsReview.fallback, true);
+  assert.equal(emptyFindingsReview.failureKind, 'malformed-output');
+  assert.equal(emptyFindingsReview.findings.length, 0);
 });
 
 test('parses targetMismatch flag from reviewer output', () => {

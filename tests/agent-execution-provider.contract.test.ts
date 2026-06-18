@@ -5,7 +5,9 @@ import {
   CodexAgentExecutionProvider,
   decideAfkPermission,
   FakeAgentExecutionProvider,
+  isCommandAllowed,
   OpenCodeAgentExecutionProvider,
+  resolveAgentInvocationPolicy,
 } from '../src/agent-execution-provider.js';
 import { SDKOpenCodeSessionExecutor } from '../src/opencode.js';
 import { PermissionCoordinator } from '../src/permission-coordinator.js';
@@ -607,6 +609,21 @@ test('shared permission coordinator serializes concurrent tickets FIFO', async (
     coordinator.history.map((entry) => `${entry.metadata.ticketLabel}:${entry.request.permissionId}`),
     ['feat-a/001:per-a', 'feat-b/001:per-b'],
   );
+});
+
+test('reviewer policy allows scratch-write and git-commit', () => {
+  const reviewerPolicy = resolveAgentInvocationPolicy('reviewer');
+
+  assert.deepEqual(reviewerPolicy.allowedCommandKinds, ['read', 'diagnostic', 'scratch-write', 'git-commit']);
+  assert.equal(reviewerPolicy.canMutateWorkspace, false);
+  assert.equal(reviewerPolicy.canMutateGitState, true);
+  assert.equal(reviewerPolicy.canMutateScratch, true);
+
+  assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'read' }), true);
+  assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'scratch-write' }), true);
+  assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'git-commit' }), true);
+  assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'write' }), false);
+  assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'git-push' }), false);
 });
 
 async function waitFor(condition: () => boolean): Promise<void> {

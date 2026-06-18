@@ -37,7 +37,7 @@ test('resolves the embedded reviewer prompt outside the target repo', () => {
   const template = resolveReviewerPrompt({ repoRoot: '/tmp/repo-without-afk-prompts' });
   assert.equal(template.id, 'reviewer-default');
   assert.equal(template.path, 'builtin:reviewer-default');
-  assert.match(template.content ?? '', /Review the completed ticket in read-only mode/);
+  assert.match(template.content ?? '', /finalization reviewer/);
   assert.equal(template.path.startsWith('/tmp/repo-without-afk-prompts'), false);
 });
 
@@ -55,11 +55,11 @@ test('reviewer prompt enforces strict json and schema examples', () => {
   assert.match(source, /Finding example:/);
 });
 
-test('reviewer completion criteria require status done and AFK Summary but not reviewer notes', () => {
+test('reviewer completion criteria require AFK Summary with Reviewer Notes and ticket finalization', () => {
   const source = readFileSync(promptPath('reviewer-default.md'), 'utf8');
   assert.match(source, /status: done/);
   assert.match(source, /## AFK Summary/);
-  assert.doesNotMatch(source, /Reviewer Notes/);
+  assert.match(source, /Reviewer Notes/);
 });
 
 test('reviewer prompt instructs exact paths first and avoids broad searches', () => {
