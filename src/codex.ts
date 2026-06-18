@@ -43,10 +43,7 @@ export async function discoverCodexModels(env: NodeJS.ProcessEnv = process.env):
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean);
-  return [
-    DEFAULT_CODEX_MODEL,
-    ...configuredModels.map((model) => ({ id: `codex/${model}`, label: model })),
-  ];
+  return [DEFAULT_CODEX_MODEL, ...configuredModels.map((model) => ({ id: `codex/${model}`, label: model }))];
 }
 
 export class CodexSessionExecutor implements OpenCodeSessionExecutor {
@@ -164,10 +161,17 @@ export class CodexSessionExecutor implements OpenCodeSessionExecutor {
       }
 
       sessionId = sessionId || thread.id;
-      onProgress({ message: terminalError ? `codex thread failed: ${terminalError}` : 'codex thread completed', sessionId });
+      onProgress({
+        message: terminalError ? `codex thread failed: ${terminalError}` : 'codex thread completed',
+        sessionId,
+      });
       return { sessionId, output, terminalError, finalMessageText };
     } catch (error) {
-      const reason = input.signal?.aborted ? 'run killed' : error instanceof Error ? error.message : 'codex execution failed';
+      const reason = input.signal?.aborted
+        ? 'run killed'
+        : error instanceof Error
+          ? error.message
+          : 'codex execution failed';
       return {
         sessionId,
         output,
@@ -217,11 +221,7 @@ async function consumeCodexTurn(input: {
     }
 
     if (!iterator) {
-      const result = await Promise.race([
-        streamPromise,
-        delay(Math.min(remaining, 1_000)),
-        aborted(input.signal),
-      ]);
+      const result = await Promise.race([streamPromise, delay(Math.min(remaining, 1_000)), aborted(input.signal)]);
       if (result === 'tick') continue;
       if (result === 'aborted') {
         input.onAbort();
@@ -231,7 +231,11 @@ async function consumeCodexTurn(input: {
       nextPromise = iterator.next();
     }
 
-    const result = await Promise.race([nextPromise!, delay(Math.min(remaining, 1_000)), aborted(input.signal)]);
+    if (!nextPromise) {
+      nextPromise = iterator.next();
+    }
+
+    const result = await Promise.race([nextPromise, delay(Math.min(remaining, 1_000)), aborted(input.signal)]);
     if (result === 'tick') continue;
     if (result === 'aborted') {
       input.onAbort();
@@ -293,7 +297,9 @@ export function parseCodexBoolean(value: string | undefined): boolean {
 }
 
 async function createDefaultCodexClient(): Promise<CodexClientLike> {
-  const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+  const dynamicImport = new Function('specifier', 'return import(specifier)') as (
+    specifier: string,
+  ) => Promise<unknown>;
   const mod = (await dynamicImport('@openai/codex-sdk')) as { Codex?: new () => CodexClientLike };
   if (!mod.Codex) throw new Error('Codex SDK is unavailable');
   return new mod.Codex();
