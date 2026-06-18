@@ -315,7 +315,6 @@ test('readiness uses afk.json commands instead of inferred package scripts', () 
       testsEnabled: true,
       smokeTestCommand: 'bun test {testFile}',
       staticCheckCommands: ['bun run build'],
-      provider: { kind: 'scratch' },
     },
     executor,
   });
