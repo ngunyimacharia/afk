@@ -59,6 +59,7 @@ test('loads linear GraphQL provider config', () => {
       kind: 'linear-graphql',
       team: { key: 'AFK' },
       afkLabelName: 'afk',
+      projectId: 'project-123',
       workflowStates: {
         ready: { name: 'Ready for agent' },
         running: { id: 'state-running' },
@@ -73,6 +74,7 @@ test('loads linear GraphQL provider config', () => {
     kind: 'linear-graphql',
     team: { key: 'AFK' },
     afkLabelName: 'afk',
+    projectId: 'project-123',
     workflowStates: {
       ready: { name: 'Ready for agent' },
       running: { id: 'state-running' },
@@ -241,4 +243,102 @@ test('reports incomplete linear setup and rejects inline secrets', () => {
   assert.match(result.errors.join('\n'), /dedicated AFK label/);
   assert.match(result.errors.join('\n'), /workflowStates\.handoff/);
   assert.match(result.errors.join('\n'), /must not include API keys or tokens/);
+});
+
+function linearGraphqlProvider(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: 'linear-graphql',
+    team: { key: 'AFK' },
+    afkLabelName: 'afk',
+    workflowStates: {
+      ready: { name: 'Ready for agent' },
+      running: { id: 'state-running' },
+      done: { name: 'Done' },
+      handoff: { name: 'Ready for human' },
+    },
+    ...overrides,
+  };
+}
+
+test('accepts valid linear.projectId for linear-graphql provider', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    linear: {
+      team: 'AFK',
+      labelName: 'afk',
+      projectId: 'project-linear',
+      workflowStates: { ready: 'Ready', running: 'Running', done: 'Done', handoff: 'Handoff' },
+    },
+    provider: linearGraphqlProvider(),
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.config?.linear?.projectId, 'project-linear');
+  assert.equal((result.config?.provider as { projectId: string }).projectId, 'project-linear');
+});
+
+test('accepts valid provider.projectId for linear-graphql provider', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: linearGraphqlProvider({ projectId: 'project-provider' }),
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal((result.config?.provider as { projectId: string }).projectId, 'project-provider');
+});
+
+test('provider.projectId takes precedence over linear.projectId', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    linear: {
+      team: 'AFK',
+      labelName: 'afk',
+      projectId: 'project-linear',
+      workflowStates: { ready: 'Ready', running: 'Running', done: 'Done', handoff: 'Handoff' },
+    },
+    provider: linearGraphqlProvider({ projectId: 'project-provider' }),
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal((result.config?.provider as { projectId: string }).projectId, 'project-provider');
+});
+
+test('rejects linear-graphql provider when projectId is missing', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: linearGraphqlProvider(),
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /linear\.projectId or provider\.projectId/);
+});
+
+test('rejects invalid or empty projectId values', () => {
+  const linearBase = {
+    team: 'AFK',
+    labelName: 'afk',
+    workflowStates: { ready: 'Ready', running: 'Running', done: 'Done', handoff: 'Handoff' },
+  };
+
+  const emptyLinear = validateAfkProjectConfig({
+    testsEnabled: false,
+    linear: { ...linearBase, projectId: '   ' },
+    provider: linearGraphqlProvider(),
+  });
+  assert.equal(emptyLinear.config, undefined);
+  assert.match(emptyLinear.errors.join('\n'), /linear\.projectId must be a non-empty string/);
+
+  const emptyProvider = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: linearGraphqlProvider({ projectId: '' }),
+  });
+  assert.equal(emptyProvider.config, undefined);
+  assert.match(emptyProvider.errors.join('\n'), /provider\.projectId must be a non-empty string/);
+
+  const numericProjectId = validateAfkProjectConfig({
+    testsEnabled: false,
+    provider: linearGraphqlProvider({ projectId: 123 as unknown as string }),
+  });
+  assert.equal(numericProjectId.config, undefined);
+  assert.match(numericProjectId.errors.join('\n'), /provider\.projectId must be a non-empty string/);
 });
