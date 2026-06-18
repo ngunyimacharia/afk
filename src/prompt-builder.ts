@@ -72,7 +72,7 @@ function buildCompletionChecklistLines(ticket: TicketRecord): string[] {
     '## Scratch Artifact Completion Checklist',
     '',
     'Before exiting, confirm ALL of the following:',
-    '- [ ] The ticket YAML frontmatter `status` field is updated to `done` (or `ready-for-human` if blocked).',
+    '- [ ] The ticket YAML frontmatter `status` field is NOT set to `done`. Leave it in its current working state (e.g., `ready-for-agent`). The reviewer will set it to `done` after approval.',
     '- [ ] The ticket file contains an `## AFK Summary` section with a `### Reviewer Notes` subsection.',
     '- [ ] The `### Reviewer Notes` subsection covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
     '- [ ] Any scratch artifacts created are local-only under `.scratch/` and are NOT committed to the repo.',
@@ -92,7 +92,8 @@ function buildTicketUpdateContractLines(ticket: TicketRecord): string[] {
       `Issue reference: ${ticket.label}`,
       '',
       'Before exiting, edit that ticket file directly. Do not put the final AFK summary only in the assistant response, runtime log, or commit message.',
-      'If the ticket is complete, set its YAML frontmatter `status` field to `done` and append/update the `## AFK Summary` section in that file.',
+      'Do NOT set the YAML frontmatter `status` field to `done`. The reviewer will set the final status after review.',
+      'Append/update the `## AFK Summary` section in that file.',
       'The `## AFK Summary` section MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
     ];
   }
@@ -109,8 +110,9 @@ function buildTicketUpdateContractLines(ticket: TicketRecord): string[] {
     ...(mirrorPath ? [`Managed local mirror: ${mirrorPath}`] : []),
     ...(summaryPath ? [`Run summary artifact: ${summaryPath}`] : []),
     '',
-    'Before exiting, update the managed local mirror or run summary artifact with the final status and reviewer-ready AFK summary details.',
-    'AFK will sync the local run result back to the source tracker after completion; do not attempt to call the source tracker directly.',
+    'Before exiting, update the managed local mirror or run summary artifact with reviewer-ready AFK summary details.',
+    'Do NOT mark the ticket as done in the source tracker or set the local mirror status to `done`. The reviewer will finalize the status.',
+    'AFK will sync the local run result back to the source tracker after reviewer approval; do not attempt to call the source tracker directly.',
     'The local result MUST include a `### Reviewer Notes` subsection that covers: changes made, tests run, caveats or risks, and follow-ups useful to the reviewer.',
     ...(ticket.provider?.runResultInstructions?.length ? ['', ...ticket.provider.runResultInstructions] : []),
   ];
