@@ -32,6 +32,7 @@ When the repository context, user request, or existing workflow shows that Linea
   "linear": {
     "teamId": "team-uuid-or-id",
     "labelName": "AFK",
+    "projectId": "project-uuid-or-id",
     "workflowStates": {
       "ready": "Ready for AFK",
       "running": "AFK Running",
@@ -81,6 +82,7 @@ Rules:
 - Do not include a `provider` block; `afk.json` has no `provider.kind` or `provider` key.
 - `linear.teamId` is preferred for Linear execution. `linear.teamKey` may be used only when the consuming workflow supports resolving a team key; otherwise use the team ID.
 - `linear.labelName` must name an existing dedicated AFK label.
+- `linear.projectId` is required when Linear support is enabled and must be an existing Linear project ID.
 - `linear.workflowStates.ready`, `running`, `done`, and `handoff` must name or identify existing Linear workflow states.
 - `linear.apiKey` stores the actual Linear API key and is required when Linear support is enabled.
 - `afk.json` must stay out of version control because it contains secrets; ensure it is gitignored.
@@ -93,7 +95,7 @@ Rules:
 3. Determine a smoke test command that runs a single deterministic test file when possible.
 4. Determine static checks such as lint, typecheck, build, check, or format-check commands when they are safe and non-mutating.
 5. Detect whether Linear support is desired from the user request, README/docs, existing Linear manifests, or Linear-related AFK workflows.
-6. If Linear support is desired, identify the team ID or key, dedicated AFK label name, ready/running/done/handoff workflow state names or IDs, and the Linear API key.
+6. If Linear support is desired, identify the team ID or key, dedicated AFK label name, Linear project ID, ready/running/done/handoff workflow state names or IDs, and the Linear API key.
 7. If the Linear API key is available, use only read-only Linear API checks to confirm the label and workflow states already exist. Report any missing label or workflow state as a setup task; do not create Linear labels or workflow states automatically.
 8. If Linear support is desired but the label or workflow states cannot be confirmed, still store `linear.apiKey` only when it is available and explain the missing setup tasks clearly in the response.
 9. Create or update `afk.json` with only the approved schema.
