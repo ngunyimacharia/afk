@@ -77,14 +77,11 @@ function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string):
   }
 
   const done = parsed.done;
+  const targetMismatch = typeof parsed.targetMismatch === 'boolean' ? parsed.targetMismatch : false;
 
-  // If done is true but there are findings, this is inconsistent - treat as malformed
-  if (done && findingsPayload && findingsPayload.length > 0) {
-    return null;
-  }
-
-  // If there are no findings payload at all, treat as empty findings array
-  if (!findingsPayload) {
+  // Target mismatch is a structural/infrastructure signal and should be parsed
+  // even when findings are empty.
+  if (targetMismatch) {
     return {
       summary,
       findings: [],
@@ -92,7 +89,31 @@ function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string):
       fallback: false,
       done,
       raw,
+      targetMismatch: true,
     };
+  }
+
+  // If done is true but there are findings, this is inconsistent - treat as malformed
+  if (done && findingsPayload && findingsPayload.length > 0) {
+    return null;
+  }
+
+  // If there are no findings payload at all:
+  // - Approval with no findings is valid.
+  // - A non-approval with no findings is malformed; the reviewer must explain
+  //   blockers in the findings array rather than only in summary.
+  if (!findingsPayload || findingsPayload.length === 0) {
+    if (done) {
+      return {
+        summary,
+        findings: [],
+        highestSeverity: 'minor',
+        fallback: false,
+        done,
+        raw,
+      };
+    }
+    return null;
   }
 
   const findings = findingsPayload.map(normalizeFinding);
@@ -101,7 +122,6 @@ function normalizeReviewerPayload(parsed: Record<string, unknown>, raw: string):
   }
 
   const normalizedFindings = findings as ReviewerFinding[];
-  const targetMismatch = typeof parsed.targetMismatch === 'boolean' ? parsed.targetMismatch : false;
   return {
     summary,
     findings: normalizedFindings,
