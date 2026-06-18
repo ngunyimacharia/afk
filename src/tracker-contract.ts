@@ -16,6 +16,7 @@ export interface TrackerProviderRef {
 
 export interface TrackerWorkItemContent {
   feature: string;
+  featureTitle?: string;
   issueName: string;
   label: string;
   status: string;
@@ -123,6 +124,7 @@ export function trackerWorkItemToTicketRecord(
   return {
     path,
     feature: item.feature,
+    ...(item.featureTitle ? { featureTitle: item.featureTitle } : {}),
     issueName: item.issueName,
     label: item.label,
     status: item.status,
@@ -137,6 +139,7 @@ export function ticketRecordToTrackerWorkItem(ticket: TicketRecord, body = ''): 
   return {
     key,
     feature: ticket.feature,
+    ...(ticket.featureTitle ? { featureTitle: ticket.featureTitle } : {}),
     issueName: ticket.issueName,
     label: ticket.label,
     status: ticket.status ?? '',

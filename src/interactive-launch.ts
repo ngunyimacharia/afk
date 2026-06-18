@@ -127,6 +127,7 @@ interface PromptChoice {
 
 interface PromptSuggestChoice {
   title?: string;
+  value?: string;
 }
 
 export function formatModelSelectionTitle(model: LaunchModel): string {
@@ -135,6 +136,17 @@ export function formatModelSelectionTitle(model: LaunchModel): string {
   const provider = model.id.slice(0, slash);
   const modelName = model.label ?? model.id.slice(slash + 1);
   return `${provider} - ${modelName}`;
+}
+
+export function formatFeatureSelectionTitle(feature: string, featureTitle: string | undefined, count: number): string {
+  const title = featureTitle && featureTitle !== feature ? truncateWithEllipsis(featureTitle, 50) : undefined;
+  if (title) return `${feature} — ${title} (${count} eligible tickets)`;
+  return `${feature} (${count} eligible tickets)`;
+}
+
+function truncateWithEllipsis(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1)}…`;
 }
 
 export function prioritizeModelChoices(models: LaunchModel[], preferredModelId?: string): PromptChoice[] {
@@ -178,6 +190,12 @@ async function promptSingleSelect(
 
 async function promptFeatureMultiSelect(io: PromptIO, tickets: TicketRecord[]): Promise<TicketRecord[] | null> {
   const features = [...new Set(tickets.map((ticket) => ticket.feature))].sort();
+  const featureTitles = new Map(
+    features.map((feature) => {
+      const title = tickets.find((ticket) => ticket.feature === feature)?.featureTitle;
+      return [feature, title];
+    }),
+  );
   while (true) {
     const result = await prompts(
       {
@@ -186,7 +204,10 @@ async function promptFeatureMultiSelect(io: PromptIO, tickets: TicketRecord[]): 
         message: 'Select features to implement',
         choices: features.map((feature) => {
           const count = tickets.filter((ticket) => ticket.feature === feature).length;
-          return { title: `${feature} (${count} eligible tickets)`, value: feature };
+          return {
+            title: formatFeatureSelectionTitle(feature, featureTitles.get(feature), count),
+            value: feature,
+          };
         }),
         instructions: true,
         min: 0,
@@ -194,7 +215,7 @@ async function promptFeatureMultiSelect(io: PromptIO, tickets: TicketRecord[]): 
           const query = input.trim().toLowerCase();
           if (!query) return choices;
           return choices.filter((choice) =>
-            String(choice?.title ?? '')
+            String(choice?.value ?? '')
               .toLowerCase()
               .includes(query),
           );

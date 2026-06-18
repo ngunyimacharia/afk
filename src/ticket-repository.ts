@@ -31,6 +31,20 @@ function readFrontmatterValue(frontmatter: Record<string, unknown>, key: string)
   return undefined;
 }
 
+function readFeatureTitle(prdPath: string): string | undefined {
+  try {
+    const content = readFileSync(prdPath, 'utf8');
+    const match = /^#\s+(.+)$/m.exec(content);
+    if (!match) return undefined;
+    return match[1]
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[*_`]/g, '')
+      .trim();
+  } catch {
+    return undefined;
+  }
+}
+
 function parseDependsOn(value: unknown, filePath: string): string[] {
   if (!value) return [];
   if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
@@ -55,15 +69,17 @@ export class TicketRepository {
     if (!this.exists(scratchRoot)) return [];
     const features = readdirSync(scratchRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
     return features.flatMap((featureDir) => {
-      const issuesDir = path.join(scratchRoot, featureDir.name, 'issues');
+      const feature = featureDir.name;
+      const issuesDir = path.join(scratchRoot, feature, 'issues');
       if (!this.exists(issuesDir)) return [];
+      const featureTitle = readFeatureTitle(path.join(scratchRoot, feature, 'PRD.md'));
       return readdirSync(issuesDir)
         .filter((file) => file.endsWith('.md'))
-        .map((file) => this.readTicket(path.join(issuesDir, file), featureDir.name));
+        .map((file) => this.readTicket(path.join(issuesDir, file), feature, featureTitle));
     });
   }
 
-  readTicket(filePath: string, featureFallback?: string): TicketRecord {
+  readTicket(filePath: string, featureFallback?: string, featureTitle?: string): TicketRecord {
     const content = readFileSync(filePath, 'utf8');
     const frontmatter = parseFrontmatter(content, filePath);
     const feature =
@@ -78,7 +94,16 @@ export class TicketRepository {
     const status = statusValue.trim();
     const executorAfk = normalize(readFrontmatterValue(frontmatter, 'executor') as string | undefined) === 'afk';
     const dependsOn = parseDependsOn(readFrontmatterValue(frontmatter, 'Depends-On'), filePath);
-    return { path: filePath, feature, issueName, label: `${feature}/${issueName}`, status, executorAfk, dependsOn };
+    return {
+      path: filePath,
+      feature,
+      featureTitle,
+      issueName,
+      label: `${feature}/${issueName}`,
+      status,
+      executorAfk,
+      dependsOn,
+    };
   }
 
   isEligible(ticket: TicketRecord): boolean {

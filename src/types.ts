@@ -4,6 +4,7 @@ import type { ReadinessCheckMetadata } from './readiness-service.js';
 export interface TicketRecord {
   path: string;
   feature: string;
+  featureTitle?: string;
   issueName: string;
   label: string;
   status?: string;

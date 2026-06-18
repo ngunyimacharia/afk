@@ -155,6 +155,7 @@ export function linearFeaturesToTicketRecords(features: LinearParentFeature[]): 
         {
           path: `linear://${item.key}`,
           feature: feature.featureSlug,
+          featureTitle: feature.title,
           issueName,
           label: `${feature.featureSlug}/${issueName}`,
           status: 'ready-for-agent',
