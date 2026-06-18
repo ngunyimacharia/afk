@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type {
   PermissionResult,
   Query,
@@ -23,6 +25,13 @@ const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_STALE_RECOVERIES = 5;
 const KIMI_BASE_URL = 'https://api.kimi.com/coding/';
+const CLAUDE_LOCAL_SETTINGS_PATH = '.claude/settings.local.json';
+
+const ANTHROPIC_MODELS: LaunchModel[] = [
+  { id: 'anthropic/claude-opus-4', label: 'Claude Opus 4' },
+  { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
+  { id: 'anthropic/claude-haiku-4', label: 'Claude Haiku 4' },
+];
 
 let cachedClaudeCodePath: string | undefined | null = null;
 
@@ -31,24 +40,82 @@ function resolveClaudeCodeExecutablePath(): string | undefined {
 
   try {
     const whichPath = resolveExecutable('which');
-    const path = execFileSync(whichPath, ['claude'], { encoding: 'utf8' }).trim();
-    cachedClaudeCodePath = path;
-    return path;
+    const executablePath = execFileSync(whichPath, ['claude'], { encoding: 'utf8' }).trim();
+    cachedClaudeCodePath = executablePath;
+    return executablePath;
   } catch {
     cachedClaudeCodePath = undefined;
     return undefined;
   }
 }
 
-export async function discoverClaudeModels(): Promise<LaunchModel[]> {
-  // Uses ANTHROPIC_API_KEY because the Claude harness runs via the Anthropic SDK
-  // routed to Kimi's endpoint (see KIMI_BASE_URL override in the executor).
-  if (!process.env.ANTHROPIC_API_KEY) return [];
-  return [{ id: 'kimi/kimi-for-coding', label: 'Kimi for Coding' }];
+export function isClaudeCodeInstalled(): boolean {
+  return !!resolveClaudeCodeExecutablePath();
+}
+
+export function resetClaudeCodeExecutablePathCache(): void {
+  cachedClaudeCodePath = null;
+}
+
+interface ClaudeRepoConfig {
+  env: Record<string, string | undefined>;
+  isKimi: boolean;
+  source: 'file' | 'executable' | 'none';
+}
+
+function isKimiEndpoint(baseUrl: string | undefined): boolean {
+  return typeof baseUrl === 'string' && baseUrl.includes('kimi.com');
+}
+
+export interface ClaudeRepoConfigDeps {
+  isClaudeCodeInstalled?: () => boolean;
+}
+
+export function resolveClaudeRepoConfig(repoRoot: string, deps: ClaudeRepoConfigDeps = {}): ClaudeRepoConfig {
+  const settingsPath = path.join(repoRoot, CLAUDE_LOCAL_SETTINGS_PATH);
+  try {
+    const raw = readFileSync(settingsPath, 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && 'env' in parsed) {
+      const fileEnv = (parsed as { env?: Record<string, unknown> }).env;
+      if (fileEnv && typeof fileEnv === 'object') {
+        const stringEnv: Record<string, string> = {};
+        for (const [key, value] of Object.entries(fileEnv)) {
+          if (typeof value === 'string') stringEnv[key] = value;
+        }
+        const mergedEnv = { ...process.env, ...stringEnv };
+        return {
+          env: mergedEnv,
+          isKimi: isKimiEndpoint(mergedEnv.ANTHROPIC_BASE_URL),
+          source: 'file',
+        };
+      }
+    }
+  } catch {
+    // File missing or invalid; fall through to executable detection.
+  }
+
+  const installed = deps.isClaudeCodeInstalled ? deps.isClaudeCodeInstalled() : isClaudeCodeInstalled();
+  if (installed) {
+    return { env: { ...process.env }, isKimi: false, source: 'executable' };
+  }
+
+  return { env: { ...process.env }, isKimi: false, source: 'none' };
+}
+
+export async function discoverClaudeModels(repoRoot?: string, deps: ClaudeRepoConfigDeps = {}): Promise<LaunchModel[]> {
+  const config = resolveClaudeRepoConfig(repoRoot ?? process.cwd(), deps);
+  if (config.source === 'none') return [];
+
+  if (config.isKimi) {
+    return [{ id: 'kimi/kimi-for-coding', label: 'Kimi for Coding' }];
+  }
+
+  return ANTHROPIC_MODELS;
 }
 
 export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
-  constructor(private readonly provider: 'kimi') {}
+  constructor(private readonly repoRoot: string) {}
 
   async run(input: {
     model: LaunchModel;
@@ -74,8 +141,9 @@ export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
     const sessionId = input.sessionId ?? randomUUID();
     const isResumingFromPreviousRun = !!input.sessionId;
 
-    const env: Record<string, string | undefined> = { ...process.env };
-    if (this.provider === 'kimi' && !env.ANTHROPIC_BASE_URL) {
+    const config = resolveClaudeRepoConfig(this.repoRoot);
+    const env: Record<string, string | undefined> = { ...config.env };
+    if (config.isKimi && !env.ANTHROPIC_BASE_URL) {
       env.ANTHROPIC_BASE_URL = KIMI_BASE_URL;
     }
 

@@ -47,8 +47,8 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     autoApprove: true,
   });
 
-  const implementationExecutor = createHarnessExecutor(harness);
-  const reviewerExecutor = createHarnessExecutor(reviewerHarness);
+  const implementationExecutor = createHarnessExecutor(harness, repoRoot);
+  const reviewerExecutor = createHarnessExecutor(reviewerHarness, repoRoot);
 
   const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
   const reviewerProvider = createHarnessAgentExecutionProvider(

@@ -83,7 +83,7 @@ export interface OpenCodePermissionRequest {
   patterns: string[];
 }
 
-export async function discoverOpenCodeModels(): Promise<LaunchModel[]> {
+export async function discoverOpenCodeModels(_repoRoot?: string): Promise<LaunchModel[]> {
   try {
     const sdk = await createAfkOpencode();
     try {

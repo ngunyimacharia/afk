@@ -1,32 +1,161 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, test } from 'node:test';
-import { discoverClaudeModels, parseClaudeCodeEvent } from '../src/claude-code.js';
+import {
+  discoverClaudeModels,
+  parseClaudeCodeEvent,
+  resetClaudeCodeExecutablePathCache,
+  resolveClaudeRepoConfig,
+} from '../src/claude-code.js';
 import { detectClaudeCodeFailure } from '../src/provider-failure.js';
 
-describe('discoverClaudeModels', () => {
-  const originalKey = process.env.ANTHROPIC_API_KEY;
+function makeTempRepo(): string {
+  return mkdtempSync(path.join(os.tmpdir(), 'afk-claude-test-'));
+}
 
-  test('returns model when ANTHROPIC_API_KEY is set', async () => {
-    process.env.ANTHROPIC_API_KEY = 'test-key';
-    const models = await discoverClaudeModels();
-    assert.equal(models.length, 1);
-    assert.equal(models[0].id, 'kimi/kimi-for-coding');
-    assert.equal(models[0].label, 'Kimi for Coding');
+function writeClaudeSettings(repoRoot: string, env: Record<string, string>): void {
+  const dir = path.join(repoRoot, '.claude');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'settings.local.json'), JSON.stringify({ env }), 'utf8');
+}
+
+function cleanupRepo(repoRoot: string): void {
+  try {
+    rmSync(repoRoot, { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup.
+  }
+}
+
+describe('resolveClaudeRepoConfig', () => {
+  const originalApiKey = process.env.ANTHROPIC_API_KEY;
+  const originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+
+  test('reads Kimi override from .claude/settings.local.json', () => {
+    const repoRoot = makeTempRepo();
+    try {
+      writeClaudeSettings(repoRoot, {
+        ANTHROPIC_API_KEY: 'sk-kimi-test',
+        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+      });
+      const config = resolveClaudeRepoConfig(repoRoot);
+      assert.equal(config.source, 'file');
+      assert.equal(config.isKimi, true);
+      assert.equal(config.env.ANTHROPIC_API_KEY, 'sk-kimi-test');
+      assert.equal(config.env.ANTHROPIC_BASE_URL, 'https://api.kimi.com/coding/');
+    } finally {
+      cleanupRepo(repoRoot);
+    }
   });
 
-  test('returns empty array when ANTHROPIC_API_KEY is missing', async () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const models = await discoverClaudeModels();
-    assert.equal(models.length, 0);
+  test('file env overrides process.env', () => {
+    const repoRoot = makeTempRepo();
+    try {
+      process.env.ANTHROPIC_API_KEY = 'shell-key';
+      writeClaudeSettings(repoRoot, { ANTHROPIC_API_KEY: 'file-key' });
+      const config = resolveClaudeRepoConfig(repoRoot);
+      assert.equal(config.env.ANTHROPIC_API_KEY, 'file-key');
+    } finally {
+      cleanupRepo(repoRoot);
+      if (originalApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = originalApiKey;
+      }
+    }
   });
 
-  test('restore original env', () => {
-    if (originalKey === undefined) {
+  test('detects Anthropic config from file', () => {
+    const repoRoot = makeTempRepo();
+    try {
+      writeClaudeSettings(repoRoot, { ANTHROPIC_API_KEY: 'sk-ant-test' });
+      const config = resolveClaudeRepoConfig(repoRoot);
+      assert.equal(config.source, 'file');
+      assert.equal(config.isKimi, false);
+    } finally {
+      cleanupRepo(repoRoot);
+    }
+  });
+
+  test('falls back to executable detection when file is missing', () => {
+    const repoRoot = makeTempRepo();
+    try {
+      resetClaudeCodeExecutablePathCache();
+      const config = resolveClaudeRepoConfig(repoRoot);
+      // Result depends on whether `claude` is installed in the test environment.
+      assert.ok(config.source === 'executable' || config.source === 'none');
+    } finally {
+      cleanupRepo(repoRoot);
+    }
+  });
+
+  test('restores original env', () => {
+    if (originalApiKey === undefined) {
       delete process.env.ANTHROPIC_API_KEY;
     } else {
-      process.env.ANTHROPIC_API_KEY = originalKey;
+      process.env.ANTHROPIC_API_KEY = originalApiKey;
+    }
+    if (originalBaseUrl === undefined) {
+      delete process.env.ANTHROPIC_BASE_URL;
+    } else {
+      process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
     }
     assert.ok(true);
+  });
+});
+
+describe('discoverClaudeModels', () => {
+  test('returns Kimi model when file has Kimi base URL', async () => {
+    const repoRoot = makeTempRepo();
+    try {
+      writeClaudeSettings(repoRoot, {
+        ANTHROPIC_API_KEY: 'sk-kimi-test',
+        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+      });
+      const models = await discoverClaudeModels(repoRoot);
+      assert.equal(models.length, 1);
+      assert.equal(models[0].id, 'kimi/kimi-for-coding');
+      assert.equal(models[0].label, 'Kimi for Coding');
+    } finally {
+      cleanupRepo(repoRoot);
+    }
+  });
+
+  test('returns Anthropic models when file has non-Kimi config', async () => {
+    const repoRoot = makeTempRepo();
+    try {
+      writeClaudeSettings(repoRoot, { ANTHROPIC_API_KEY: 'sk-ant-test' });
+      const models = await discoverClaudeModels(repoRoot);
+      assert.deepEqual(
+        models.map((model) => model.id),
+        ['anthropic/claude-opus-4', 'anthropic/claude-sonnet-4', 'anthropic/claude-haiku-4'],
+      );
+    } finally {
+      cleanupRepo(repoRoot);
+    }
+  });
+
+  test('returns Anthropic models when Claude is installed and no file exists', async () => {
+    const repoRoot = makeTempRepo();
+    try {
+      const models = await discoverClaudeModels(repoRoot, { isClaudeCodeInstalled: () => true });
+      assert.equal(models.length, 3);
+      assert.equal(models[0].id, 'anthropic/claude-opus-4');
+    } finally {
+      cleanupRepo(repoRoot);
+    }
+  });
+
+  test('returns empty array when no file and Claude is not installed', async () => {
+    const repoRoot = makeTempRepo();
+    try {
+      const models = await discoverClaudeModels(repoRoot, { isClaudeCodeInstalled: () => false });
+      assert.equal(models.length, 0);
+    } finally {
+      cleanupRepo(repoRoot);
+    }
   });
 });
 

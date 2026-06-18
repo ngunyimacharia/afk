@@ -536,7 +536,7 @@ export async function runAfk(
     let harness: SelectableHarnessId = 'OpenCode';
     let reviewerHarness: SelectableHarnessId = 'OpenCode';
 
-    const { availableHarnesses, harnessModelCache } = await discoverAvailableHarnesses();
+    const { availableHarnesses, harnessModelCache } = await discoverAvailableHarnesses(undefined, repoRoot);
 
     if (availableHarnesses.length === 0) {
       return {
@@ -584,8 +584,8 @@ export async function runAfk(
     if (!model) return { code: 0, message: 'Launch cancelled' };
     if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
     if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
-    const implementationExecutor = createHarnessExecutor(harness);
-    const reviewerExecutor = createHarnessExecutor(reviewerHarness);
+    const implementationExecutor = createHarnessExecutor(harness, repoRoot);
+    const reviewerExecutor = createHarnessExecutor(reviewerHarness, repoRoot);
     const preflight = await preflightSelectedModels(
       implementationExecutor,
       model,

@@ -18,8 +18,8 @@ interface HarnessRegistryEntry {
   displayName: string;
   providerName: string;
   selectable: boolean;
-  discoverModels?: () => Promise<LaunchModel[]>;
-  createExecutor?: () => OpenCodeSessionExecutor;
+  discoverModels?: (repoRoot?: string) => Promise<LaunchModel[]>;
+  createExecutor?: (repoRoot?: string) => OpenCodeSessionExecutor;
   createAgentExecutionProvider?: (
     executor: OpenCodeSessionExecutor,
     permissionCoordinator?: PermissionCoordinator,
@@ -43,7 +43,7 @@ const HARNESS_REGISTRY = [
     providerName: 'claude',
     selectable: true,
     discoverModels: discoverClaudeModels,
-    createExecutor: () => new ClaudeCodeSessionExecutor('kimi'),
+    createExecutor: (repoRoot) => new ClaudeCodeSessionExecutor(repoRoot ?? process.cwd()),
     createAgentExecutionProvider: (executor, permissionCoordinator) =>
       new ClaudeAgentExecutionProvider(executor, permissionCoordinator),
   },
@@ -52,7 +52,7 @@ const HARNESS_REGISTRY = [
     displayName: 'Codex',
     providerName: 'codex',
     selectable: true,
-    discoverModels: discoverCodexModels,
+    discoverModels: (repoRoot) => discoverCodexModels(process.env, repoRoot),
     createExecutor: () => new CodexSessionExecutor(),
     createAgentExecutionProvider: (executor, permissionCoordinator) =>
       new CodexAgentExecutionProvider(executor, permissionCoordinator),
@@ -75,7 +75,8 @@ export function selectableHarnessIds(): SelectableHarnessId[] {
 }
 
 export async function discoverAvailableHarnesses(
-  discoverModels: (harness: SelectableHarnessId) => Promise<LaunchModel[]> = discoverHarnessModels,
+  discoverModels: (harness: SelectableHarnessId, repoRoot?: string) => Promise<LaunchModel[]> = discoverHarnessModels,
+  repoRoot?: string,
 ): Promise<{
   availableHarnesses: SelectableHarnessId[];
   harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
@@ -84,7 +85,7 @@ export async function discoverAvailableHarnesses(
   const harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>> = {};
   for (const harness of selectableHarnessIds()) {
     try {
-      const models = await discoverModels(harness);
+      const models = await discoverModels(harness, repoRoot);
       if (!models.length) continue;
       availableHarnesses.push(harness);
       harnessModelCache[harness] = models;
@@ -95,15 +96,15 @@ export async function discoverAvailableHarnesses(
   return { availableHarnesses, harnessModelCache };
 }
 
-export async function discoverHarnessModels(harness: SelectableHarnessId): Promise<LaunchModel[]> {
+export async function discoverHarnessModels(harness: SelectableHarnessId, repoRoot?: string): Promise<LaunchModel[]> {
   const discoverModels = HARNESS_BY_ID.get(harness)?.discoverModels;
-  return discoverModels ? discoverModels() : [];
+  return discoverModels ? discoverModels(repoRoot) : [];
 }
 
-export function createHarnessExecutor(harness: SelectableHarnessId): OpenCodeSessionExecutor {
+export function createHarnessExecutor(harness: SelectableHarnessId, repoRoot?: string): OpenCodeSessionExecutor {
   const createExecutor = HARNESS_BY_ID.get(harness)?.createExecutor;
   if (!createExecutor) throw new Error(`Harness is not executable: ${harness}`);
-  return createExecutor();
+  return createExecutor(repoRoot);
 }
 
 export function createHarnessAgentExecutionProvider(

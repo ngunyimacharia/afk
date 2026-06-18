@@ -38,7 +38,10 @@ interface CodexActiveToolState {
   lastSeenAt: number;
 }
 
-export async function discoverCodexModels(env: NodeJS.ProcessEnv = process.env): Promise<LaunchModel[]> {
+export async function discoverCodexModels(
+  env: NodeJS.ProcessEnv = process.env,
+  _repoRoot?: string,
+): Promise<LaunchModel[]> {
   const configuredModels = (env.AFK_CODEX_MODELS ?? '')
     .split(',')
     .map((model) => model.trim())
