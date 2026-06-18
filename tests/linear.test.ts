@@ -25,6 +25,13 @@ import {
   syncLinearRunStarted,
   syncLinearRunTerminal,
 } from '../src/linear.js';
+import { createLinearPlan } from '../src/linear-plan.js';
+import type {
+  LinearIssueDependencyInput,
+  LinearIssueInput,
+  LinearIssueResult,
+  LinearProvider,
+} from '../src/linear-provider.js';
 import type { LinearProjectConfig } from '../src/project-config.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { SingleTicketRunner } from '../src/single-ticket-runner.js';
@@ -34,6 +41,7 @@ const validConfig: LinearProjectConfig = {
   team: 'ENG',
   afkLabel: 'AFK',
   labelName: 'AFK',
+  projectId: 'project-1',
   workflowStates: {
     ready: 'Ready',
     running: 'In Progress',
@@ -55,6 +63,7 @@ test('resolves stable Linear config IDs', async () => {
     teamId: 'team-1',
     teamKey: 'ENG',
     labelId: 'label-1',
+    projectId: 'project-1',
     workflowStateIds: {
       ready: 'state-ready',
       running: 'state-running',
@@ -107,12 +116,130 @@ test('fails Linear startup when a workflow state cannot be resolved', async () =
   );
 });
 
+test('fails Linear startup when configured projectId is missing', async () => {
+  await assert.rejects(
+    () =>
+      resolveLinearConfig({
+        config: { ...validConfig, projectId: undefined },
+        env: { LINEAR_API_KEY: 'linear-key' },
+        client: new FakeLinearClient(),
+      }),
+    (error) => error instanceof LinearStartupError && /linear.projectId/.test(error.message),
+  );
+});
+
+test('discovers only Linear parent issues inside the configured project', async () => {
+  const features = await discoverLinearFeatures({
+    resolvedConfig: {
+      teamId: 'team-1',
+      teamKey: 'ENG',
+      labelId: 'label-1',
+      projectId: 'project-1',
+      workflowStateIds: {
+        ready: 'state-ready',
+        running: 'state-running',
+        done: 'state-done',
+        handoff: 'state-handoff',
+      },
+    },
+    client: new FakeLinearDiscoveryClient(),
+  });
+
+  assert.deepEqual(
+    features.map((feature) => feature.key),
+    ['ENG-100', 'ENG-200', 'ENG-300'],
+  );
+});
+
+test('discovers Linear parent issues in a different configured project', async () => {
+  const afkLabel: LinearIssueLabel = { id: 'label-1', name: 'AFK' };
+  const ready: LinearIssueState = { id: 'state-ready', name: 'Ready' };
+  const features = await discoverLinearFeatures({
+    resolvedConfig: {
+      teamId: 'team-1',
+      teamKey: 'ENG',
+      labelId: 'label-1',
+      projectId: 'project-2',
+      workflowStateIds: {
+        ready: 'state-ready',
+        running: 'state-running',
+        done: 'state-done',
+        handoff: 'state-handoff',
+      },
+    },
+    client: new StaticLinearDiscoveryClient(
+      [
+        parent('parent-project-1', 'ENG-100', 'Project 1 parent', ready, [
+          child('child-project-1', 'ENG-101', 'Project 1 child', null, ready, [afkLabel]),
+        ]),
+        parent('parent-project-2', 'ENG-400', 'Project 2 parent', ready, [
+          child('child-project-2', 'ENG-401', 'Project 2 child', null, ready, [afkLabel]),
+        ]),
+      ],
+      new Map([
+        ['parent-project-1', 'project-1'],
+        ['parent-project-2', 'project-2'],
+      ]),
+    ),
+  });
+
+  assert.deepEqual(
+    features.map((feature) => feature.key),
+    ['ENG-400'],
+  );
+});
+
+test('integrates config resolution, plan creation, and discovery with a shared projectId', async () => {
+  const resolved = await resolveLinearConfig({
+    config: validConfig,
+    projectId: validConfig.projectId,
+    env: { LINEAR_API_KEY: 'linear-key' },
+    client: new FakeLinearClient(),
+  });
+
+  assert.equal(resolved.projectId, 'project-1');
+
+  const planProvider = new FakeLinearPlanProvider();
+  const plan = await createLinearPlan({
+    manifest: {
+      parents: [
+        {
+          ref: 'parent',
+          title: 'Integration parent',
+          description: 'Shared project context.',
+          subIssues: [
+            { ref: 'sub', title: 'Integration sub-issue', description: 'Verifies shared projectId context.' },
+          ],
+        },
+      ],
+    },
+    teamId: resolved.teamId,
+    provider: planProvider,
+    setup: { afkLabelName: 'AFK', readyStateName: 'Ready' },
+  });
+  assert.equal(plan.parents[0]?.issue.key, 'AFK-1');
+  assert.equal(plan.parents[0]?.subIssues[0]?.issue.key, 'AFK-2');
+
+  const capturedInputs: { teamId: string; labelId: string; projectId: string }[] = [];
+  const capturingClient: LinearDiscoveryClient = {
+    async findAfkParentIssues(input) {
+      capturedInputs.push(input);
+      return [];
+    },
+  };
+
+  await discoverLinearFeatures({ resolvedConfig: resolved, client: capturingClient });
+
+  assert.deepEqual(capturedInputs, [{ teamId: 'team-1', labelId: 'label-1', projectId: 'project-1' }]);
+});
+
 test('discovers parent features with zero, one, and multiple eligible Linear sub-issues', async () => {
   const features = await discoverLinearFeatures({
     resolvedConfig: {
       teamId: 'team-1',
       teamKey: 'ENG',
       labelId: 'label-1',
+      projectId: 'project-1',
       workflowStateIds: {
         ready: 'state-ready',
         running: 'state-running',
@@ -158,6 +285,7 @@ test('maps Linear blocked-by sibling relations to AFK dependencies', async () =>
       teamId: 'team-1',
       teamKey: 'ENG',
       labelId: 'label-1',
+      projectId: 'project-1',
       workflowStateIds: {
         ready: 'state-ready',
         running: 'state-running',
@@ -209,6 +337,7 @@ test('surfaces cycles from Linear blocked-by relations through feature graph val
       teamId: 'team-1',
       teamKey: 'ENG',
       labelId: 'label-1',
+      projectId: 'project-1',
       workflowStateIds: {
         ready: 'state-ready',
         running: 'state-running',
@@ -241,6 +370,7 @@ test('falls back when Linear GraphQL does not expose issue branchName', async ()
 
     if (queries.length === 1) {
       assert.match(query, /branchName/);
+      assert.match(query, /project:\s*\{\s*id:\s*\{\s*eq:\s*\$projectId\s*\}\s*\}/);
       return new Response(
         JSON.stringify({ errors: [{ message: 'Cannot query field "branchName" on type "Issue".' }] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -248,6 +378,7 @@ test('falls back when Linear GraphQL does not expose issue branchName', async ()
     }
 
     assert.doesNotMatch(query, /branchName/);
+    assert.match(query, /project:\s*\{\s*id:\s*\{\s*eq:\s*\$projectId\s*\}\s*\}/);
     return new Response(
       JSON.stringify({
         data: {
@@ -287,7 +418,7 @@ test('falls back when Linear GraphQL does not expose issue branchName', async ()
 
   try {
     const client = new LinearGraphqlClient('linear-key', 'https://linear.example/graphql');
-    const issues = await client.findAfkParentIssues({ teamId: 'team-1', labelId: 'label-1' });
+    const issues = await client.findAfkParentIssues({ teamId: 'team-1', labelId: 'label-1', projectId: 'project-1' });
 
     assert.equal(queries.length, 2);
     assert.deepEqual(issues, [
@@ -496,15 +627,19 @@ class FakeLinearClient implements LinearConfigClient {
 }
 
 class FakeLinearDiscoveryClient implements LinearDiscoveryClient {
-  async findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]> {
-    assert.deepEqual(input, { teamId: 'team-1', labelId: 'label-1' });
+  async findAfkParentIssues(input: {
+    teamId: string;
+    labelId: string;
+    projectId: string;
+  }): Promise<LinearParentIssue[]> {
+    assert.deepEqual(input, { teamId: 'team-1', labelId: 'label-1', projectId: 'project-1' });
     const afkLabel: LinearIssueLabel = { id: 'label-1', name: 'AFK' };
     const otherLabel: LinearIssueLabel = { id: 'label-2', name: 'Other' };
     const ready: LinearIssueState = { id: 'state-ready', name: 'Ready' };
     const done: LinearIssueState = { id: 'state-done', name: 'Done' };
     const handoff: LinearIssueState = { id: 'state-handoff', name: 'Needs Handoff' };
 
-    return [
+    const parents = [
       parent('parent-zero', 'ENG-100', 'Zero parent', ready, [
         child('child-done', 'ENG-101', 'Done child', 'Already done.', done, [afkLabel]),
         child('child-handoff', 'ENG-102', 'Handoff child', 'Needs human.', handoff, [afkLabel]),
@@ -520,7 +655,17 @@ class FakeLinearDiscoveryClient implements LinearDiscoveryClient {
         child('child-many-a', 'ENG-301', 'Many A', null, ready, [afkLabel]),
         child('child-many-b', 'ENG-302', 'Many B', 'Second eligible issue.', ready, [afkLabel]),
       ]),
+      parent('parent-other-project', 'ENG-400', 'Other project parent', ready, [
+        child('child-other-project', 'ENG-401', 'Other project child', 'Should be excluded.', ready, [afkLabel]),
+      ]),
     ];
+    const projectIdByParent = new Map<string, string>([
+      ['parent-zero', 'project-1'],
+      ['parent-one', 'project-1'],
+      ['parent-many', 'project-1'],
+      ['parent-other-project', 'project-2'],
+    ]);
+    return parents.filter((p) => projectIdByParent.get(p.id) === input.projectId);
   }
 }
 
@@ -549,11 +694,32 @@ class FakeLinearRunSyncClient implements LinearRunSyncClient {
   }
 }
 
+class FakeLinearPlanProvider implements LinearProvider {
+  private issueCounter = 0;
+
+  async resolveIssueLabelId(): Promise<string | undefined> {
+    return 'label-1';
+  }
+
+  async resolveWorkflowStateId(): Promise<string | undefined> {
+    return 'state-ready';
+  }
+
+  async createIssue(_input: LinearIssueInput): Promise<LinearIssueResult> {
+    this.issueCounter += 1;
+    const key = `AFK-${this.issueCounter}`;
+    return { id: `issue-${this.issueCounter}`, key, url: `https://linear.app/acme/issue/${key}` };
+  }
+
+  async createIssueDependency(_input: LinearIssueDependencyInput): Promise<void> {}
+}
+
 function resolvedLinearConfig() {
   return {
     teamId: 'team-1',
     teamKey: 'ENG',
     labelId: 'label-1',
+    projectId: 'project-1',
     workflowStateIds: {
       ready: 'state-ready',
       running: 'state-running',
@@ -607,11 +773,21 @@ function runtimeMetadata(runStatus: 'completed' | 'handoff'): RuntimeMetadataRec
 }
 
 class StaticLinearDiscoveryClient implements LinearDiscoveryClient {
-  constructor(private readonly parents: LinearParentIssue[]) {}
+  constructor(
+    private readonly parents: LinearParentIssue[],
+    private readonly projectIdByParent: Map<string, string> = new Map(),
+  ) {}
 
-  async findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]> {
-    assert.deepEqual(input, { teamId: 'team-1', labelId: 'label-1' });
-    return this.parents;
+  async findAfkParentIssues(input: {
+    teamId: string;
+    labelId: string;
+    projectId: string;
+  }): Promise<LinearParentIssue[]> {
+    assert.equal(input.teamId, 'team-1');
+    assert.equal(input.labelId, 'label-1');
+    assert.equal(input.projectId.length > 0, true);
+    if (this.projectIdByParent.size === 0) return this.parents;
+    return this.parents.filter((p) => this.projectIdByParent.get(p.id) === input.projectId);
   }
 }
 

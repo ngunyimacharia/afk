@@ -39,6 +39,7 @@ import {
 import { isInteractiveLaunchAllowed, type PromptIO, runInteractiveLaunchWizard } from './interactive-launch.js';
 import { buildLaunchPlan } from './launch-context-builder.js';
 import {
+  discoverLinearFeatures,
   LinearGraphqlClient,
   type LinearParentFeature,
   type ResolvedLinearConfig,
@@ -503,8 +504,20 @@ export async function runAfk(
     if (activeProjectConfig.linear) {
       try {
         const client = new LinearGraphqlClient(activeProjectConfig.linear.apiKey ?? '');
-        const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
+        const resolvedConfig = await resolveLinearConfig({
+          config: activeProjectConfig.linear,
+          projectId: activeProjectConfig.linear.projectId,
+          env,
+          client,
+        });
         resolvedLinearConfig = resolvedConfig;
+        const linearFeatures = await discoverLinearFeatures({
+          resolvedConfig: resolvedLinearConfig,
+          client: new LinearGraphqlClient(activeProjectConfig.linear.apiKey ?? ''),
+        });
+        const linearTickets = linearFeaturesToTicketRecords(linearFeatures);
+        allTickets = [...allTickets, ...linearTickets];
+        tickets = [...tickets, ...linearTickets];
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Unknown Linear config error';
         return { code: 1, message: `Linear sync config failed.\nReason: ${reason}` };

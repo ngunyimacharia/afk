@@ -33,6 +33,7 @@ export interface LinearProjectConfig {
   afkLabelName: string;
   readyStateName: string;
   applyAfkLabelToParents?: boolean;
+  projectId?: string;
 }
 
 export interface AfkLinearWorkflowStatesConfig {
@@ -178,6 +179,9 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
   if (record.applyAfkLabelToParents !== undefined && typeof record.applyAfkLabelToParents !== 'boolean') {
     errors.push('linear.applyAfkLabelToParents must be a boolean when present.');
   }
+  if (record.projectId !== undefined && !isNonEmptyString(record.projectId)) {
+    errors.push('linear.projectId must be a non-empty string when present.');
+  }
   if (record.afkLabelName !== undefined && !isNonEmptyString(record.afkLabelName)) return undefined;
   if (record.readyStateName !== undefined && !isNonEmptyString(record.readyStateName)) return undefined;
 
@@ -194,6 +198,7 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
     ...(typeof record.applyAfkLabelToParents === 'boolean'
       ? { applyAfkLabelToParents: record.applyAfkLabelToParents }
       : {}),
+    ...(isNonEmptyString(record.projectId) ? { projectId: record.projectId.trim() } : {}),
   };
 }
 

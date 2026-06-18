@@ -193,3 +193,38 @@ test('reports incomplete linear setup', () => {
   assert.match(result.errors.join('\n'), /dedicated AFK label/);
   assert.match(result.errors.join('\n'), /workflowStates\.handoff/);
 });
+
+const linearBase = {
+  team: 'AFK',
+  labelName: 'afk',
+  workflowStates: { ready: 'Ready', running: 'Running', done: 'Done', handoff: 'Handoff' },
+};
+
+test('accepts valid linear.projectId', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    linear: {
+      ...linearBase,
+      projectId: 'project-linear',
+    },
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.config?.linear?.projectId, 'project-linear');
+});
+
+test('rejects invalid or empty linear.projectId values', () => {
+  const emptyProjectId = validateAfkProjectConfig({
+    testsEnabled: false,
+    linear: { ...linearBase, projectId: '   ' },
+  });
+  assert.equal(emptyProjectId.config, undefined);
+  assert.match(emptyProjectId.errors.join('\n'), /linear\.projectId must be a non-empty string/);
+
+  const numericProjectId = validateAfkProjectConfig({
+    testsEnabled: false,
+    linear: { ...linearBase, projectId: 123 as unknown as string },
+  });
+  assert.equal(numericProjectId.config, undefined);
+  assert.match(numericProjectId.errors.join('\n'), /linear\.projectId must be a non-empty string/);
+});
