@@ -14,6 +14,7 @@ export interface LinearGraphqlTrackerProviderConfig {
   team: LinearGraphqlTeamConfig;
   afkLabelName: string;
   workflowStates: LinearGraphqlWorkflowStatesConfig;
+  projectId?: string;
 }
 
 export type LinearGraphqlTeamConfig = { key: string; id?: string } | { key?: string; id: string };
@@ -52,6 +53,7 @@ export interface LinearProjectConfig {
   afkLabelName: string;
   readyStateName: string;
   applyAfkLabelToParents?: boolean;
+  projectId?: string;
 }
 
 export interface AfkLinearWorkflowStatesConfig {
@@ -128,7 +130,7 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
   }
 
   const linear = validateLinearProjectConfig(record.linear, errors);
-  const providerValidation = validateProviderConfig(record.provider);
+  const providerValidation = validateProviderConfig(record.provider, linear);
   errors.push(...providerValidation.errors);
 
   if (errors.length || typeof record.testsEnabled !== 'boolean' || !providerValidation.config) return { errors };
@@ -202,6 +204,9 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
   if (record.applyAfkLabelToParents !== undefined && typeof record.applyAfkLabelToParents !== 'boolean') {
     errors.push('linear.applyAfkLabelToParents must be a boolean when present.');
   }
+  if (record.projectId !== undefined && !isNonEmptyString(record.projectId)) {
+    errors.push('linear.projectId must be a non-empty string when present.');
+  }
   if (record.afkLabelName !== undefined && !isNonEmptyString(record.afkLabelName)) return undefined;
   if (record.readyStateName !== undefined && !isNonEmptyString(record.readyStateName)) return undefined;
 
@@ -218,6 +223,7 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
     ...(typeof record.applyAfkLabelToParents === 'boolean'
       ? { applyAfkLabelToParents: record.applyAfkLabelToParents }
       : {}),
+    ...(isNonEmptyString(record.projectId) ? { projectId: record.projectId.trim() } : {}),
   };
 }
 
@@ -271,7 +277,10 @@ function firstTrimmedString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-function validateProviderConfig(value: unknown): { config?: AfkTrackerProviderConfig; errors: string[] } {
+function validateProviderConfig(
+  value: unknown,
+  linear?: LinearProjectConfig,
+): { config?: AfkTrackerProviderConfig; errors: string[] } {
   if (value === undefined) return { config: { kind: 'scratch' }, errors: [] };
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { errors: ['provider must be an object when present.'] };
@@ -298,6 +307,16 @@ function validateProviderConfig(value: unknown): { config?: AfkTrackerProviderCo
   if (typeof afkLabelName !== 'string' || !afkLabelName.trim()) {
     errors.push('provider.afkLabelName must be a non-empty string.');
   }
+  if (record.projectId !== undefined && !isNonEmptyString(record.projectId)) {
+    errors.push('provider.projectId must be a non-empty string when present.');
+  }
+
+  const resolvedProjectId = firstTrimmedString(record.projectId, linear?.projectId);
+  if (!resolvedProjectId) {
+    errors.push(
+      "Linear setup incomplete: configure linear.projectId or provider.projectId with an existing Linear project's identifier.",
+    );
+  }
 
   if (errors.length || !team.config || !workflowStates.config || typeof afkLabelName !== 'string') return { errors };
 
@@ -307,6 +326,7 @@ function validateProviderConfig(value: unknown): { config?: AfkTrackerProviderCo
       team: team.config,
       afkLabelName: afkLabelName.trim(),
       workflowStates: workflowStates.config,
+      ...(resolvedProjectId ? { projectId: resolvedProjectId } : {}),
     },
     errors: [],
   };
