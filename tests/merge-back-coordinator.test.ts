@@ -1306,3 +1306,155 @@ test('default module lock serializes concurrent base merges when no lock is prov
   await Promise.all([promiseA, promiseB]);
   assert.equal(overlap, false, 'default module lock failed to serialize base merges');
 });
+
+test('resolveFeatureWorktreeConflicts returns success when no merge is in progress', async () => {
+  const repoRoot = createRepo('startup-conflict-clean-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const result = await coordinator.resolveFeatureWorktreeConflicts({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, true);
+});
+
+test('resolveFeatureWorktreeConflicts resolves existing merge conflict and commits', async () => {
+  const repoRoot = createRepo('startup-conflict-resolved-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  // Base content on feature branch
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'add-shared']);
+
+  // Create a conflicting branch from feature, then diverge both branches
+  const conflictingBranch = `conflicting/${feature}`;
+  git(repoRoot, ['branch', '--no-track', conflictingBranch, feature]);
+  const conflictingWorktree = path.join(repoRoot, '.worktree', conflictingBranch);
+  git(repoRoot, ['worktree', 'add', conflictingWorktree, conflictingBranch]);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature-line\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature change']);
+
+  writeFileSync(path.join(conflictingWorktree, 'shared.txt'), 'base\nconflict-line\n');
+  git(conflictingWorktree, ['add', 'shared.txt']);
+  git(conflictingWorktree, ['commit', '-m', 'conflicting change']);
+
+  // Start merge in feature worktree to create unresolved conflict
+  try {
+    git(featureWorktreePath, ['merge', '--no-edit', conflictingBranch]);
+  } catch {
+    // Expected to fail with conflicts
+  }
+  assert.ok(existsSync(path.join(resolveGitDir(featureWorktreePath), 'MERGE_HEAD')));
+
+  const prompts: string[] = [];
+  const agentProvider = new FakeAgentExecutionProvider(async (request) => {
+    prompts.push(request.prompt);
+    writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature-line\nconflict-line\n');
+    git(featureWorktreePath, ['add', 'shared.txt']);
+    return { status: 'completed', sessionId: null, removable: true, output: ['resolved'] };
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const result = await coordinator.resolveFeatureWorktreeConflicts({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /Attempt: 1 of 50/);
+  assert.equal(
+    readFileSync(path.join(featureWorktreePath, 'shared.txt'), 'utf8'),
+    'base\nfeature-line\nconflict-line\n',
+  );
+  assert.equal(existsSync(path.join(resolveGitDir(featureWorktreePath), 'MERGE_HEAD')), false);
+});
+
+test('resolveFeatureWorktreeConflicts fails when agent cannot resolve conflicts', async () => {
+  const repoRoot = createRepo('startup-conflict-failed-');
+  const feature = 'feat-a';
+  const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'add-shared']);
+
+  const conflictingBranch = `conflicting/${feature}`;
+  git(repoRoot, ['branch', '--no-track', conflictingBranch, feature]);
+  const conflictingWorktree = path.join(repoRoot, '.worktree', conflictingBranch);
+  git(repoRoot, ['worktree', 'add', conflictingWorktree, conflictingBranch]);
+
+  writeFileSync(path.join(featureWorktreePath, 'shared.txt'), 'base\nfeature-line\n');
+  git(featureWorktreePath, ['add', 'shared.txt']);
+  git(featureWorktreePath, ['commit', '-m', 'feature change']);
+
+  writeFileSync(path.join(conflictingWorktree, 'shared.txt'), 'base\nconflict-line\n');
+  git(conflictingWorktree, ['add', 'shared.txt']);
+  git(conflictingWorktree, ['commit', '-m', 'conflicting change']);
+
+  try {
+    git(featureWorktreePath, ['merge', '--no-edit', conflictingBranch]);
+  } catch {
+    // Expected
+  }
+
+  assert.ok(existsSync(path.join(resolveGitDir(featureWorktreePath), 'MERGE_HEAD')));
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({
+      status: 'completed',
+      sessionId: null,
+      removable: true,
+      output: ['did not resolve'],
+    }),
+    runtimeStore: new RuntimeStore({ repoRoot }),
+    conflictResolutionBudget: 1,
+  });
+
+  const result = await coordinator.resolveFeatureWorktreeConflicts({
+    repoRoot,
+    feature,
+    featureWorktreePath,
+    featureBranchName: feature,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, false);
+  assert.ok(result.reason?.includes('attempts'));
+  assert.ok(result.conflictPaths);
+  assert.equal(result.conflictPaths?.length, 1);
+});
+
+function resolveGitDir(worktreePath: string): string {
+  const gitFile = path.join(worktreePath, '.git');
+  try {
+    const content = readFileSync(gitFile, 'utf8').trim();
+    if (content.startsWith('gitdir:')) {
+      return content.slice(7).trim();
+    }
+  } catch {
+    // .git is a directory
+  }
+  return gitFile;
+}
