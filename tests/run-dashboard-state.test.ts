@@ -93,14 +93,28 @@ test('progress events create placeholder tickets when attaching without launch p
   assert.equal(snap.aggregate.running, 1);
 });
 
-test('run-level replay events do not create placeholder tickets', () => {
+test('run-level replay events appear in recent events without creating placeholder tickets', () => {
   const state = new RunDashboardState({ runId: 'run-1' });
 
   state.ingest({ ticketLabel: '__run__', message: 'Recovered stale run run-1' });
 
   const snap = state.snapshot();
   assert.equal(snap.tickets.length, 0);
-  assert.equal(snap.recentEvents.length, 0);
+  assert.equal(snap.recentEvents.length, 1);
+  assert.equal(snap.recentEvents[0]?.ticketLabel, '__run__');
+  assert.equal(snap.recentEvents[0]?.message, 'Recovered stale run run-1');
+});
+
+test('run-level events appear in recent events when selected tickets exist', () => {
+  const state = new RunDashboardState({}, makeTickets());
+
+  state.ingest({ ticketLabel: '__run__', message: 'Resolving merge conflicts for fin-151' });
+
+  const snap = state.snapshot();
+  assert.equal(snap.tickets.length, 3);
+  assert.equal(snap.recentEvents.length, 1);
+  assert.equal(snap.recentEvents[0]?.ticketLabel, '__run__');
+  assert.equal(snap.recentEvents[0]?.message, 'Resolving merge conflicts for fin-151');
 });
 
 test('permission events create action-needed without losing running state', () => {
