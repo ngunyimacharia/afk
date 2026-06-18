@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { loadAfkProjectConfig, validateAfkProjectConfig } from '../src/project-config.js';
+import { inferTrackerProviderKind, loadAfkProjectConfig, validateAfkProjectConfig } from '../src/project-config.js';
 
 test('loads valid afk project config', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-config-'));
@@ -23,7 +23,6 @@ test('loads valid afk project config', () => {
     testsEnabled: true,
     smokeTestCommand: 'npm test -- {testFile}',
     staticCheckCommands: ['npm run lint --silent'],
-    provider: { kind: 'scratch' },
   });
 });
 
@@ -49,115 +48,48 @@ test('allows tests disabled without smoke command', () => {
   const result = validateAfkProjectConfig({ testsEnabled: false });
 
   assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.config, { testsEnabled: false, staticCheckCommands: [], provider: { kind: 'scratch' } });
+  assert.deepEqual(result.config, { testsEnabled: false, staticCheckCommands: [] });
 });
 
-test('loads linear GraphQL provider config', () => {
+test('rejects configs that contain a provider key', () => {
   const result = validateAfkProjectConfig({
     testsEnabled: false,
-    provider: {
-      kind: 'linear-graphql',
-      team: { key: 'AFK' },
-      afkLabelName: 'afk',
-      workflowStates: {
-        ready: { name: 'Ready for agent' },
-        running: { id: 'state-running' },
-        done: { name: 'Done', id: 'state-done' },
-        handoff: { name: 'Ready for human' },
-      },
-    },
-  });
-
-  assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.config?.provider, {
-    kind: 'linear-graphql',
-    team: { key: 'AFK' },
-    afkLabelName: 'afk',
-    workflowStates: {
-      ready: { name: 'Ready for agent' },
-      running: { id: 'state-running' },
-      done: { name: 'Done', id: 'state-done' },
-      handoff: { name: 'Ready for human' },
-    },
-  });
-});
-
-test('rejects malformed provider config with actionable errors', () => {
-  const result = validateAfkProjectConfig({
-    testsEnabled: false,
-    provider: {
-      kind: 'linear-graphql',
-      team: {},
-      afkLabelName: ' ',
-      apiKey: 'secret',
-      workflowStates: {
-        ready: { name: '' },
-        running: { id: 'state-running' },
-        done: {},
-      },
-    },
+    provider: { kind: 'scratch' },
   });
 
   assert.equal(result.config, undefined);
-  assert.match(result.errors.join('\n'), /provider\.team must include key or id/);
-  assert.match(result.errors.join('\n'), /provider\.afkLabelName must be a non-empty string/);
-  assert.match(result.errors.join('\n'), /provider\.workflowStates\.ready\.name must be a non-empty string/);
-  assert.match(result.errors.join('\n'), /provider\.workflowStates\.done must include name or id/);
-  assert.match(result.errors.join('\n'), /provider\.workflowStates\.handoff must be an object/);
-  assert.match(result.errors.join('\n'), /provider\.apiKey must not be stored in afk\.json/);
+  assert.match(result.errors.join('\n'), /provider is no longer supported/);
+  assert.match(result.errors.join('\n'), /configure the linear block instead/);
 });
 
-test('rejects credentials nested under workflow states config', () => {
-  const result = validateAfkProjectConfig({
+test('infers scratch tracker provider when linear block is absent', () => {
+  const config = validateAfkProjectConfig({
     testsEnabled: false,
-    provider: {
-      kind: 'linear-graphql',
-      team: { key: 'AFK' },
-      afkLabelName: 'afk',
+    staticCheckCommands: [],
+  }).config;
+
+  assert.ok(config);
+  assert.equal(inferTrackerProviderKind(config), 'scratch');
+});
+
+test('infers linear tracker provider when linear block is present', () => {
+  const config = validateAfkProjectConfig({
+    testsEnabled: false,
+    staticCheckCommands: [],
+    linear: {
+      team: 'ENG',
+      labelName: 'AFK',
       workflowStates: {
-        ready: { name: 'Ready for agent' },
-        running: { id: 'state-running' },
-        done: { name: 'Done' },
-        handoff: { name: 'Ready for human' },
-        apiKey: 'secret',
+        ready: 'Ready',
+        running: 'In Progress',
+        done: 'Done',
+        handoff: 'Handoff',
       },
     },
-  });
+  }).config;
 
-  assert.equal(result.config, undefined);
-  assert.match(result.errors.join('\n'), /provider\.workflowStates\.apiKey must not be stored in afk\.json/);
-});
-
-test('rejects provider api key spellings with separators', () => {
-  const result = validateAfkProjectConfig({
-    testsEnabled: false,
-    provider: { kind: 'scratch', api_key: 'secret', 'api-key': 'secret' },
-  });
-
-  assert.equal(result.config, undefined);
-  assert.match(result.errors.join('\n'), /provider\.api_key must not be stored in afk\.json/);
-  assert.match(result.errors.join('\n'), /provider\.api-key must not be stored in afk\.json/);
-});
-
-test('rejects credentials deeply nested under unknown provider config objects', () => {
-  const result = validateAfkProjectConfig({
-    testsEnabled: false,
-    provider: {
-      kind: 'linear-graphql',
-      team: { key: 'AFK' },
-      afkLabelName: 'afk',
-      workflowStates: {
-        ready: { name: 'Ready for agent' },
-        running: { id: 'state-running' },
-        done: { name: 'Done' },
-        handoff: { name: 'Ready for human' },
-        extra: { apiKey: 'secret' },
-      },
-    },
-  });
-
-  assert.equal(result.config, undefined);
-  assert.match(result.errors.join('\n'), /provider\.workflowStates\.extra\.apiKey must not be stored in afk\.json/);
+  assert.ok(config);
+  assert.equal(inferTrackerProviderKind(config), 'linear');
 });
 
 test('loads optional Linear project config', () => {
