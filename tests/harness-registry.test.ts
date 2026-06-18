@@ -18,7 +18,7 @@ import {
   providerNameForHarness,
   selectableHarnessIds,
 } from '../src/harness-registry.js';
-import { SDKOpenCodeSessionExecutor, type OpenCodeSessionExecutor } from '../src/opencode.js';
+import { type OpenCodeSessionExecutor, SDKOpenCodeSessionExecutor } from '../src/opencode.js';
 
 test('registry exposes only current selectable harnesses', () => {
   assert.deepEqual(selectableHarnessIds(), ['OpenCode', 'Claude-Kimi', 'Codex']);
@@ -53,9 +53,15 @@ test('registry creates existing harness providers', () => {
 
 test('Codex discovery makes Codex available to launch', async () => {
   const models = await discoverHarnessModels('Codex');
-  assert.deepEqual(models.map((model) => model.id), ['codex/default']);
+  assert.deepEqual(
+    models.map((model) => model.id),
+    ['codex/default'],
+  );
 
   const discovery = await discoverAvailableHarnesses(async (harness) => (harness === 'Codex' ? models : []));
   assert.equal(discovery.availableHarnesses.includes('Codex'), true);
-  assert.deepEqual(discovery.harnessModelCache.Codex?.map((model) => model.id), ['codex/default']);
+  assert.deepEqual(
+    discovery.harnessModelCache.Codex?.map((model) => model.id),
+    ['codex/default'],
+  );
 });

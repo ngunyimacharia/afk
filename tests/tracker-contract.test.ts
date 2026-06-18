@@ -10,14 +10,14 @@ import {
 } from '../src/tracker-contract.js';
 
 test('normalizes provider work item keys without filesystem paths', () => {
-  assert.equal(normalizeTrackerWorkItemKey({ provider: 'linear-graphql', id: ' AFK-123 ' }), 'linear-graphql:afk-123');
+  assert.equal(normalizeTrackerWorkItemKey({ provider: 'linear', id: ' AFK-123 ' }), 'linear:afk-123');
   assert.equal(normalizeTrackerWorkItemKey(scratchTrackerWorkItemKey('feat', '01-ticket')), 'scratch:feat/01-ticket');
   assert.throws(() => normalizeTrackerWorkItemKey({ provider: 'scratch', id: '   ' }), /key id is required/);
 });
 
 test('converts provider work items to scheduler ticket records', () => {
   const item: TrackerWorkItem = {
-    key: { provider: 'linear-graphql', id: 'LIN-42' },
+    key: { provider: 'linear', id: 'LIN-42' },
     feature: 'tracker-provider-contract',
     issueName: '01-define-contract',
     label: 'tracker-provider-contract/01-define-contract',
@@ -27,7 +27,7 @@ test('converts provider work items to scheduler ticket records', () => {
     title: 'Define tracker contract',
     body: 'Provider-neutral tracker issue body.',
     providerRef: {
-      key: { provider: 'linear-graphql', id: 'LIN-42' },
+      key: { provider: 'linear', id: 'LIN-42' },
       displayId: 'LIN-42',
       url: 'https://linear.app/team/issue/LIN-42',
     },
@@ -43,7 +43,7 @@ test('converts provider work items to scheduler ticket records', () => {
     executorAfk: false,
     dependsOn: ['tracker-provider-contract/00-prereq', 'other-feature/02-external'],
     provider: {
-      kind: 'linear-graphql',
+      kind: 'linear',
       id: 'LIN-42',
       displayId: 'LIN-42',
       url: 'https://linear.app/team/issue/LIN-42',
@@ -100,7 +100,7 @@ test('round-trips scratch ticket paths through provider work items', () => {
 
 test('tracker provider contract exposes operations needed by external issue providers', () => {
   const provider = {
-    kind: 'linear-graphql',
+    kind: 'linear',
     capabilities: {
       list: true,
       get: true,
@@ -115,7 +115,7 @@ test('tracker provider contract exposes operations needed by external issue prov
     },
   } satisfies Pick<TrackerProvider, 'kind' | 'capabilities'>;
 
-  assert.equal(provider.kind, 'linear-graphql');
+  assert.equal(provider.kind, 'linear');
   assert.equal(provider.capabilities.parentChildIssues, true);
   assert.equal(provider.capabilities.materialize, true);
   assert.equal(provider.capabilities.summarize, true);

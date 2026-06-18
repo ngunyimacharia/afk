@@ -398,7 +398,7 @@ test('can read summaries through a provider-backed source', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const provider = makeSummaryProvider([
     {
-      key: { provider: 'linear-graphql', id: 'LIN-1' },
+      key: { provider: 'linear', id: 'LIN-1' },
       feature: 'feat',
       issueName: '01',
       label: 'feat/01',
@@ -410,7 +410,7 @@ test('can read summaries through a provider-backed source', async () => {
 Timestamp: 2026-05-18T00:00:00.000Z
 Outcome: completed
 `,
-      providerRef: { key: { provider: 'linear-graphql', id: 'LIN-1' }, url: 'https://linear.example/LIN-1' },
+      providerRef: { key: { provider: 'linear', id: 'LIN-1' }, url: 'https://linear.example/LIN-1' },
       url: 'https://linear.example/LIN-1',
     },
   ]);
@@ -426,7 +426,7 @@ Outcome: completed
 
 function makeSummaryProvider(items: TrackerWorkItem[]): TrackerProvider {
   return {
-    kind: 'linear-graphql',
+    kind: 'linear',
     capabilities: {
       list: true,
       get: true,

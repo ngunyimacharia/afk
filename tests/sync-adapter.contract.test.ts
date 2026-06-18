@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, readFile, readdir } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
@@ -191,5 +191,8 @@ test('codex sync report renders reviewable counts and actions', () => {
 
   assert.match(output, /Adapter: codex/);
   assert.match(output, /Created: 1/);
-  assert.match(output, /CREATED skills: artifacts\/skills\/afk-summary\.md -> ~\/\.agents\/skills\/afk-summary\/SKILL\.md/);
+  assert.match(
+    output,
+    /CREATED skills: artifacts\/skills\/afk-summary\.md -> ~\/\.agents\/skills\/afk-summary\/SKILL\.md/,
+  );
 });

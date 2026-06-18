@@ -323,7 +323,7 @@ test('validates external-provider completion without scratch issue file', async 
         label: 'feat/LIN-42',
         executorAfk: true,
         provider: {
-          kind: 'linear-graphql',
+          kind: 'linear',
           id: 'LIN-42',
           displayId: 'LIN-42',
           materializedFiles: {
@@ -397,7 +397,7 @@ test('validates external-provider completion from managed mirror when run summar
         label: 'feat/LIN-43',
         executorAfk: true,
         provider: {
-          kind: 'linear-graphql',
+          kind: 'linear',
           id: 'LIN-43',
           displayId: 'LIN-43',
           materializedFiles: {

@@ -78,7 +78,7 @@ test('external-provider prompt uses managed mirror result contract', () => {
       label: 'feat/LIN-42',
       executorAfk: true,
       provider: {
-        kind: 'linear-graphql',
+        kind: 'linear',
         id: 'LIN-42',
         displayId: 'LIN-42',
         url: 'https://linear.app/team/issue/LIN-42',
@@ -93,7 +93,7 @@ test('external-provider prompt uses managed mirror result contract', () => {
   });
 
   assert.match(prompt, /## Provider Result Contract/);
-  assert.match(prompt, /Source tracker provider: linear-graphql/);
+  assert.match(prompt, /Source tracker provider: linear/);
   assert.match(prompt, /Managed local mirror: \/repo\/\.scratch\/feat\/provider-mirrors\/LIN-42\.md/);
   assert.match(prompt, /Run summary artifact: \/repo\/\.scratch\/feat\/provider-results\/LIN-42\.md/);
   assert.match(prompt, /AFK will sync the local run result back to the source tracker/);
@@ -253,7 +253,7 @@ test('external-provider prompt with full afk instructions excludes scratch-only 
       label: 'feat/LIN-42',
       executorAfk: true,
       provider: {
-        kind: 'linear-graphql',
+        kind: 'linear',
         id: 'LIN-42',
         materializedFiles: {
           ticketPath: '/repo/.scratch/feat/provider-mirrors/LIN-42.md',

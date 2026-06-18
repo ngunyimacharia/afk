@@ -4,9 +4,9 @@ import {
   buildCodexThreadOptions,
   CodexSessionExecutor,
   discoverCodexModels,
-  parseCodexEvent,
   parseCodexApprovalPolicy,
   parseCodexBoolean,
+  parseCodexEvent,
   parseCodexModel,
   parseCodexSandboxMode,
 } from '../src/codex.js';
@@ -23,7 +23,10 @@ class FakeCodexThread {
     private readonly failure?: Error,
   ) {}
 
-  async runStreamed(input: string, options?: { signal?: AbortSignal }): Promise<{ events: AsyncIterable<Record<string, unknown>> }> {
+  async runStreamed(
+    input: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ events: AsyncIterable<Record<string, unknown>> }> {
     this.runInputs.push(input);
     if (options?.signal) this.signals.push(options.signal);
     if (this.failure) throw this.failure;
@@ -117,7 +120,10 @@ describe('CodexSessionExecutor', () => {
     });
 
     assert.equal(client.startedOptions.length, 0);
-    assert.deepEqual(client.resumed.map((entry) => entry.id), ['thread-existing']);
+    assert.deepEqual(
+      client.resumed.map((entry) => entry.id),
+      ['thread-existing'],
+    );
     assert.equal(result.sessionId, 'thread-existing');
   });
 
@@ -216,7 +222,10 @@ describe('CodexSessionExecutor', () => {
         { type: 'item.completed', item: { type: 'file_change', path: 'src/app.ts', action: 'updated' } },
         'thread-progress',
       ),
-      parseCodexEvent({ type: 'item.updated', item: { type: 'mcp_tool_call', name: 'context7', status: 'running' } }, 'thread-progress'),
+      parseCodexEvent(
+        { type: 'item.updated', item: { type: 'mcp_tool_call', name: 'context7', status: 'running' } },
+        'thread-progress',
+      ),
       parseCodexEvent({ type: 'item.completed', item: { type: 'agent_message', text: 'done' } }, 'thread-progress'),
       parseCodexEvent({ type: 'turn.completed' }, 'thread-progress'),
     ];
@@ -313,7 +322,10 @@ describe('CodexSessionExecutor', () => {
   });
 
   test('AFK kill aborts the active Codex turn', async () => {
-    const thread = new FakeCodexThread('thread-kill', [{ type: 'thread.started', thread_id: 'thread-kill' }, { hang: true }]);
+    const thread = new FakeCodexThread('thread-kill', [
+      { type: 'thread.started', thread_id: 'thread-kill' },
+      { hang: true },
+    ]);
     const controller = new AbortController();
     const executor = new CodexSessionExecutor(() => new FakeCodexClient({ startThread: thread }));
     const run = executor.run({

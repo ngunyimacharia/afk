@@ -770,7 +770,7 @@ function writeMinimalAfkConfig(repoRoot: string): void {
 
 function makeFakeTrackerProvider(items: TrackerWorkItem[]): TrackerProvider {
   return {
-    kind: 'linear-graphql',
+    kind: 'linear',
     capabilities: {
       list: true,
       get: true,
@@ -816,7 +816,7 @@ function makeTrackerWorkItem(
   status: string,
   dependsOn: string[] = [],
 ): TrackerWorkItem {
-  const key = { provider: 'linear-graphql' as const, id: `${feature}-${issueName}` };
+  const key = { provider: 'linear' as const, id: `${feature}-${issueName}` };
   return {
     key,
     feature,
