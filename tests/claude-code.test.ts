@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { discoverClaudeKimiModels, parseClaudeCodeEvent } from '../src/claude-code.js';
+import { discoverClaudeModels, parseClaudeCodeEvent } from '../src/claude-code.js';
 import { detectClaudeCodeFailure } from '../src/provider-failure.js';
 
-describe('discoverClaudeKimiModels', () => {
+describe('discoverClaudeModels', () => {
   const originalKey = process.env.ANTHROPIC_API_KEY;
 
   test('returns model when ANTHROPIC_API_KEY is set', async () => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
-    const models = await discoverClaudeKimiModels();
+    const models = await discoverClaudeModels();
     assert.equal(models.length, 1);
     assert.equal(models[0].id, 'kimi/kimi-for-coding');
     assert.equal(models[0].label, 'Kimi for Coding');
@@ -16,7 +16,7 @@ describe('discoverClaudeKimiModels', () => {
 
   test('returns empty array when ANTHROPIC_API_KEY is missing', async () => {
     delete process.env.ANTHROPIC_API_KEY;
-    const models = await discoverClaudeKimiModels();
+    const models = await discoverClaudeModels();
     assert.equal(models.length, 0);
   });
 

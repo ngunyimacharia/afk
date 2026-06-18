@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  ClaudeKimiAgentExecutionProvider,
+  ClaudeAgentExecutionProvider,
   CodexAgentExecutionProvider,
   OpenCodeAgentExecutionProvider,
 } from '../src/agent-execution-provider.js';
@@ -15,31 +15,40 @@ import {
   displayNameForHarness,
   isHarnessId,
   isSelectableHarnessId,
+  migrateLegacyHarnessId,
+  migrateLegacyProviderName,
   providerNameForHarness,
   selectableHarnessIds,
 } from '../src/harness-registry.js';
 import { type OpenCodeSessionExecutor, SDKOpenCodeSessionExecutor } from '../src/opencode.js';
 
 test('registry exposes only current selectable harnesses', () => {
-  assert.deepEqual(selectableHarnessIds(), ['OpenCode', 'Claude-Kimi', 'Codex']);
+  assert.deepEqual(selectableHarnessIds(), ['OpenCode', 'Claude', 'Codex']);
   assert.equal(isHarnessId('Codex'), true);
   assert.equal(isSelectableHarnessId('Codex'), true);
   assert.equal(isSelectableHarnessId('OpenCode'), true);
-  assert.equal(isSelectableHarnessId('Claude-Kimi'), true);
+  assert.equal(isSelectableHarnessId('Claude'), true);
 });
 
 test('registry preserves harness display and provider names', () => {
   assert.equal(displayNameForHarness('OpenCode'), 'OpenCode');
   assert.equal(providerNameForHarness('OpenCode'), 'opencode');
-  assert.equal(displayNameForHarness('Claude-Kimi'), 'Claude-Kimi');
-  assert.equal(providerNameForHarness('Claude-Kimi'), 'claude-kimi');
+  assert.equal(displayNameForHarness('Claude'), 'Claude');
+  assert.equal(providerNameForHarness('Claude'), 'claude');
   assert.equal(displayNameForHarness('Codex'), 'Codex');
   assert.equal(providerNameForHarness('Codex'), 'codex');
 });
 
+test('migrates legacy harness and provider names', () => {
+  assert.equal(migrateLegacyHarnessId('Claude-Kimi'), 'Claude');
+  assert.equal(migrateLegacyHarnessId('OpenCode'), 'OpenCode');
+  assert.equal(migrateLegacyProviderName('claude-kimi'), 'claude');
+  assert.equal(migrateLegacyProviderName('opencode'), 'opencode');
+});
+
 test('registry creates existing harness executors', () => {
   assert.ok(createHarnessExecutor('OpenCode') instanceof SDKOpenCodeSessionExecutor);
-  assert.ok(createHarnessExecutor('Claude-Kimi') instanceof ClaudeCodeSessionExecutor);
+  assert.ok(createHarnessExecutor('Claude') instanceof ClaudeCodeSessionExecutor);
   assert.ok(createHarnessExecutor('Codex') instanceof CodexSessionExecutor);
 });
 
@@ -47,7 +56,7 @@ test('registry creates existing harness providers', () => {
   const executor: OpenCodeSessionExecutor = { run: async () => ({ sessionId: 'session-1', output: ['ok'] }) };
 
   assert.ok(createHarnessAgentExecutionProvider('OpenCode', executor) instanceof OpenCodeAgentExecutionProvider);
-  assert.ok(createHarnessAgentExecutionProvider('Claude-Kimi', executor) instanceof ClaudeKimiAgentExecutionProvider);
+  assert.ok(createHarnessAgentExecutionProvider('Claude', executor) instanceof ClaudeAgentExecutionProvider);
   assert.ok(createHarnessAgentExecutionProvider('Codex', executor) instanceof CodexAgentExecutionProvider);
 });
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  ClaudeKimiAgentExecutionProvider,
+  ClaudeAgentExecutionProvider,
   CodexAgentExecutionProvider,
   decideAfkPermission,
   FakeAgentExecutionProvider,
@@ -539,9 +539,9 @@ test('opencode provider forwards workDir from checkout worktreePath', async () =
   assert.equal(capturedWorkDir, '/repo/.worktree/feature');
 });
 
-test('claude-kimi provider forwards workDir from checkout worktreePath', async () => {
+test('claude provider forwards workDir from checkout worktreePath', async () => {
   let capturedWorkDir: string | undefined;
-  const provider = new ClaudeKimiAgentExecutionProvider({
+  const provider = new ClaudeAgentExecutionProvider({
     run: async (input) => {
       capturedWorkDir = input.workDir;
       return { sessionId: 'session-workdir', output: ['ok'] };
