@@ -117,10 +117,11 @@ export class ScratchTrackerProvider implements TrackerProvider {
 
 export function createDefaultTrackerProvider(
   repoRoot: string,
-  configuredProvider?: TrackerProviderKind,
+  _configuredProvider?: TrackerProviderKind,
 ): TrackerProvider {
-  if (!configuredProvider || configuredProvider === 'scratch') return new ScratchTrackerProvider(repoRoot);
-  throw new Error(`tracker provider is not configured: ${configuredProvider}`);
+  // The default tracker provider is always scratch; Linear and Jira work items are
+  // discovered separately by the CLI after the local scratch provider is created.
+  return new ScratchTrackerProvider(repoRoot);
 }
 
 export { scratchTrackerWorkItemKey };

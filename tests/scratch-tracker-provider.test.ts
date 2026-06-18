@@ -19,6 +19,13 @@ test('scratch provider is the default tracker provider', () => {
   assert.equal(provider.kind, 'scratch');
 });
 
+test('scratch provider remains the default even when linear is configured', () => {
+  const { repoRoot } = makeRepo();
+  const provider = createDefaultTrackerProvider(repoRoot, 'linear');
+
+  assert.equal(provider.kind, 'scratch');
+});
+
 test('scratch provider preserves ticket repository discovery fields and eligibility', async () => {
   const { repoRoot, issuesDir } = makeRepo();
   const ticketPath = path.join(issuesDir, '01.md');
