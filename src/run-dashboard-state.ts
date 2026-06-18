@@ -213,7 +213,7 @@ export class RunDashboardState {
       this.tickets.set(event.ticketLabel, ticket);
       this.selectedTicketLabel ??= event.ticketLabel;
     }
-    if (ticket) {
+    if (ticket || event.ticketLabel === '__run__') {
       this.recentEvents.push(eventWithTimestamp);
       if (this.recentEvents.length > MAX_RECENT_EVENTS) {
         this.recentEvents.shift();

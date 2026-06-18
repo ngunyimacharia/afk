@@ -92,9 +92,13 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     if (!isMergeInProgress(checkout.worktreePath)) continue;
 
     onProgress({
-      ticketLabel: `${feature}/startup-conflict`,
+      ticketLabel: '__run__',
       message: `Feature worktree ${checkout.effectiveWorktreeName} has unresolved merge conflicts; starting conflict resolution`,
     });
+
+    const runLevelOnProgress = (event: AgentExecutionProgressEvent) => {
+      onProgress({ ...event, ticketLabel: '__run__' });
+    };
 
     const conflictResult = await mergeBackCoordinator.resolveFeatureWorktreeConflicts({
       repoRoot,
@@ -104,13 +108,13 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
       model: plan.model,
       reviewerModel: plan.reviewerModel,
       reviewerPrompt: plan.reviewerPrompt,
-      onProgress,
+      onProgress: runLevelOnProgress,
     });
 
     if (!conflictResult.success) {
       const reason = conflictResult.reason ?? 'Unresolved merge conflicts could not be resolved';
       onProgress({
-        ticketLabel: `${feature}/startup-conflict`,
+        ticketLabel: '__run__',
         message: `run handoff: ${reason}`,
         kind: 'failure',
       });
@@ -118,7 +122,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     }
 
     onProgress({
-      ticketLabel: `${feature}/startup-conflict`,
+      ticketLabel: '__run__',
       message: `Merge conflicts resolved for ${checkout.effectiveWorktreeName}`,
     });
   }
