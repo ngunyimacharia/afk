@@ -29,7 +29,7 @@ export interface LinearProjectConfig {
     done: string;
     handoff: string;
   };
-  apiKeyEnv?: string;
+  apiKey?: string;
   afkLabelName: string;
   readyStateName: string;
   applyAfkLabelToParents?: boolean;
@@ -139,11 +139,6 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
   }
 
   const record = value as Record<string, unknown>;
-  if (hasLinearSecretField(record)) {
-    errors.push(
-      'linear config must not include API keys or tokens; set linear.apiKeyEnv and export that environment variable.',
-    );
-  }
   if (!isNonEmptyString(record.team) && !isNonEmptyString(record.teamId) && !isNonEmptyString(record.teamKey)) {
     errors.push(
       'Linear setup incomplete: configure linear.team, linear.teamId, or linear.teamKey after confirming the Linear team exists.',
@@ -165,8 +160,8 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
   if (record.teamKey !== undefined && !isNonEmptyString(record.teamKey)) {
     errors.push('linear.teamKey must be a non-empty string when present.');
   }
-  if (record.apiKeyEnv !== undefined && (typeof record.apiKeyEnv !== 'string' || !record.apiKeyEnv.trim())) {
-    errors.push('linear.apiKeyEnv must be a non-empty string when present.');
+  if (record.apiKey !== undefined && (typeof record.apiKey !== 'string' || !record.apiKey.trim())) {
+    errors.push('linear.apiKey must be a non-empty string when present.');
   }
   const team = firstTrimmedString(record.team, record.teamId, record.teamKey);
   const labelName = firstTrimmedString(record.labelName, record.afkLabel);
@@ -193,7 +188,7 @@ function validateLinearProjectConfig(value: unknown, errors: string[]): LinearPr
     ...(isNonEmptyString(record.teamKey) ? { teamKey: record.teamKey.trim() } : {}),
     labelName,
     workflowStates,
-    ...(typeof record.apiKeyEnv === 'string' && record.apiKeyEnv.trim() ? { apiKeyEnv: record.apiKeyEnv.trim() } : {}),
+    ...(isNonEmptyString(record.apiKey) ? { apiKey: record.apiKey.trim() } : {}),
     afkLabelName: firstTrimmedString(record.afkLabelName, record.labelName, record.afkLabel) as string,
     readyStateName: firstTrimmedString(record.readyStateName, workflowStates.ready) as string,
     ...(typeof record.applyAfkLabelToParents === 'boolean'
@@ -235,10 +230,6 @@ function validateLinearWorkflowStatesConfig(
     done: done.trim(),
     handoff: handoff.trim(),
   };
-}
-
-function hasLinearSecretField(record: Record<string, unknown>): boolean {
-  return ['apiKey', 'token', 'accessToken'].some((field) => record[field] !== undefined);
 }
 
 function isNonEmptyString(value: unknown): value is string {

@@ -365,7 +365,7 @@ export async function runAfk(
   }
   if (command === 'sync') return runSync();
   if (command === 'linear-plan') {
-    const providerConfig = createLinearProviderFromConfig(repoRoot, env);
+    const providerConfig = createLinearProviderFromConfig(repoRoot);
     if (!providerConfig.provider || !providerConfig.teamId || !providerConfig.setup)
       return { code: 1, message: providerConfig.errors.join('\n') };
     const manifestPath = linearPlanManifestPath();
@@ -502,7 +502,7 @@ export async function runAfk(
     let resolvedLinearConfig: ResolvedLinearConfig | undefined;
     if (activeProjectConfig.linear) {
       try {
-        const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
+        const client = new LinearGraphqlClient(activeProjectConfig.linear.apiKey ?? '');
         const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
         resolvedLinearConfig = resolvedConfig;
       } catch (error) {
@@ -721,7 +721,10 @@ export async function runAfk(
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
       launchPreferences.budgets,
       resolvedLinearConfig
-        ? { resolvedConfig: resolvedLinearConfig, client: new LinearGraphqlClient(env.LINEAR_API_KEY ?? '') }
+        ? {
+            resolvedConfig: resolvedLinearConfig,
+            client: new LinearGraphqlClient(activeProjectConfig.linear?.apiKey ?? ''),
+          }
         : undefined,
     );
     const renderer: OpenTUIRenderer = {

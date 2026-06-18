@@ -123,7 +123,7 @@ test('loads optional Linear project config', () => {
   });
 });
 
-test('validates linear readiness config without storing secrets', () => {
+test('validates linear readiness config with apiKey', () => {
   const result = validateAfkProjectConfig({
     testsEnabled: false,
     staticCheckCommands: [],
@@ -136,7 +136,7 @@ test('validates linear readiness config without storing secrets', () => {
         done: 'Done',
         handoff: 'Needs Human',
       },
-      apiKeyEnv: 'AFK_LINEAR_API_KEY',
+      apiKey: ' lin_api_123456 ',
     },
   });
 
@@ -152,19 +152,39 @@ test('validates linear readiness config without storing secrets', () => {
       done: 'Done',
       handoff: 'Needs Human',
     },
-    apiKeyEnv: 'AFK_LINEAR_API_KEY',
+    apiKey: 'lin_api_123456',
     afkLabelName: 'AFK',
     readyStateName: 'Ready for AFK',
   });
 });
 
-test('reports incomplete linear setup and rejects inline secrets', () => {
+test('rejects empty or whitespace-only linear apiKey', () => {
   const result = validateAfkProjectConfig({
     testsEnabled: false,
     staticCheckCommands: [],
     linear: {
       teamId: 'team-1',
-      apiKey: 'secret',
+      labelName: 'AFK',
+      workflowStates: {
+        ready: 'Ready',
+        running: 'Running',
+        done: 'Done',
+        handoff: 'Handoff',
+      },
+      apiKey: '   ',
+    },
+  });
+
+  assert.equal(result.config, undefined);
+  assert.match(result.errors.join('\n'), /linear\.apiKey must be a non-empty string/);
+});
+
+test('reports incomplete linear setup', () => {
+  const result = validateAfkProjectConfig({
+    testsEnabled: false,
+    staticCheckCommands: [],
+    linear: {
+      teamId: 'team-1',
       workflowStates: { ready: 'Ready', running: 'Running', done: 'Done' },
     },
   });
@@ -172,5 +192,4 @@ test('reports incomplete linear setup and rejects inline secrets', () => {
   assert.equal(result.config, undefined);
   assert.match(result.errors.join('\n'), /dedicated AFK label/);
   assert.match(result.errors.join('\n'), /workflowStates\.handoff/);
-  assert.match(result.errors.join('\n'), /must not include API keys or tokens/);
 });

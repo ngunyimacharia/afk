@@ -38,7 +38,7 @@ When the repository context, user request, or existing workflow shows that Linea
       "done": "Done",
       "handoff": "Needs Human"
     },
-    "apiKeyEnv": "LINEAR_API_KEY"
+    "apiKey": "<linear-api-key>"
   }
 }
 ```
@@ -82,9 +82,9 @@ Rules:
 - `linear.teamId` is preferred for Linear execution. `linear.teamKey` may be used only when the consuming workflow supports resolving a team key; otherwise use the team ID.
 - `linear.labelName` must name an existing dedicated AFK label.
 - `linear.workflowStates.ready`, `running`, `done`, and `handoff` must name or identify existing Linear workflow states.
-- `linear.apiKeyEnv` is optional and defaults to `LINEAR_API_KEY`. If a different credential variable is required, store only that variable name.
+- `linear.apiKey` stores the actual Linear API key and is required when Linear support is enabled.
+- `afk.json` must stay out of version control because it contains secrets; ensure it is gitignored.
 - Do not include `model` or any other keys.
-- Do not include Linear API keys, tokens, or other secrets in `afk.json`.
 
 ## Steps
 
@@ -93,11 +93,11 @@ Rules:
 3. Determine a smoke test command that runs a single deterministic test file when possible.
 4. Determine static checks such as lint, typecheck, build, check, or format-check commands when they are safe and non-mutating.
 5. Detect whether Linear support is desired from the user request, README/docs, existing Linear manifests, or Linear-related AFK workflows.
-6. If Linear support is desired, identify the team ID or key, dedicated AFK label name, ready/running/done/handoff workflow state names or IDs, and credential env name.
-7. If `LINEAR_API_KEY` or the chosen credential env var is available, use only read-only Linear API checks to confirm the label and workflow states already exist. Report any missing label or workflow state as a setup task; do not create Linear labels or workflow states automatically.
-8. If Linear support is desired but the label or workflow states cannot be confirmed, still keep secrets out of `afk.json` and explain the missing setup tasks clearly in the response.
+6. If Linear support is desired, identify the team ID or key, dedicated AFK label name, ready/running/done/handoff workflow state names or IDs, and the Linear API key.
+7. If the Linear API key is available, use only read-only Linear API checks to confirm the label and workflow states already exist. Report any missing label or workflow state as a setup task; do not create Linear labels or workflow states automatically.
+8. If Linear support is desired but the label or workflow states cannot be confirmed, still store `linear.apiKey` only when it is available and explain the missing setup tasks clearly in the response.
 9. Create or update `afk.json` with only the approved schema.
-10. Show the final `afk.json` content, document the required Linear credential env var, and list any Linear setup tasks that remain.
+10. Show the final `afk.json` content, remind that `afk.json` contains the Linear API key and must remain gitignored, and list any Linear setup tasks that remain.
 
 ## Decision Guidance
 
@@ -117,4 +117,3 @@ Rules:
 - Do not run `afk sync` and do not modify global or local Git ignore files from this prompt.
 - Do not commit or stage changes.
 - Do not include secrets, environment contents, or machine-specific absolute paths in `afk.json`.
-- Do not store `LINEAR_API_KEY` values or any Linear token values in `afk.json`; store only `linear.apiKeyEnv` when needed.
