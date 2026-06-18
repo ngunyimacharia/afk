@@ -81,14 +81,14 @@ test('round-trips launch preferences', () => {
   store.writeLaunchPreferences({
     harness: 'OpenCode',
     modelId: 'provider/exec',
-    reviewerHarness: 'Claude-Kimi',
+    reviewerHarness: 'Claude',
     reviewerModelId: 'provider/review',
   });
 
   assert.deepEqual(store.readLaunchPreferences(), {
     harness: 'OpenCode',
     modelId: 'provider/exec',
-    reviewerHarness: 'Claude-Kimi',
+    reviewerHarness: 'Claude',
     reviewerModelId: 'provider/review',
   });
 });
@@ -246,7 +246,7 @@ test('keeps metadata readers compatible when new review fields are absent', () =
   assert.equal(metadata.FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET, undefined);
 });
 
-test('rejects stale harness values Kimi and Claude-Anthropic from persisted preferences', () => {
+test('rejects stale harness values Kimi and Claude-Anthropic and migrates Claude-Kimi to Claude', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-stale-harness-'));
   const store = new RuntimeStore({ repoRoot });
   const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
@@ -263,13 +263,13 @@ test('rejects stale harness values Kimi and Claude-Anthropic from persisted pref
   assert.equal(partial.reviewerHarness, 'OpenCode');
 
   writeFileSync(preferencesPath, JSON.stringify({ harness: 'OpenCode', reviewerHarness: 'Claude-Kimi' }), 'utf8');
-  const valid = store.readLaunchPreferences();
-  assert.equal(valid.harness, 'OpenCode');
-  assert.equal(valid.reviewerHarness, 'Claude-Kimi');
+  const migrated = store.readLaunchPreferences();
+  assert.equal(migrated.harness, 'OpenCode');
+  assert.equal(migrated.reviewerHarness, 'Claude');
 
-  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Codex', reviewerHarness: 'Codex' }), 'utf8');
+  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Claude', reviewerHarness: 'Codex' }), 'utf8');
   const codex = store.readLaunchPreferences();
-  assert.equal(codex.harness, 'Codex');
+  assert.equal(codex.harness, 'Claude');
   assert.equal(codex.reviewerHarness, 'Codex');
 });
 

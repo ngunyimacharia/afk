@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { isSelectableHarnessId } from './harness-registry.js';
+import { isSelectableHarnessId, migrateLegacyHarnessId } from './harness-registry.js';
 import { assertPathWithinRoot } from './path-validation.js';
 import type {
   BudgetExceededEvent,
@@ -68,8 +68,9 @@ export class RuntimeStore {
     try {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-      const harnessValue = typeof value.harness === 'string' ? value.harness : undefined;
-      const reviewerHarnessValue = typeof value.reviewerHarness === 'string' ? value.reviewerHarness : undefined;
+      const harnessValue = typeof value.harness === 'string' ? migrateLegacyHarnessId(value.harness) : undefined;
+      const reviewerHarnessValue =
+        typeof value.reviewerHarness === 'string' ? migrateLegacyHarnessId(value.reviewerHarness) : undefined;
       const preferences: LaunchPreferences = {
         harness: harnessValue && isSelectableHarnessId(harnessValue) ? harnessValue : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,

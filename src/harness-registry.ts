@@ -1,16 +1,16 @@
 import {
   type AgentExecutionProvider,
-  ClaudeKimiAgentExecutionProvider,
+  ClaudeAgentExecutionProvider,
   CodexAgentExecutionProvider,
   OpenCodeAgentExecutionProvider,
 } from './agent-execution-provider.js';
-import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
+import { ClaudeCodeSessionExecutor, discoverClaudeModels } from './claude-code.js';
 import { CodexSessionExecutor, discoverCodexModels } from './codex.js';
 import { discoverOpenCodeModels, type OpenCodeSessionExecutor, SDKOpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
 import type { LaunchModel } from './types.js';
 
-export type HarnessId = 'OpenCode' | 'Claude-Kimi' | 'Codex';
+export type HarnessId = 'OpenCode' | 'Claude' | 'Codex';
 export type SelectableHarnessId = HarnessId;
 
 interface HarnessRegistryEntry {
@@ -38,14 +38,14 @@ const HARNESS_REGISTRY = [
       new OpenCodeAgentExecutionProvider(executor, permissionCoordinator),
   },
   {
-    id: 'Claude-Kimi',
-    displayName: 'Claude-Kimi',
-    providerName: 'claude-kimi',
+    id: 'Claude',
+    displayName: 'Claude',
+    providerName: 'claude',
     selectable: true,
-    discoverModels: discoverClaudeKimiModels,
+    discoverModels: discoverClaudeModels,
     createExecutor: () => new ClaudeCodeSessionExecutor('kimi'),
     createAgentExecutionProvider: (executor, permissionCoordinator) =>
-      new ClaudeKimiAgentExecutionProvider(executor, permissionCoordinator),
+      new ClaudeAgentExecutionProvider(executor, permissionCoordinator),
   },
   {
     id: 'Codex',
@@ -122,4 +122,14 @@ export function displayNameForHarness(harness: HarnessId): string {
 
 export function providerNameForHarness(harness: HarnessId): string {
   return HARNESS_BY_ID.get(harness)?.providerName ?? harness.toLowerCase();
+}
+
+export function migrateLegacyHarnessId(value: string): string {
+  if (value === 'Claude-Kimi') return 'Claude';
+  return value;
+}
+
+export function migrateLegacyProviderName(value: string): string {
+  if (value === 'claude-kimi') return 'claude';
+  return value;
 }

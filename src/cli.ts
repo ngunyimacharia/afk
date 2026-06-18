@@ -33,6 +33,7 @@ import {
   discoverHarnessModels,
   displayNameForHarness,
   isSelectableHarnessId,
+  migrateLegacyProviderName,
   providerNameForHarness,
   type SelectableHarnessId,
 } from './harness-registry.js';
@@ -1122,7 +1123,7 @@ export function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
         ticketCount++;
         if (!modelId && typeof parsed.EXECUTION_MODEL_ID === 'string') modelId = parsed.EXECUTION_MODEL_ID;
         if (!harness && typeof parsed.EXECUTION_PROVIDER === 'string') {
-          harness = displayNameForProvider(parsed.EXECUTION_PROVIDER);
+          harness = displayNameForProvider(migrateLegacyProviderName(parsed.EXECUTION_PROVIDER));
         }
       } catch {
         // skip malformed metadata files
@@ -1149,9 +1150,9 @@ export function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
   return { modelId, harness, ticketCount };
 }
 
-function displayNameForProvider(provider: string): string {
+export function displayNameForProvider(provider: string): string {
   if (provider === 'opencode') return 'OpenCode';
-  if (provider === 'claude-kimi') return 'Claude-Kimi';
+  if (provider === 'claude') return 'Claude';
   if (provider === 'codex') return 'Codex';
   return provider;
 }
