@@ -1,5 +1,5 @@
-import type { ReadinessCheckMetadata } from './readiness-service.js';
 import type { SelectableHarnessId } from './harness-registry.js';
+import type { ReadinessCheckMetadata } from './readiness-service.js';
 
 export interface TicketRecord {
   path: string;

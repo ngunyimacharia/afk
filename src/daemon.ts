@@ -51,7 +51,11 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
   const reviewerExecutor = createHarnessExecutor(reviewerHarness);
 
   const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-  const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+  const reviewerProvider = createHarnessAgentExecutionProvider(
+    reviewerHarness,
+    reviewerExecutor,
+    permissionCoordinator,
+  );
   const linearSyncer = await resolveDaemonLinearSyncer(repoRoot);
 
   const runner = new SingleTicketRunner(

@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { assertPathWithinRoot } from './path-validation.js';
 import { isSelectableHarnessId } from './harness-registry.js';
+import { assertPathWithinRoot } from './path-validation.js';
 import type {
   BudgetExceededEvent,
   BudgetPolicy,

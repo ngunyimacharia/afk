@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { SelectableHarnessId } from './harness-registry.js';
 import type {
   AfkStateSnapshot,
   DependencySnapshot,
@@ -9,7 +10,6 @@ import type {
   ReviewerPromptTemplate,
   TicketRecord,
 } from './types.js';
-import type { SelectableHarnessId } from './harness-registry.js';
 import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
 import { runGit } from './worktree-preparation-service.js';
 

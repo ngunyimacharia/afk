@@ -46,7 +46,12 @@ export async function runInteractiveLaunchWizard(input: {
   }
 
   const harnessInitial = input.preferences?.harness ? harnessChoices.indexOf(input.preferences.harness) : undefined;
-  const selectedHarness = await promptSingleSelect(input.io, 'Select implementation harness', harnessChoices, harnessInitial);
+  const selectedHarness = await promptSingleSelect(
+    input.io,
+    'Select implementation harness',
+    harnessChoices,
+    harnessInitial,
+  );
   if (!selectedHarness || !isSelectableHarnessId(selectedHarness)) return { cancelled: true };
   const harness = selectedHarness;
 

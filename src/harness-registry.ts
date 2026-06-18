@@ -6,7 +6,7 @@ import {
 } from './agent-execution-provider.js';
 import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
 import { CodexSessionExecutor, discoverCodexModels } from './codex.js';
-import { type OpenCodeSessionExecutor, discoverOpenCodeModels, SDKOpenCodeSessionExecutor } from './opencode.js';
+import { discoverOpenCodeModels, type OpenCodeSessionExecutor, SDKOpenCodeSessionExecutor } from './opencode.js';
 import type { PermissionCoordinator } from './permission-coordinator.js';
 import type { LaunchModel } from './types.js';
 

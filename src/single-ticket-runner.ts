@@ -226,8 +226,7 @@ export class SingleTicketRunner {
             latestExecutionResult = executionResult;
             this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
             const executionBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'execution', reviewCycle + 1);
-            if (executionBudget)
-              return this.handoffForBudget(ticket, record, options, executionBudget, sessionId);
+            if (executionBudget) return this.handoffForBudget(ticket, record, options, executionBudget, sessionId);
             if (executionResult.status !== 'completed') {
               return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
                 this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -1020,7 +1019,11 @@ export class SingleTicketRunner {
         nextAction: 'human review required',
         reviewerNotes: reason,
       });
-      this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel: ticket.label, message: reason, sessionId });
+      this.emitProgress(record.metadataPath, options.onProgress, {
+        ticketLabel: ticket.label,
+        message: reason,
+        sessionId,
+      });
       return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
     });
   }
