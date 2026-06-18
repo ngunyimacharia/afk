@@ -41,7 +41,12 @@ const EXECUTION_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = [
   'scratch-write',
 ];
 
-const REVIEWER_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = ['read', 'diagnostic'];
+const REVIEWER_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = [
+  'read',
+  'diagnostic',
+  'scratch-write',
+  'git-commit',
+];
 
 export interface AgentExecutionRequest {
   plan: LaunchPlan;
@@ -63,8 +68,8 @@ export function resolveAgentInvocationPolicy(mode: AgentInvocationMode = 'execut
       mode,
       allowedCommandKinds: REVIEWER_ALLOWED_COMMAND_KINDS,
       canMutateWorkspace: false,
-      canMutateGitState: false,
-      canMutateScratch: false,
+      canMutateGitState: true,
+      canMutateScratch: true,
     };
   }
 
@@ -79,9 +84,7 @@ export function resolveAgentInvocationPolicy(mode: AgentInvocationMode = 'execut
 
 export function isCommandAllowed(policy: AgentInvocationPolicy, command: AgentCommandRequest): boolean {
   if (!policy.allowedCommandKinds.includes(command.kind)) return false;
-  if (policy.mode !== 'reviewer') return true;
-
-  return command.kind === 'read' || command.kind === 'diagnostic';
+  return true;
 }
 
 export function assertCommandAllowed(policy: AgentInvocationPolicy, command: AgentCommandRequest): void {
