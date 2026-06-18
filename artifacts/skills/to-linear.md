@@ -9,6 +9,58 @@ Turn the current conversation context, an existing PRD, a spec, or an implementa
 
 This skill uses Linear. It does not write Local Markdown scratch packages, `.scratch/<feature>/PRD.md`, or `.scratch/<feature>/issues/*.md`. Use `to-scratch` instead when the requested output is local AFK Markdown.
 
+## Prerequisites
+
+`afk.json` must include a Linear `projectId` for the repository. All issues created by this skill are assigned to that project, and AFK discovery only returns issues that belong to it.
+
+Configuration precedence:
+
+- For `provider.kind: 'linear-graphql'`, use `provider.projectId`.
+- For the legacy `linear` runtime block, use `linear.projectId`.
+- When both are present, `provider.projectId` takes precedence over `linear.projectId`.
+
+Example legacy configuration:
+
+```json
+{
+  "testsEnabled": false,
+  "staticCheckCommands": [],
+  "linear": {
+    "teamId": "team-uuid",
+    "projectId": "project-uuid",
+    "afkLabel": "AFK",
+    "workflowStates": {
+      "ready": "Ready for agent",
+      "running": "In Progress",
+      "done": "Done",
+      "handoff": "Needs Handoff"
+    }
+  },
+  "provider": { "kind": "scratch" }
+}
+```
+
+Example `linear-graphql` provider configuration:
+
+```json
+{
+  "testsEnabled": false,
+  "staticCheckCommands": [],
+  "provider": {
+    "kind": "linear-graphql",
+    "team": { "id": "team-uuid" },
+    "projectId": "project-uuid",
+    "afkLabelName": "AFK",
+    "workflowStates": {
+      "ready": { "name": "Ready for agent" },
+      "running": { "name": "In Progress" },
+      "done": { "name": "Done" },
+      "handoff": { "name": "Needs Handoff" }
+    }
+  }
+}
+```
+
 ## Default Behavior
 
 - Inspect the repository and relevant docs before planning when you have not already done so.

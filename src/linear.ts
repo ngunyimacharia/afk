@@ -89,7 +89,7 @@ export interface LinearConfigClient {
 }
 
 export interface LinearDiscoveryClient {
-  findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]>;
+  findAfkParentIssues(input: { teamId: string; labelId: string; projectId: string }): Promise<LinearParentIssue[]>;
 }
 
 export interface LinearRunSyncClient {
@@ -119,11 +119,13 @@ export interface ResolvedLinearConfig {
   teamId: string;
   teamKey: string;
   labelId: string;
+  projectId: string;
   workflowStateIds: Record<LinearWorkflowStateRole, string>;
 }
 
 export interface ResolveLinearConfigOptions {
   config?: LinearProjectConfig;
+  projectId?: string;
   env?: NodeJS.ProcessEnv;
   client?: LinearConfigClient;
 }
@@ -203,7 +205,11 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
     return state ? { id: state.id, name: state.name, teamId } : null;
   }
 
-  async findAfkParentIssues(input: { teamId: string; labelId: string }): Promise<LinearParentIssue[]> {
+  async findAfkParentIssues(input: {
+    teamId: string;
+    labelId: string;
+    projectId: string;
+  }): Promise<LinearParentIssue[]> {
     try {
       return await this.findAfkParentIssuesWithBranchNames(input, true);
     } catch (error) {
@@ -240,7 +246,7 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
   }
 
   private async findAfkParentIssuesWithBranchNames(
-    input: { teamId: string; labelId: string },
+    input: { teamId: string; labelId: string; projectId: string },
     includeBranchNames: boolean,
   ): Promise<LinearParentIssue[]> {
     const branchNameField = includeBranchNames ? 'branchName' : '';
@@ -249,11 +255,12 @@ export class LinearGraphqlClient implements LinearConfigClient, LinearDiscoveryC
         nodes: LinearParentIssueGraphqlNode[];
       };
     }>(
-      `query AfkDiscoverLinearIssues($teamId: String!, $labelId: String!) {
+      `query AfkDiscoverLinearIssues($teamId: String!, $labelId: String!, $projectId: String!) {
         issues(
           first: 100
           filter: {
             team: { id: { eq: $teamId } }
+            project: { id: { eq: $projectId } }
             parent: { null: true }
             children: { some: { labels: { some: { id: { eq: $labelId } } } } }
           }
@@ -368,6 +375,10 @@ export async function resolveLinearConfig(options: ResolveLinearConfigOptions): 
   if (!labelName) {
     throw new LinearStartupError('Linear startup requires linear.afkLabel or linear.labelName.');
   }
+  const projectId = options.projectId ?? config.projectId;
+  if (!projectId) {
+    throw new LinearStartupError('Linear startup requires linear.projectId.');
+  }
   const team = await client.findTeam(teamIdentifier);
   if (!team) {
     throw new LinearStartupError(
@@ -398,6 +409,7 @@ export async function resolveLinearConfig(options: ResolveLinearConfigOptions): 
     teamId: team.id,
     teamKey: team.key,
     labelId: label.id,
+    projectId,
     workflowStateIds,
   };
 }
@@ -406,6 +418,7 @@ export async function discoverLinearFeatures(options: DiscoverLinearFeaturesOpti
   const parents = await options.client.findAfkParentIssues({
     teamId: options.resolvedConfig.teamId,
     labelId: options.resolvedConfig.labelId,
+    projectId: options.resolvedConfig.projectId,
   });
   const terminalStateIds = new Set([
     options.resolvedConfig.workflowStateIds.done,

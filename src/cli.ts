@@ -13,13 +13,7 @@ import {
 import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
-import {
-  type AgentExecutionProvider,
-  ClaudeKimiAgentExecutionProvider,
-  CompositeAgentExecutionProvider,
-  OpenCodeAgentExecutionProvider,
-} from './agent-execution-provider.js';
-import { ClaudeCodeSessionExecutor, discoverClaudeKimiModels } from './claude-code.js';
+import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
 import { CleanupExecutor, CleanupPlanner, readPendingPostMergeCleanupItems } from './cleanup.js';
 import { type DaemonLaunchContext, runDaemon } from './daemon.js';
 import {
@@ -499,18 +493,34 @@ export async function runAfk(
     try {
       const provider =
         runtime.trackerProvider ?? createDefaultTrackerProvider(repoRoot, activeProjectConfig.provider.kind);
-      const launchTickets = await discoverLaunchTickets(provider);
-      allTickets = launchTickets.allTickets;
-      tickets = launchTickets.eligibleTickets;
+      const discovered = await discoverLaunchTickets(provider);
+      allTickets = discovered.allTickets;
+      tickets = discovered.eligibleTickets;
     } catch (error) {
       return { code: 1, message: formatTicketMetadataError(error) };
     }
     let resolvedLinearConfig: ResolvedLinearConfig | undefined;
     if (activeProjectConfig.linear) {
       try {
+        const linearProjectId =
+          activeProjectConfig.provider.kind === 'linear-graphql'
+            ? (activeProjectConfig.provider.projectId ?? activeProjectConfig.linear.projectId)
+            : activeProjectConfig.linear.projectId;
         const client = new LinearGraphqlClient(env.LINEAR_API_KEY ?? '');
-        const resolvedConfig = await resolveLinearConfig({ config: activeProjectConfig.linear, env, client });
+        const resolvedConfig = await resolveLinearConfig({
+          config: activeProjectConfig.linear,
+          projectId: linearProjectId,
+          env,
+          client,
+        });
         resolvedLinearConfig = resolvedConfig;
+        const linearFeatures = await discoverLinearFeatures({
+          resolvedConfig: resolvedLinearConfig,
+          client: new LinearGraphqlClient(env.LINEAR_API_KEY ?? ''),
+        });
+        const linearTickets = linearFeaturesToTicketRecords(linearFeatures);
+        allTickets = [...allTickets, ...linearTickets];
+        tickets = [...tickets, ...linearTickets];
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Unknown Linear config error';
         return { code: 1, message: `Linear sync config failed.\nReason: ${reason}` };
@@ -712,8 +722,16 @@ export async function runAfk(
       ticketLabel: selectedTickets[0]?.label,
       autoApprove: true,
     });
-    const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-    const reviewerProvider = createHarnessAgentExecutionProvider(reviewerHarness, reviewerExecutor, permissionCoordinator);
+    const executionProvider = createHarnessAgentExecutionProvider(
+      harness,
+      implementationExecutor,
+      permissionCoordinator,
+    );
+    const reviewerProvider = createHarnessAgentExecutionProvider(
+      reviewerHarness,
+      reviewerExecutor,
+      permissionCoordinator,
+    );
     const runner = new SingleTicketRunner(
       runtimeStore,
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
