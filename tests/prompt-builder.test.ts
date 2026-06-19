@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { buildLaunchPlan } from '../src/launch-context-builder.js';
 import { buildPrompt } from '../src/prompt-builder.js';
+import type { PreparedCheckoutContext } from '../src/worktree-preparation-service.js';
 
 function promptPath(name: string): string {
   const here = fileURLToPath(new URL('.', import.meta.url));
@@ -24,6 +25,7 @@ test('prompt consumes prepared checkout context', () => {
       effectiveWorktreeName: 'feat-tree',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat-tree',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat-tree',
     },
     ticket: {
@@ -69,6 +71,7 @@ test('external-provider prompt uses managed mirror result contract', () => {
       effectiveWorktreeName: 'feat-tree',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat-tree',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat-tree',
     },
     ticket: {
@@ -134,6 +137,7 @@ test('default execution prompt requires reviewer notes subsection', () => {
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     ticket: {
@@ -160,6 +164,7 @@ test('custom afk instructions do not suppress reviewer-notes requirement', () =>
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     ticket: {
@@ -188,6 +193,7 @@ test('generated prompt includes scratch artifact completion checklist', () => {
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     ticket: {
@@ -215,6 +221,7 @@ test('generated prompt with full afk instructions includes stop conditions and w
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     ticket: {
@@ -236,6 +243,30 @@ test('generated prompt with full afk instructions includes stop conditions and w
   assert.match(prompt, /## Verification Budget/);
 });
 
+test('generated prompt forbids creating or switching to other branches', () => {
+  const prompt = buildPrompt({
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath: '/repo/.git/worktrees/feat',
+    },
+    ticket: {
+      path: '/repo/.scratch/feat/issues/01.md',
+      feature: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      executorAfk: true,
+    },
+    ticketContent: '---\nstatus: ready-for-agent\n---\n',
+  });
+  assert.match(prompt, /Branch discipline: commit only to the Branch listed above/);
+  assert.match(prompt, /Do not create branches named after other features or issues/);
+});
+
 test('external-provider prompt with full afk instructions excludes scratch-only ticket instructions', () => {
   const prompt = buildPrompt({
     checkout: {
@@ -244,6 +275,7 @@ test('external-provider prompt with full afk instructions excludes scratch-only 
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     ticket: {
@@ -279,6 +311,7 @@ test('generated prompt includes verification budget guidance', () => {
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     ticket: {
@@ -364,6 +397,7 @@ test('snapshot includes dependency/runtime/readiness facts and excludes unrelate
       effectiveWorktreeName: 'feat-tree',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat-tree',
+      branchNameSource: 'fallback',
       worktreePath: repoRoot,
     },
   );
@@ -418,6 +452,7 @@ test('snapshot includes implementation HEAD in executor prompt', () => {
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     ticket: {
@@ -484,6 +519,7 @@ test('launch snapshots include Linear mirror identity', () => {
       effectiveWorktreeName: 'eng-100',
       defaultBranchName: 'eng-100',
       effectiveBranchName: 'eng-100',
+      branchNameSource: 'fallback',
       worktreePath: repoRoot,
     },
   );
@@ -508,20 +544,22 @@ test('launch plan snapshots use per-feature checkouts', () => {
   mkdirSync(path.dirname(ticketB), { recursive: true });
   writeFileSync(ticketA, '---\nstatus: ready-for-agent\n---\n');
   writeFileSync(ticketB, '---\nstatus: ready-for-agent\n---\n');
-  const checkoutA = {
+  const checkoutA: PreparedCheckoutContext = {
     featureSlug: 'feat-a',
     defaultWorktreeName: 'feat-a',
     effectiveWorktreeName: 'tree-a',
     defaultBranchName: 'feat-a',
     effectiveBranchName: 'feat-a',
+    branchNameSource: 'fallback',
     worktreePath: path.join(repoRoot, '.worktree', 'tree-a'),
   };
-  const checkoutB = {
+  const checkoutB: PreparedCheckoutContext = {
     featureSlug: 'feat-b',
     defaultWorktreeName: 'feat-b',
     effectiveWorktreeName: 'tree-b',
     defaultBranchName: 'feat-b',
     effectiveBranchName: 'feat-b',
+    branchNameSource: 'fallback',
     worktreePath: path.join(repoRoot, '.worktree', 'tree-b'),
   };
 

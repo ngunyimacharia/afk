@@ -31,6 +31,8 @@ export function buildPrompt(input: PromptInput): string {
     `Feature slug: ${input.checkout.featureSlug}`,
     `Branch: ${input.checkout.effectiveBranchName}`,
     `Worktree path: ${input.checkout.worktreePath}`,
+    'Branch discipline: commit only to the Branch listed above. Do not create new branches, switch branches, or push commits to any other branch.',
+    'Do not create branches named after other features or issues. The Branch above is the only allowed target for this ticket.',
     ...(input.snapshot?.head ? [`Implementation HEAD: ${input.snapshot.head}`] : []),
     'Shell commands: always run tests, linters, builds, and git from the Worktree path. Use absolute paths or the workdir parameter. Never assume the default working directory is the worktree.',
     `Repo root, for shared scratch artifacts only: ${input.snapshot?.repoRoot ?? 'unknown'}`,
