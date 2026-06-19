@@ -64,3 +64,28 @@ test('leaves featureTitle undefined when PRD heading is missing', () => {
 
   assert.equal(tickets[0]?.featureTitle, undefined);
 });
+
+test('derives feature from directory when frontmatter feature is absent', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'directory-feature', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nstatus: ready-for-agent\n---\n');
+
+  const ticket = new TicketRepository(repoRoot).readTicket(path.join(issuesDir, '01.md'));
+
+  assert.equal(ticket.feature, 'directory-feature');
+  assert.equal(ticket.label, 'directory-feature/01');
+});
+
+test('rejects frontmatter feature override that disagrees with directory', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat-a', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat-b\nstatus: ready-for-agent\n---\n');
+
+  const repository = new TicketRepository(repoRoot);
+  assert.throws(
+    () => repository.readTicket(path.join(issuesDir, '01.md')),
+    /frontmatter 'feature: feat-b' disagrees with the directory-derived feature 'feat-a'/,
+  );
+});

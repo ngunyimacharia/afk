@@ -82,10 +82,14 @@ export class TicketRepository {
   readTicket(filePath: string, featureFallback?: string, featureTitle?: string): TicketRecord {
     const content = readFileSync(filePath, 'utf8');
     const frontmatter = parseFrontmatter(content, filePath);
-    const feature =
-      (readFrontmatterValue(frontmatter, 'feature') as string | undefined) ??
-      featureFallback ??
-      path.basename(path.dirname(path.dirname(filePath)));
+    const directoryFeature = featureFallback ?? path.basename(path.dirname(path.dirname(filePath)));
+    const frontmatterFeature = readFrontmatterValue(frontmatter, 'feature') as string | undefined;
+    if (frontmatterFeature && frontmatterFeature.trim() !== directoryFeature) {
+      throw new Error(
+        `${filePath}: frontmatter 'feature: ${frontmatterFeature}' disagrees with the directory-derived feature '${directoryFeature}'. The directory name is the canonical feature slug; remove or correct the frontmatter feature override.`,
+      );
+    }
+    const feature = directoryFeature;
     const issueName = path.basename(filePath, '.md');
     const statusValue = readFrontmatterValue(frontmatter, 'status');
     if (typeof statusValue !== 'string' || !statusValue.trim()) {
