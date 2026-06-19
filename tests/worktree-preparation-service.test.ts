@@ -8,6 +8,7 @@ import { buildPrompt } from '../src/prompt-builder.js';
 import { buildWorktreeReadiness, detectTestSuite, type ReadinessCommandExecutor } from '../src/readiness-service.js';
 import {
   needsDisabledTestsDecision,
+  type PreparedCheckoutContext,
   WorktreePreparationService,
   WorktreeReadinessBlockedError,
 } from '../src/worktree-preparation-service.js';
@@ -29,12 +30,13 @@ function createRepo(prefix: string): string {
 }
 
 test('derives names and honors overrides', () => {
-  const checkout = {
+  const checkout: PreparedCheckoutContext = {
     featureSlug: 'feature-a',
     defaultWorktreeName: 'feature-a',
     effectiveWorktreeName: 'custom-tree',
     defaultBranchName: 'feature-a',
     effectiveBranchName: 'local/branch',
+    branchNameSource: 'fallback',
     worktreePath: '/repo/custom-tree',
   };
   assert.equal(checkout.defaultWorktreeName, 'feature-a');
@@ -75,6 +77,7 @@ test('creates or reuses a persistent local worktree and branch', () => {
   const second = service.prepare({ repoRoot, featureSlug: 'feat-one' });
 
   assert.equal(first.effectiveWorktreeName, 'feat-one');
+  assert.equal(first.branchNameSource, 'fallback');
   assert.equal(second.effectiveWorktreeName, 'feat-one');
   assert.match(git(repoRoot, ['branch', '--list', 'feat-one']), /feat-one/);
   assert.equal(
@@ -95,6 +98,7 @@ test('prefers safe Linear branch names for feature checkouts', () => {
 
   assert.equal(result.defaultBranchName, 'afk/eng-100');
   assert.equal(result.effectiveBranchName, 'raven/eng-100-parent-feature');
+  assert.equal(result.branchNameSource, 'linear');
   assert.equal(result.effectiveWorktreeName, 'raven-eng-100-parent-feature');
   assert.match(git(repoRoot, ['branch', '--list', 'raven/eng-100-parent-feature']), /raven\/eng-100-parent-feature/);
 });
@@ -110,8 +114,23 @@ test('falls back to Linear issue key when provided feature branch name is unsafe
   });
 
   assert.equal(result.effectiveBranchName, 'afk/eng-200');
+  assert.equal(result.branchNameSource, 'fallback');
   assert.equal(result.effectiveWorktreeName, 'afk-eng-200');
   assert.match(git(repoRoot, ['branch', '--list', 'afk/eng-200']), /afk\/eng-200/);
+});
+
+test('records override branch name source when afk_branch override is used', () => {
+  const repoRoot = createRepo('afk-worktree-override-');
+
+  const result = new WorktreePreparationService().prepare({
+    repoRoot,
+    featureSlug: 'override-feature',
+    ticketOverrides: { afk_branch: 'custom/override-branch' },
+  });
+
+  assert.equal(result.effectiveBranchName, 'custom/override-branch');
+  assert.equal(result.branchNameSource, 'override');
+  assert.match(git(repoRoot, ['branch', '--list', 'custom/override-branch']), /custom\/override-branch/);
 });
 
 test('fails clearly when git rejects the requested branch state', () => {

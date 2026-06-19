@@ -25,6 +25,7 @@ test('__daemon command runs scheduler from context file', async () => {
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: repoRoot,
     },
     {
@@ -77,6 +78,7 @@ test('__daemon command clears active run on empty plan', async () => {
     effectiveWorktreeName: 'feat',
     defaultBranchName: 'feat',
     effectiveBranchName: 'feat',
+    branchNameSource: 'fallback',
     worktreePath: repoRoot,
   });
 
@@ -124,6 +126,7 @@ test('__daemon command accepts Codex implementation and reviewer context', async
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: repoRoot,
     },
     {
@@ -176,6 +179,7 @@ test('__daemon command in argv[1] works for compiled mode', async () => {
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: repoRoot,
     },
     {

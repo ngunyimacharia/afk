@@ -191,6 +191,7 @@ export function buildLaunchPlan(
     tickets,
     checkout,
     checkouts: checkoutsByFeature,
+    ticketCheckouts: {},
     snapshots,
     gitContext: { commits: [] },
     featureDependencies,

@@ -634,6 +634,7 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
       effectiveWorktreeName: input.feature,
       defaultBranchName: input.feature,
       effectiveBranchName: input.feature,
+      branchNameSource: 'fallback',
       worktreePath: input.repoRoot,
     };
 
@@ -963,6 +964,7 @@ function buildAgentPlan(
     effectiveWorktreeName: input.feature,
     defaultBranchName: input.featureBranchName,
     effectiveBranchName: input.featureBranchName,
+    branchNameSource: 'fallback',
     worktreePath: input.featureWorktreePath,
   };
 

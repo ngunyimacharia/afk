@@ -38,6 +38,7 @@ test('builds launch plans with reviewer model and prompt context', () => {
       effectiveWorktreeName: 'feat',
       defaultBranchName: 'feat',
       effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
       worktreePath: '/repo/.git/worktrees/feat',
     },
     {

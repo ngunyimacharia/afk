@@ -49,7 +49,7 @@ export interface TicketProviderContext {
 }
 
 export interface LaunchBlockEvidence {
-  kind: 'path-validation';
+  kind: 'path-validation' | 'linear-identity';
   message: string;
   ticketLabel: string;
   feature: string;
@@ -109,6 +109,7 @@ export interface CheckoutContext {
   effectiveWorktreeName: string;
   defaultBranchName: string;
   effectiveBranchName: string;
+  branchNameSource: 'linear' | 'override' | 'fallback';
   worktreePath: string;
   readiness?: CheckoutReadinessMetadata;
 }
@@ -181,6 +182,7 @@ export interface LaunchPlan {
   gitContext: GitContext;
   checkout: CheckoutContext;
   checkouts?: Record<string, CheckoutContext>;
+  ticketCheckouts?: Record<string, CheckoutContext>;
   snapshots?: Record<string, AfkStateSnapshot>;
   featureDependencies?: Record<string, string[]>;
 }

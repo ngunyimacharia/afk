@@ -41,6 +41,7 @@ test('creates a scratch worktree branched from the feature branch by default', (
   assert.equal(result.effectiveWorktreeName, 'my-feature-01-test');
   assert.equal(result.defaultBranchName, 'afk/my-feature/01-test');
   assert.equal(result.effectiveBranchName, 'afk/my-feature/01-test');
+  assert.equal(result.branchNameSource, 'fallback');
   assert.equal(result.worktreePath, path.join(repoRoot, '.worktree', 'my-feature-01-test'));
   assert.equal(existsSync(result.worktreePath), true);
   assert.equal(existsSync(path.join(result.worktreePath, 'feature.txt')), true);
@@ -117,6 +118,7 @@ test('prefers safe Linear branch names for ticket checkouts', () => {
 
   assert.equal(result.defaultBranchName, 'afk/eng-101');
   assert.equal(result.effectiveBranchName, 'raven/eng-101-child-work');
+  assert.equal(result.branchNameSource, 'linear');
   assert.equal(result.effectiveWorktreeName, 'raven-eng-101-child-work');
   assert.match(git(repoRoot, ['branch', '--list', 'raven/eng-101-child-work']), /raven\/eng-101-child-work/);
 });

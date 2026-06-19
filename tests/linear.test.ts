@@ -546,6 +546,7 @@ test('records Linear sync failures without deleting local mirrors', async () => 
       effectiveWorktreeName: 'eng-200',
       defaultBranchName: 'eng-200',
       effectiveBranchName: 'eng-200',
+      branchNameSource: 'fallback',
       worktreePath: repoRoot,
     },
   });
@@ -587,6 +588,7 @@ test('syncs terminal Linear status when reviewer configuration is missing', asyn
       effectiveWorktreeName: 'eng-200',
       defaultBranchName: 'eng-200',
       effectiveBranchName: 'eng-200',
+      branchNameSource: 'fallback',
       worktreePath: repoRoot,
     },
   });

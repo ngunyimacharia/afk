@@ -11,12 +11,15 @@ import {
   runReadinessCommands,
 } from './readiness-service.js';
 
+export type BranchNameSource = 'linear' | 'override' | 'fallback';
+
 export interface PreparedCheckoutContext {
   featureSlug: string;
   defaultWorktreeName: string;
   effectiveWorktreeName: string;
   defaultBranchName: string;
   effectiveBranchName: string;
+  branchNameSource: BranchNameSource;
   worktreePath: string;
   readiness?: WorktreeReadinessMetadata;
 }
@@ -246,9 +249,12 @@ export function ensureIgnoredWorktreeRoot(repoRoot: string): string {
 export class WorktreePreparationService {
   prepare(input: WorktreePreparationInput): PreparedCheckoutContext {
     const defaultBranchName = input.linearIssueKey ? linearFallbackBranchName(input.linearIssueKey) : input.featureSlug;
-    const effectiveBranchName =
-      input.ticketOverrides?.afk_branch?.trim() ||
-      (isSafeCheckoutBranchName(input.linearIssueBranchName) ? input.linearIssueBranchName.trim() : defaultBranchName);
+    const overrideBranch = input.ticketOverrides?.afk_branch?.trim();
+    const linearBranch = isSafeCheckoutBranchName(input.linearIssueBranchName)
+      ? input.linearIssueBranchName.trim()
+      : null;
+    const effectiveBranchName = overrideBranch || linearBranch || defaultBranchName;
+    const branchNameSource: BranchNameSource = overrideBranch ? 'override' : linearBranch ? 'linear' : 'fallback';
     const defaultWorktreeName = pathSafeCheckoutName(effectiveBranchName) || input.featureSlug;
     const effectiveWorktreeName = input.ticketOverrides?.afk_worktree?.trim() || defaultWorktreeName;
     const worktreePath = path.join(ensureIgnoredWorktreeRoot(input.repoRoot), effectiveWorktreeName);
@@ -327,6 +333,7 @@ export class WorktreePreparationService {
       effectiveWorktreeName,
       defaultBranchName,
       effectiveBranchName,
+      branchNameSource,
       worktreePath,
       readiness,
     };

@@ -14,6 +14,7 @@ function createMockScratchWorktreeService() {
       effectiveWorktreeName: `${input.featureSlug}-${input.issueName}`,
       defaultBranchName: `afk/${input.featureSlug}/${input.issueName}`,
       effectiveBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+      branchNameSource: 'fallback',
       worktreePath: `/scratch/${input.featureSlug}-${input.issueName}`,
     }),
     removeScratchWorktree: () => {},
@@ -60,6 +61,7 @@ function basePlan(overrides: Partial<LaunchPlan> & { tickets: TicketRecord[] }):
       effectiveWorktreeName: 'feat-a',
       defaultBranchName: 'feat-a',
       effectiveBranchName: 'feat-a',
+      branchNameSource: 'fallback',
       worktreePath: '/tmp/worktree',
     },
     ...overrides,
@@ -391,8 +393,13 @@ test('returns structured launch-block evidence for invalid selected paths', asyn
   assert.equal(result.launchBlocks?.[0]?.ticketLabel, 'feat-a/001');
 });
 
-test('passes scratch worktree checkout and all scratch worktrees in checkouts to runner', async () => {
-  const seen: { label: string; checkoutPath: string; checkoutsPaths: string[] }[] = [];
+test('passes feature checkouts and ticket checkouts separately to runner', async () => {
+  const seen: {
+    label: string;
+    checkoutPath: string;
+    checkoutsPaths: string[];
+    ticketCheckoutsPaths: string[];
+  }[] = [];
   const scheduler = createScheduler(
     {
       launch: async (plan: LaunchPlan) => {
@@ -402,6 +409,7 @@ test('passes scratch worktree checkout and all scratch worktrees in checkouts to
           label: ticket.label,
           checkoutPath: plan.checkout.worktreePath,
           checkoutsPaths: Object.values(plan.checkouts ?? {}).map((c) => c.worktreePath),
+          ticketCheckoutsPaths: Object.values(plan.ticketCheckouts ?? {}).map((c) => c.worktreePath),
         });
         return { scheduled: true, message: ticket.label };
       },
@@ -421,6 +429,7 @@ test('passes scratch worktree checkout and all scratch worktrees in checkouts to
         effectiveWorktreeName: 'feat-a',
         defaultBranchName: 'feat-a',
         effectiveBranchName: 'feat-a',
+        branchNameSource: 'fallback',
         worktreePath: '/tmp/tree-a',
       },
       'feat-b': {
@@ -429,6 +438,7 @@ test('passes scratch worktree checkout and all scratch worktrees in checkouts to
         effectiveWorktreeName: 'feat-b',
         defaultBranchName: 'feat-b',
         effectiveBranchName: 'feat-b',
+        branchNameSource: 'fallback',
         worktreePath: '/tmp/tree-b',
       },
     },
@@ -442,10 +452,12 @@ test('passes scratch worktree checkout and all scratch worktrees in checkouts to
   assert.ok(second);
   assert.equal(first.checkoutPath, '/scratch/feat-a-001');
   assert.equal(second.checkoutPath, '/scratch/feat-b-001');
-  assert.equal(first.checkoutsPaths.includes('/tmp/tree-a'), true);
-  assert.equal(first.checkoutsPaths.includes('/scratch/feat-a-001'), true);
-  assert.equal(second.checkoutsPaths.includes('/tmp/tree-b'), true);
-  assert.equal(second.checkoutsPaths.includes('/scratch/feat-b-001'), true);
+  // Feature checkouts stay keyed by feature and do not include scratch worktrees.
+  assert.deepEqual(first.checkoutsPaths, ['/tmp/tree-a', '/tmp/tree-b']);
+  assert.deepEqual(second.checkoutsPaths, ['/tmp/tree-a', '/tmp/tree-b']);
+  // Scratch worktrees are tracked under ticketCheckouts keyed by ticket label.
+  assert.equal(first.ticketCheckoutsPaths.includes('/scratch/feat-a-001'), true);
+  assert.equal(second.ticketCheckoutsPaths.includes('/scratch/feat-b-001'), true);
 });
 
 test('updates ticket snapshot to match scratch checkout before runner launch', async () => {

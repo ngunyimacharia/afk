@@ -31,9 +31,13 @@ export class ScratchWorktreeService {
     const defaultBranchName = input.linearIssueKey
       ? linearFallbackBranchName(input.linearIssueKey)
       : `afk/${input.featureSlug}/${input.issueName}`;
-    const effectiveBranchName = isSafeCheckoutBranchName(input.linearIssueBranchName)
+    const linearBranch = isSafeCheckoutBranchName(input.linearIssueBranchName)
       ? input.linearIssueBranchName.trim()
-      : defaultBranchName;
+      : null;
+    const effectiveBranchName = linearBranch || defaultBranchName;
+    const branchNameSource: import('./worktree-preparation-service.js').BranchNameSource = linearBranch
+      ? 'linear'
+      : 'fallback';
     const defaultWorktreeName = input.linearIssueKey
       ? pathSafeCheckoutName(effectiveBranchName)
       : `${input.featureSlug}-${input.issueName}`;
@@ -63,6 +67,7 @@ export class ScratchWorktreeService {
       effectiveWorktreeName,
       defaultBranchName,
       effectiveBranchName,
+      branchNameSource,
       worktreePath,
       readiness,
     };

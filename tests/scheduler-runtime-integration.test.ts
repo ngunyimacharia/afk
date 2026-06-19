@@ -15,6 +15,7 @@ function createMockScratchWorktreeService() {
       effectiveWorktreeName: `${input.featureSlug}-${input.issueName}`,
       defaultBranchName: `afk/${input.featureSlug}/${input.issueName}`,
       effectiveBranchName: `afk/${input.featureSlug}/${input.issueName}`,
+      branchNameSource: 'fallback',
       worktreePath: `/scratch/${input.featureSlug}-${input.issueName}`,
     }),
     removeScratchWorktree: () => {},
@@ -55,6 +56,7 @@ test('starts ready tickets concurrently across and within features', async () =>
       effectiveWorktreeName: 'feat-a',
       defaultBranchName: 'feat-a',
       effectiveBranchName: 'feat-a',
+      branchNameSource: 'fallback',
       worktreePath: '/tmp/worktree',
     },
   };
