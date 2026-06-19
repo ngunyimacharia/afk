@@ -159,7 +159,10 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
             coordinator: this.permissionCoordinator,
             repoRoot: request.plan.repoRoot,
             worktreePath: request.plan.checkout?.worktreePath,
-            otherWorktreePaths: Object.values(request.plan.checkouts ?? {})
+            otherWorktreePaths: [
+              ...Object.values(request.plan.checkouts ?? {}),
+              ...Object.values(request.plan.ticketCheckouts ?? {}),
+            ]
               .map((checkout) => checkout.worktreePath)
               .filter((worktreePath) => worktreePath !== request.plan.checkout?.worktreePath),
           }),

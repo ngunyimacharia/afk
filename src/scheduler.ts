@@ -191,11 +191,15 @@ export class Scheduler {
           linearIssueBranchName: ticket.linear?.issueBranchName,
           baseRef: plan.checkouts?.[ticket.feature]?.effectiveBranchName ?? plan.checkout.effectiveBranchName,
         });
+        options.onProgress?.({
+          ticketLabel: ticket.label,
+          message: `prepared scratch checkout: branch=${scratchCheckout.effectiveBranchName} (source=${scratchCheckout.branchNameSource})`,
+        });
         scratchWorktrees.set(ticket.label, scratchCheckout);
 
         const checkout = scratchCheckout;
-        const checkouts: LaunchPlan['checkouts'] = {
-          ...plan.checkouts,
+        const ticketCheckouts: LaunchPlan['ticketCheckouts'] = {
+          ...plan.ticketCheckouts,
           ...Object.fromEntries(scratchWorktrees),
         };
         const snapshot = plan.snapshots?.[ticket.label];
@@ -213,7 +217,7 @@ export class Scheduler {
 
         const run = this.deps.runner
           .launch(
-            { ...plan, checkout, checkouts, snapshots, tickets: [ticket] },
+            { ...plan, checkout, ticketCheckouts, snapshots, tickets: [ticket] },
             { onProgress: options.onProgress, runId: options.runId, signal: options.signal },
           )
           .then(async (result) => {

@@ -676,6 +676,11 @@ export async function runAfk(
     const checkoutsByFeature = Object.fromEntries(
       checkoutFeatures.map((feature, index) => [feature, checkouts[index]]),
     );
+    for (const [feature, checkout] of Object.entries(checkoutsByFeature)) {
+      io.stdout.write(
+        `Feature checkout '${feature}': branch=${checkout.effectiveBranchName} (source=${checkout.branchNameSource}), worktree=${checkout.worktreePath}\n`,
+      );
+    }
     const checkout = checkoutsByFeature[firstTicket.feature];
     const featureDependencies = Object.fromEntries(
       selectedFeatures.map((feature) => [feature, workspaceGraph.features[feature]?.dependsOnFeatures ?? []]),
