@@ -1,8 +1,9 @@
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { slugFromLinearKey } from './linear.js';
 import type { TicketRecord } from './types.js';
 
-export type LaunchBlockKind = 'path-validation';
+export type LaunchBlockKind = 'path-validation' | 'linear-identity';
 
 export interface LaunchBlockEvidence {
   kind: LaunchBlockKind;
@@ -25,7 +26,7 @@ export class PathValidationError extends Error {
 
 export function validateSelectedTicketPath(repoRoot: string, ticket: TicketRecord): LaunchBlockEvidence | null {
   const scratchRoot = path.resolve(repoRoot, '.scratch');
-  if (ticket.source === 'linear') return validateLinearMirrorPath(repoRoot, ticket);
+  if (ticket.source === 'linear') return validateLinearTicketPath(repoRoot, ticket);
 
   const expectedIssuesRoot = path.resolve(scratchRoot, ticket.feature, 'issues');
   const selectedPath = path.resolve(ticket.path);
@@ -53,7 +54,28 @@ export function validateSelectedTicketPath(repoRoot: string, ticket: TicketRecor
   return null;
 }
 
-function validateLinearMirrorPath(repoRoot: string, ticket: TicketRecord): LaunchBlockEvidence | null {
+function validateLinearTicketPath(repoRoot: string, ticket: TicketRecord): LaunchBlockEvidence | null {
+  if (ticket.linear) {
+    const expectedFeature = slugFromLinearKey(ticket.linear.parentKey);
+    if (expectedFeature !== ticket.feature) {
+      return launchBlock(
+        ticket,
+        ticket.path,
+        `Linear parent key ${ticket.linear.parentKey} maps to feature '${expectedFeature}', but ticket is labeled ${ticket.label} (feature '${ticket.feature}'). Linear branch names would be created for the wrong feature.`,
+        'linear-identity',
+      );
+    }
+    const expectedIssueName = slugFromLinearKey(ticket.linear.issueKey);
+    if (expectedIssueName !== ticket.issueName) {
+      return launchBlock(
+        ticket,
+        ticket.path,
+        `Linear issue key ${ticket.linear.issueKey} maps to issue '${expectedIssueName}', but ticket is labeled ${ticket.label} (issue '${ticket.issueName}'). Linear branch names would be created for the wrong issue.`,
+        'linear-identity',
+      );
+    }
+  }
+
   const mirrorRoot = path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
   const selectedPath = path.resolve(ticket.path);
   if (!isWithinRoot(selectedPath, mirrorRoot)) {
@@ -75,9 +97,14 @@ export function assertPathWithinRoot(targetPath: string, rootPath: string, label
   }
 }
 
-function launchBlock(ticket: TicketRecord, selectedPath: string, message: string): LaunchBlockEvidence {
+function launchBlock(
+  ticket: TicketRecord,
+  selectedPath: string,
+  message: string,
+  kind: LaunchBlockKind = 'path-validation',
+): LaunchBlockEvidence {
   return {
-    kind: 'path-validation',
+    kind,
     message,
     ticketLabel: ticket.label,
     feature: ticket.feature,
