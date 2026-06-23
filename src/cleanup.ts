@@ -272,37 +272,53 @@ function checkWorktreeClean(repoRoot: string, worktreePath: string): { ok: true 
 }
 
 function retryPostMergeCleanup(repoRoot: string, item: PendingPostMergeCleanupItem): PendingPostMergeCleanupResult {
+  const warnings: string[] = [];
   const reachability = checkBranchReachability(item.featureWorktreePath, item.featureBranchName, item.mergedIssueTip);
   if (!reachability.ok) {
-    return { ...item, success: false, deletedBranch: false, deletedWorktree: false, warning: reachability.reason };
-  }
-  const cleanWorktree = checkWorktreeClean(repoRoot, item.worktreePath);
-  if (!cleanWorktree.ok) {
-    return { ...item, success: false, deletedBranch: false, deletedWorktree: false, warning: cleanWorktree.reason };
+    warnings.push(reachability.reason);
   }
 
-  let deletedWorktree = false;
-  let deletedBranch = false;
-  const errors: string[] = [];
-  try {
-    runGit(repoRoot, ['worktree', 'remove', '-f', item.worktreePath]);
-    deletedWorktree = true;
-  } catch (error) {
-    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  const cleanWorktrees = checkBranchWorktreesClean(repoRoot, item.branchName);
+  if (!cleanWorktrees.ok) {
+    return { ...item, success: false, deletedBranch: false, deletedWorktree: false, warning: cleanWorktrees.reason };
   }
+
+  const worktreeCleanup = removeWorktreesForBranch(repoRoot, item.branchName);
+  if (!worktreeCleanup.success) {
+    return {
+      ...item,
+      success: false,
+      deletedBranch: false,
+      deletedWorktree: worktreeCleanup.removedCount > 0,
+      error: worktreeCleanup.error,
+    };
+  }
+
+  let deletedBranch = false;
   try {
     runGit(repoRoot, ['branch', '-D', item.branchName]);
     deletedBranch = true;
   } catch (error) {
-    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('not found')) {
+      return {
+        ...item,
+        success: false,
+        deletedBranch: false,
+        deletedWorktree: true,
+        error: `branch delete failed: ${message}`,
+        warning: warnings[0],
+      };
+    }
+    warnings.push(`branch already deleted: ${item.branchName}`);
   }
+
   return {
     ...item,
-    success: deletedWorktree && deletedBranch,
+    success: true,
     deletedBranch,
-    deletedWorktree,
-    error: errors.length > 0 ? errors.join(' | ') : undefined,
-    warning: undefined,
+    deletedWorktree: worktreeCleanup.removedCount > 0,
+    warning: warnings.length > 0 ? warnings.join(' | ') : undefined,
   };
 }
 
@@ -355,6 +371,44 @@ function parseGitWorktreeList(repoRoot: string): GitWorktreeEntry[] {
   } catch {
     return [];
   }
+}
+
+export function listWorktreesForBranch(repoRoot: string, branchName: string): GitWorktreeEntry[] {
+  return parseGitWorktreeList(repoRoot).filter((entry) => entry.branchName === branchName);
+}
+
+export function checkBranchWorktreesClean(
+  repoRoot: string,
+  branchName: string,
+): { ok: true } | { ok: false; reason: string } {
+  for (const { worktreePath } of listWorktreesForBranch(repoRoot, branchName)) {
+    const clean = checkWorktreeClean(repoRoot, worktreePath);
+    if (!clean.ok) return clean;
+  }
+  return { ok: true };
+}
+
+export function removeWorktreesForBranch(
+  repoRoot: string,
+  branchName: string,
+): { success: true; removedCount: number } | { success: false; removedCount: number; error: string } {
+  const worktrees = listWorktreesForBranch(repoRoot, branchName);
+  let removedCount = 0;
+  const errors: string[] = [];
+  for (const { worktreePath } of worktrees) {
+    try {
+      runGit(repoRoot, ['worktree', 'remove', '-f', worktreePath]);
+      removedCount++;
+    } catch (error) {
+      errors.push(
+        `worktree delete failed for ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (errors.length > 0) {
+    return { success: false, removedCount, error: errors.join(' | ') };
+  }
+  return { success: true, removedCount };
 }
 
 function parseAfkIssueBranch(branchName: string): { feature: string; issueName: string } | null {
@@ -676,33 +730,44 @@ function removeOrphanedWorktree(
   if (!locked.ok) {
     return { ...target, success: false, deletedBranch: false, deletedWorktree: false, warning: locked.reason };
   }
-  const cleanWorktree = checkWorktreeClean(repoRoot, target.worktreePath);
-  if (!cleanWorktree.ok) {
-    return { ...target, success: false, deletedBranch: false, deletedWorktree: false, warning: cleanWorktree.reason };
+  const cleanWorktrees = checkBranchWorktreesClean(repoRoot, target.branchName);
+  if (!cleanWorktrees.ok) {
+    return { ...target, success: false, deletedBranch: false, deletedWorktree: false, warning: cleanWorktrees.reason };
   }
 
-  let deletedWorktree = false;
-  let deletedBranch = false;
-  const errors: string[] = [];
-  try {
-    runGit(repoRoot, ['worktree', 'remove', '-f', target.worktreePath]);
-    deletedWorktree = true;
-  } catch (error) {
-    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  const worktreeCleanup = removeWorktreesForBranch(repoRoot, target.branchName);
+  if (!worktreeCleanup.success) {
+    return {
+      ...target,
+      success: false,
+      deletedBranch: false,
+      deletedWorktree: worktreeCleanup.removedCount > 0,
+      error: worktreeCleanup.error,
+    };
   }
+
+  let deletedBranch = false;
   try {
     runGit(repoRoot, ['branch', '-D', target.branchName]);
     deletedBranch = true;
   } catch (error) {
-    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('not found')) {
+      return {
+        ...target,
+        success: false,
+        deletedBranch: false,
+        deletedWorktree: true,
+        error: `branch delete failed: ${message}`,
+      };
+    }
   }
+
   return {
     ...target,
-    success: deletedWorktree && deletedBranch,
+    success: true,
     deletedBranch,
-    deletedWorktree,
-    error: errors.length > 0 ? errors.join(' | ') : undefined,
-    warning: undefined,
+    deletedWorktree: worktreeCleanup.removedCount > 0,
   };
 }
 

@@ -610,6 +610,7 @@ test('reports post-merge cleanup failure without failing merge pipeline', async 
   writeFileSync(path.join(scratch.worktreePath, 'a.txt'), 'a\n');
   git(scratch.worktreePath, ['add', 'a.txt']);
   git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
+  writeFileSync(path.join(scratch.worktreePath, 'dirty.txt'), 'dirty\n');
 
   const store = new RuntimeStore({ repoRoot });
   const meta = setupTicketMetadata(store, feature, '001');
@@ -630,7 +631,7 @@ test('reports post-merge cleanup failure without failing merge pipeline', async 
         feature,
         issueName: '001',
         branchName: scratch.branchName,
-        worktreePath: path.join(repoRoot, '.worktree', 'does-not-exist'),
+        worktreePath: scratch.worktreePath,
         ...meta,
       },
     ],
@@ -644,14 +645,14 @@ test('reports post-merge cleanup failure without failing merge pipeline', async 
   assert.equal(result.cleanupResults[0].deletedBranch, false);
   assert.equal(result.cleanupResults[0].deletedWorktree, false);
   assert.equal(typeof result.cleanupResults[0].warning, 'string');
-  assert.equal(result.cleanupResults[0].warning?.includes('unavailable'), true);
+  assert.equal(result.cleanupResults[0].warning?.includes('uncommitted changes'), true);
   const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
   const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as Array<{ issueName: string }>;
   assert.equal(pending.length, 1);
   assert.equal(pending[0]?.issueName, '001');
 });
 
-test('skips deletion when merge proof guard fails', async () => {
+test('warns and continues deletion when merge proof guard fails', async () => {
   const repoRoot = createRepo('merge-back-guard-merge-proof-');
   const feature = 'feat-a';
   const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
@@ -683,8 +684,9 @@ test('skips deletion when merge proof guard fails', async () => {
 
   assert.equal(result.success, true);
   assert.equal(result.cleanupResults.length, 1);
-  assert.equal(result.cleanupResults[0].deletedBranch, false);
-  assert.equal(result.cleanupResults[0].deletedWorktree, false);
+  assert.equal(result.cleanupResults[0].success, true);
+  assert.equal(result.cleanupResults[0].deletedBranch, true);
+  assert.equal(result.cleanupResults[0].deletedWorktree, true);
   assert.equal(result.cleanupResults[0].warning?.includes('merge proof failed'), true);
 });
 
@@ -970,7 +972,7 @@ test('mergeWave and mergeFeatureBranchToBase targeting same branch name serializ
   assert.equal(order[3], 'second-end');
 });
 
-test('reports branch deletion failure as warning debt when merge proof succeeded', async () => {
+test('removes worktree and deletes branch even when branch is checked out elsewhere', async () => {
   const repoRoot = createRepo('merge-back-branch-delete-warning-');
   const feature = 'feat-a';
   const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
@@ -980,7 +982,7 @@ test('reports branch deletion failure as warning debt when merge proof succeeded
   git(scratch.worktreePath, ['add', 'a.txt']);
   git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
 
-  // Create a second worktree for the same branch to block branch deletion
+  // Create a second worktree for the same branch; cleanup should remove both worktrees then delete the branch
   const scratch2WorktreePath = path.join(repoRoot, '.worktree', `${feature}-001-copy`);
   git(repoRoot, ['worktree', 'add', '--force', scratch2WorktreePath, scratch.branchName]);
 
@@ -1007,24 +1009,19 @@ test('reports branch deletion failure as warning debt when merge proof succeeded
   assert.equal(result.success, true);
   assert.equal(result.failedTickets.length, 0);
   assert.equal(result.cleanupResults.length, 1);
-  assert.equal(result.cleanupResults[0].success, false);
+  assert.equal(result.cleanupResults[0].success, true);
   assert.equal(result.cleanupResults[0].deletedWorktree, true);
-  assert.equal(result.cleanupResults[0].deletedBranch, false);
-  assert.ok(result.cleanupResults[0].error);
-  assert.ok(
-    result.cleanupResults[0].error?.includes('branch delete failed') ||
-      result.cleanupResults[0].error?.includes('cannot delete branch'),
-  );
+  assert.equal(result.cleanupResults[0].deletedBranch, true);
+  assert.equal(existsSync(scratch.worktreePath), false);
+  assert.equal(existsSync(scratch2WorktreePath), false);
+  assert.throws(() => git(repoRoot, ['rev-parse', '--verify', scratch.branchName]));
 
-  // Verify the warning was persisted for later visibility
+  // No pending debt should remain
   const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
-  const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as Array<{ issueName: string; error?: string }>;
-  assert.equal(pending.length, 1);
-  assert.equal(pending[0]?.issueName, '001');
-  assert.ok(pending[0]?.error);
+  assert.equal(existsSync(pendingPath), false);
 });
 
-test('merges feature to base and reports cleanup warning when branch deletion fails', async () => {
+test('merges feature to base and deletes feature resources even when branch is checked out elsewhere', async () => {
   const repoRoot = createRepo('feature-base-merge-cleanup-warning-');
   const feature = 'feat-a';
   const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
@@ -1032,7 +1029,7 @@ test('merges feature to base and reports cleanup warning when branch deletion fa
   git(featureWorktreePath, ['add', 'feature.txt']);
   git(featureWorktreePath, ['commit', '-m', 'feature work']);
 
-  // Create a second worktree checked out on the feature branch to block branch deletion
+  // Create a second worktree checked out on the feature branch; cleanup should remove both worktrees then delete the branch
   const secondWorktreePath = path.join(repoRoot, '.worktree', `${feature}-copy`);
   git(repoRoot, ['worktree', 'add', '--force', secondWorktreePath, feature]);
 
@@ -1066,16 +1063,13 @@ test('merges feature to base and reports cleanup warning when branch deletion fa
   assert.equal(results[0]?.branchName, feature);
   assert.equal(results[0]?.success, true);
   assert.equal(results[0]?.deletedWorktree, true);
-  assert.equal(results[0]?.deletedBranch, false);
-  assert.ok(results[0]?.warning);
-  assert.ok(
-    results[0]?.warning?.includes('branch delete failed') || results[0]?.warning?.includes('cannot delete branch'),
-  );
+  assert.equal(results[0]?.deletedBranch, true);
+  assert.equal(results[0]?.warning, undefined);
   assert.equal(git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
   assert.equal(readFileSync(path.join(repoRoot, 'feature.txt'), 'utf8'), 'feature\n');
   assert.equal(existsSync(featureWorktreePath), false);
-  // Feature branch should still exist because deletion was blocked
-  assert.doesNotThrow(() => git(repoRoot, ['rev-parse', '--verify', feature]));
+  assert.equal(existsSync(secondWorktreePath), false);
+  assert.throws(() => git(repoRoot, ['rev-parse', '--verify', feature]));
 });
 test('serializes concurrent base merge invocations for the same repo', async () => {
   const repoRoot = createRepo('concurrent-base-merge-');
