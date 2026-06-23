@@ -15,6 +15,14 @@ export interface ReadinessCommandResult {
   reason?: string;
 }
 
+export interface EnvironmentReadinessResult {
+  status: 'passed' | 'failed' | 'skipped';
+  command?: string;
+  exitCode?: number;
+  output?: string;
+  reason?: string;
+}
+
 export interface ReadinessCheckMetadata {
   worktreePath: { status: 'passed' | 'blocked'; path: string; reason?: string };
   branch: { status: 'passed' | 'blocked'; expected: string; actual?: string; reason?: string };
@@ -26,6 +34,7 @@ export interface ReadinessCheckMetadata {
     signals: string[];
     envTesting: 'present' | 'missing-disabled-by-user' | 'missing-blocking' | 'not-required';
   };
+  environmentReadiness?: EnvironmentReadinessResult;
   smoke: ReadinessCommandResult;
   staticStyleChecks: ReadinessCommandResult[];
   terminalState: ReadinessTerminalState;
@@ -94,17 +103,23 @@ export function buildWorktreeReadiness(input: {
   config?: AfkProjectConfig;
   executor?: ReadinessCommandExecutor;
   skipCommandChecks?: boolean;
+  environmentReadiness?: EnvironmentReadinessResult;
 }): ReadinessCheckMetadata {
   const executor = input.executor ?? new SyncReadinessCommandExecutor();
   const testSuite = input.config
     ? { detected: input.config.testsEnabled, signals: input.config.testsEnabled ? ['afk-config'] : [] }
     : detectTestSuite(input.repoRoot);
   const preconditions = evaluatePreconditions(input);
-  const blockReason = firstBlockReason(preconditions);
+  const environmentReadiness = input.environmentReadiness;
+  const blockReason =
+    environmentReadiness?.status === 'failed'
+      ? (environmentReadiness.reason ?? 'environment readiness failed')
+      : firstBlockReason(preconditions);
   if (blockReason)
     return finalize({
       ...preconditions,
       testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      environmentReadiness,
       smoke: skipped('smoke', blockReason),
       staticStyleChecks: [],
       blockReason,
@@ -114,6 +129,7 @@ export function buildWorktreeReadiness(input: {
     return finalize({
       ...preconditions,
       testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      environmentReadiness,
       smoke: skipped('smoke', reason),
       staticStyleChecks: [],
       blockReason: reason,
@@ -123,6 +139,7 @@ export function buildWorktreeReadiness(input: {
     return finalize({
       ...preconditions,
       testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      environmentReadiness,
       smoke: skipped('smoke', 'existing worktree'),
       staticStyleChecks: [],
     });
@@ -131,6 +148,7 @@ export function buildWorktreeReadiness(input: {
     return finalize({
       ...preconditions,
       testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+      environmentReadiness,
       smoke: skipped('smoke', 'tests disabled by user'),
       staticStyleChecks: runStaticStyleChecks(input.worktreePath, executor, input.config),
     });
@@ -142,6 +160,7 @@ export function buildWorktreeReadiness(input: {
   return finalize({
     ...preconditions,
     testSuite: { ...testSuite, envTesting: input.envTestingDecision },
+    environmentReadiness,
     smoke,
     staticStyleChecks,
     blockReason: failed ? `${failed.mode} readiness failed: ${failed.command}` : undefined,

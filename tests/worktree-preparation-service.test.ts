@@ -524,6 +524,120 @@ test('existing worktree skips command checks on second prepare call', () => {
   assert.equal(second.worktreePath, first.worktreePath);
 });
 
+test('environment readiness failure blocks worktree creation before pre-flight checks', () => {
+  const repoRoot = createRepo('afk-env-readiness-fail-');
+  writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts', lint: 'eslint .' } }),
+  );
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+
+  const executor: ReadinessCommandExecutor = {
+    run: (command) => {
+      if (command === 'php -v') return { exitCode: 1, output: 'PHP not found' };
+      return { exitCode: 0, output: 'ok' };
+    },
+  };
+
+  const service = new WorktreePreparationService();
+  assert.throws(
+    () =>
+      service.prepare({
+        repoRoot,
+        featureSlug: 'env-readiness-fail',
+        projectConfig: {
+          testsEnabled: true,
+          smokeTestCommand: 'bun test {testFile}',
+          staticCheckCommands: ['bun run lint'],
+          environmentReadinessCommand: 'php -v',
+        },
+        readinessExecutor: executor,
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof WorktreeReadinessBlockedError);
+      const blocked = err as WorktreeReadinessBlockedError;
+      assert.match(blocked.message, /environment readiness command failed/);
+      assert.equal(blocked.readiness.environmentReadiness?.status, 'failed');
+      assert.equal(blocked.readiness.environmentReadiness?.exitCode, 1);
+      assert.equal(blocked.readiness.environmentReadiness?.output, 'PHP not found');
+      return true;
+    },
+  );
+
+  const worktreePath = path.join(repoRoot, '.worktree', 'env-readiness-fail');
+  assert.equal(existsSync(worktreePath), false);
+});
+
+test('environment readiness success allows worktree creation', () => {
+  const repoRoot = createRepo('afk-env-readiness-pass-');
+  writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts', lint: 'eslint .' } }),
+  );
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'TEST=yes\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+
+  const executor: ReadinessCommandExecutor = {
+    run: (command) => {
+      if (command === 'which php') return { exitCode: 0, output: '/usr/bin/php\n' };
+      return { exitCode: 0, output: 'ok' };
+    },
+  };
+
+  const service = new WorktreePreparationService();
+  const result = service.prepare({
+    repoRoot,
+    featureSlug: 'env-readiness-pass',
+    projectConfig: {
+      testsEnabled: true,
+      smokeTestCommand: 'bun test {testFile}',
+      staticCheckCommands: ['bun run lint'],
+      environmentReadinessCommand: 'which php',
+    },
+    readinessExecutor: executor,
+  });
+
+  assert.equal(result.readiness?.checks?.environmentReadiness?.status, 'passed');
+  assert.equal(result.readiness?.checks?.terminalState, 'passed');
+  assert.equal(existsSync(result.worktreePath), true);
+});
+
+test('missing environment readiness config proceeds unchanged', () => {
+  const repoRoot = createRepo('afk-env-readiness-missing-');
+  writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts', lint: 'eslint .' } }),
+  );
+  mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+  writeFileSync(path.join(repoRoot, 'tests', 'a.test.ts'), 'test("x", () => {});\n');
+  writeFileSync(path.join(repoRoot, '.env.testing'), 'TEST=yes\n');
+  git(repoRoot, ['add', '.']);
+  git(repoRoot, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'tests']);
+
+  const executor: ReadinessCommandExecutor = { run: () => ({ exitCode: 0, output: 'ok' }) };
+
+  const service = new WorktreePreparationService();
+  const result = service.prepare({
+    repoRoot,
+    featureSlug: 'env-readiness-missing',
+    projectConfig: {
+      testsEnabled: true,
+      smokeTestCommand: 'bun test {testFile}',
+      staticCheckCommands: ['bun run lint'],
+    },
+    readinessExecutor: executor,
+  });
+
+  assert.equal(result.readiness?.checks?.environmentReadiness?.status, 'skipped');
+  assert.equal(result.readiness?.checks?.terminalState, 'passed');
+});
+
 test('existing worktree still blocks on structural precondition failure', () => {
   const repoRoot = createRepo('afk-preflight-stale-lock-');
   writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { test: 'bun test tests/*.test.ts' } }));

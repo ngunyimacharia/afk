@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { EnvironmentReadinessChecker } from './environment-readiness-checker.js';
 import { resolveExecutable } from './executable-resolution.js';
 import type { AfkProjectConfig } from './project-config.js';
 import {
@@ -259,6 +260,28 @@ export class WorktreePreparationService {
     const effectiveWorktreeName = input.ticketOverrides?.afk_worktree?.trim() || defaultWorktreeName;
     const worktreePath = path.join(ensureIgnoredWorktreeRoot(input.repoRoot), effectiveWorktreeName);
 
+    const environmentReadiness = new EnvironmentReadinessChecker(input.readinessExecutor).check(
+      input.repoRoot,
+      input.projectConfig,
+    );
+    if (environmentReadiness.status === 'failed') {
+      const blockReason = environmentReadiness.reason ?? 'environment readiness failed';
+      const syntheticMetadata: ReadinessCheckMetadata = {
+        worktreePath: { status: 'blocked', path: worktreePath, reason: 'worktree path does not exist' },
+        branch: { status: 'blocked', expected: effectiveBranchName, reason: 'expected branch is not checked out' },
+        ticketPaths: { status: 'passed', missing: [] },
+        gitIndexLock: { status: 'passed', path: path.join(worktreePath, '.git', 'index.lock') },
+        dependencyCopyStatusKnown: { status: 'passed' },
+        testSuite: { detected: false, signals: [], envTesting: 'not-required' },
+        environmentReadiness,
+        smoke: { command: '', mode: 'smoke', status: 'skipped', reason: blockReason },
+        staticStyleChecks: [],
+        terminalState: 'blocked',
+        blockReason,
+      };
+      throw new WorktreeReadinessBlockedError(blockReason, syntheticMetadata);
+    }
+
     ensureBranch(input.repoRoot, effectiveBranchName, input.baseRef);
 
     const existingWorktreePath = branchWorktreePath(input.repoRoot, effectiveBranchName);
@@ -319,6 +342,7 @@ export class WorktreePreparationService {
       config: input.projectConfig,
       executor: input.readinessExecutor,
       skipCommandChecks: worktreeAlreadyExists,
+      environmentReadiness,
     });
     if (readiness.checks.terminalState === 'blocked') {
       throw new WorktreeReadinessBlockedError(
