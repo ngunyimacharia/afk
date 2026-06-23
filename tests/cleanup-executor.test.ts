@@ -168,3 +168,165 @@ test('skips dirty orphaned issue worktree and reports reason', () => {
   assert.equal(existsSync(issueWorktreePath), true);
   assert.ok(git(repoRoot, ['branch', '--list', branchName]).includes(branchName));
 });
+
+test('retries pending post-merge cleanup and removes extra worktrees using the same branch', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+  git(repoRoot, ['branch', 'feat']);
+  const featureWorktreePath = path.join(repoRoot, '.worktree', 'feat');
+  git(repoRoot, ['worktree', 'add', featureWorktreePath, 'feat']);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+  writeFileSync(path.join(issueWorktreePath, 'a.txt'), 'a\n');
+  git(issueWorktreePath, ['add', 'a.txt']);
+  git(issueWorktreePath, ['commit', '-m', 'ticket']);
+  // Add a second worktree for the same branch after the branch tip has been established
+  const extraWorktreePath = path.join(repoRoot, '.worktree', 'feat-001-copy');
+  git(repoRoot, ['worktree', 'add', '--force', extraWorktreePath, branchName]);
+  git(featureWorktreePath, ['merge', '--no-edit', branchName]);
+  const mergedIssueTip = git(featureWorktreePath, ['rev-parse', `${branchName}^{commit}`]);
+
+  const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
+  mkdirSync(path.dirname(pendingPath), { recursive: true });
+  writeFileSync(
+    pendingPath,
+    `${JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '001',
+        branchName,
+        worktreePath: issueWorktreePath,
+        featureWorktreePath,
+        featureBranchName: 'feat',
+        mergedIssueTip,
+        failedAt: new Date().toISOString(),
+      },
+    ])}\n`,
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(result.postMergeCleanupResults.length, 1);
+  assert.equal(result.postMergeCleanupResults[0]?.success, true);
+  assert.equal(result.postMergeCleanupResults[0]?.deletedWorktree, true);
+  assert.equal(result.postMergeCleanupResults[0]?.deletedBranch, true);
+  assert.equal(existsSync(issueWorktreePath), false);
+  assert.equal(existsSync(extraWorktreePath), false);
+  assert.equal(git(repoRoot, ['branch', '--list', branchName]), '');
+  const persisted = JSON.parse(readFileSync(pendingPath, 'utf8')) as unknown[];
+  assert.equal(persisted.length, 0);
+});
+
+test('retries pending post-merge cleanup and tolerates unreachable issue tip with warning', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+  git(repoRoot, ['branch', 'feat']);
+  const featureWorktreePath = path.join(repoRoot, '.worktree', 'feat');
+  git(repoRoot, ['worktree', 'add', featureWorktreePath, 'feat']);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+  writeFileSync(path.join(issueWorktreePath, 'a.txt'), 'a\n');
+  git(issueWorktreePath, ['add', 'a.txt']);
+  git(issueWorktreePath, ['commit', '-m', 'ticket']);
+
+  // Use a fake merged tip that is not an ancestor of the feature branch
+  const mergedIssueTip = '0000000000000000000000000000000000000000';
+
+  const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
+  mkdirSync(path.dirname(pendingPath), { recursive: true });
+  writeFileSync(
+    pendingPath,
+    `${JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '001',
+        branchName,
+        worktreePath: issueWorktreePath,
+        featureWorktreePath,
+        featureBranchName: 'feat',
+        mergedIssueTip,
+        failedAt: new Date().toISOString(),
+      },
+    ])}\n`,
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(result.postMergeCleanupResults.length, 1);
+  assert.equal(result.postMergeCleanupResults[0]?.success, true);
+  assert.equal(result.postMergeCleanupResults[0]?.deletedWorktree, true);
+  assert.equal(result.postMergeCleanupResults[0]?.deletedBranch, true);
+  assert.ok(result.postMergeCleanupResults[0]?.warning?.includes('merge proof failed'));
+  assert.equal(existsSync(issueWorktreePath), false);
+  assert.equal(git(repoRoot, ['branch', '--list', branchName]), '');
+  const persisted = JSON.parse(readFileSync(pendingPath, 'utf8')) as unknown[];
+  assert.equal(persisted.length, 0);
+});
+
+test('retries pending post-merge cleanup and tolerates already-deleted branch', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'init']);
+  git(repoRoot, ['branch', 'feat']);
+  const featureWorktreePath = path.join(repoRoot, '.worktree', 'feat');
+  git(repoRoot, ['worktree', 'add', featureWorktreePath, 'feat']);
+  const branchName = 'afk/feat/001';
+  git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+  writeFileSync(path.join(issueWorktreePath, 'a.txt'), 'a\n');
+  git(issueWorktreePath, ['add', 'a.txt']);
+  git(issueWorktreePath, ['commit', '-m', 'ticket']);
+  git(featureWorktreePath, ['merge', '--no-edit', branchName]);
+  const mergedIssueTip = git(featureWorktreePath, ['rev-parse', `${branchName}^{commit}`]);
+
+  // Delete the branch before retry to simulate a partially-completed prior cleanup
+  git(repoRoot, ['worktree', 'remove', '-f', issueWorktreePath]);
+  git(repoRoot, ['branch', '-D', branchName]);
+
+  const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
+  mkdirSync(path.dirname(pendingPath), { recursive: true });
+  writeFileSync(
+    pendingPath,
+    `${JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '001',
+        branchName,
+        worktreePath: issueWorktreePath,
+        featureWorktreePath,
+        featureBranchName: 'feat',
+        mergedIssueTip,
+        failedAt: new Date().toISOString(),
+      },
+    ])}\n`,
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(result.postMergeCleanupResults.length, 1);
+  assert.equal(result.postMergeCleanupResults[0]?.success, true);
+  assert.equal(result.postMergeCleanupResults[0]?.deletedWorktree, false);
+  assert.equal(result.postMergeCleanupResults[0]?.deletedBranch, false);
+  assert.ok(result.postMergeCleanupResults[0]?.warning?.includes('already deleted'));
+  const persisted = JSON.parse(readFileSync(pendingPath, 'utf8')) as unknown[];
+  assert.equal(persisted.length, 0);
+});

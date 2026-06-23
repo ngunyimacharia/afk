@@ -1,6 +1,22 @@
+import { checkBranchWorktreesClean, removeWorktreesForBranch } from './cleanup.js';
 import type { MergeBackCoordinator } from './merge-back-coordinator.js';
+import type { SchedulerTicketResult } from './scheduler.js';
 import type { AgentExecutionProgressCallback, CheckoutContext, LaunchModel, ReviewerPromptTemplate } from './types.js';
 import { runGit } from './worktree-preparation-service.js';
+
+export function featuresWithAllTicketsCompleted(ticketResults: SchedulerTicketResult[], features: string[]): string[] {
+  const resultsByFeature = new Map<string, SchedulerTicketResult[]>();
+  for (const result of ticketResults) {
+    const list = resultsByFeature.get(result.ticket.feature) ?? [];
+    list.push(result);
+    resultsByFeature.set(result.ticket.feature, list);
+  }
+
+  return features.filter((feature) => {
+    const results = resultsByFeature.get(feature);
+    return results !== undefined && results.length > 0 && results.every((r) => r.outcome === 'completed');
+  });
+}
 
 export class BaseMergeLock {
   private running = new Set<string>();
@@ -112,7 +128,7 @@ export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput)
           message: `base merge failed for ${branchName}: ${merge.reason}`,
           kind: 'failure',
         });
-        break;
+        continue;
       }
 
       const cleanup = cleanupMergedFeatureBranch(input.repoRoot, input.baseBranch, checkout);
@@ -127,7 +143,7 @@ export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput)
               : `merged ${branchName} into ${input.baseBranch}; cleanup skipped: ${cleanup.reason ?? 'unknown error'}`,
         kind: cleanup.success ? 'message' : 'failure',
       });
-      if (!cleanup.success) break;
+      if (!cleanup.success) continue;
     } finally {
       release();
     }
@@ -141,45 +157,57 @@ function cleanupMergedFeatureBranch(
   checkout: CheckoutContext,
 ): Omit<FeatureBaseMergeResult, 'feature' | 'branchName'> {
   const branchName = checkout.effectiveBranchName;
+  const warnings: string[] = [];
   try {
     runGit(repoRoot, ['merge-base', '--is-ancestor', branchName, baseBranch]);
   } catch {
+    warnings.push(`merge proof failed: ${branchName} is not reachable from ${baseBranch}`);
+  }
+
+  const cleanWorktrees = checkBranchWorktreesClean(repoRoot, branchName);
+  if (!cleanWorktrees.ok) {
+    return { success: false, deletedBranch: false, deletedWorktree: false, reason: cleanWorktrees.reason };
+  }
+
+  const worktreeCleanup = removeWorktreesForBranch(repoRoot, branchName);
+  if (!worktreeCleanup.success) {
     return {
       success: false,
       deletedBranch: false,
-      deletedWorktree: false,
-      reason: `merge proof failed: ${branchName} is not reachable from ${baseBranch}`,
+      deletedWorktree: worktreeCleanup.removedCount > 0,
+      reason: worktreeCleanup.error,
     };
   }
 
-  let deletedWorktree = false;
   let deletedBranch = false;
-  const errors: string[] = [];
-  try {
-    runGit(repoRoot, ['worktree', 'remove', '-f', checkout.worktreePath]);
-    deletedWorktree = true;
-  } catch (error) {
-    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
   try {
     runGit(repoRoot, ['branch', '-d', branchName]);
     deletedBranch = true;
   } catch (error) {
-    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('not found')) {
+      return {
+        success: false,
+        deletedBranch: false,
+        deletedWorktree: worktreeCleanup.removedCount > 0,
+        reason: `branch delete failed: ${message}`,
+      };
+    }
+    warnings.push(`branch already deleted: ${branchName}`);
   }
 
-  if (errors.length > 0) {
+  if (warnings.length > 0) {
     return {
       success: true,
       deletedBranch,
-      deletedWorktree,
-      warning: errors.join(' | '),
+      deletedWorktree: worktreeCleanup.removedCount > 0,
+      warning: warnings.join(' | '),
     };
   }
 
   return {
     success: true,
-    deletedBranch: true,
-    deletedWorktree: true,
+    deletedBranch,
+    deletedWorktree: worktreeCleanup.removedCount > 0,
   };
 }

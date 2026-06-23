@@ -180,6 +180,9 @@ export class RuntimeStore {
       PROVIDER_FAILURE_SOURCE: null,
       PROVIDER_FAILURE_EVIDENCE: null,
       DETERMINISTIC_PROVIDER_FAILURE: false,
+      LAST_ACTIVE_TOOL_NAME: null,
+      LAST_ACTIVE_TOOL_STARTED_AT: null,
+      STALE_RECOVERY_COUNTS: 0,
     });
     return { metadataPath, logPath, doneSentinelPath, failedSentinelPath, handoffSentinelPath };
   }

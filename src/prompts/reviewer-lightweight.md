@@ -14,6 +14,8 @@ Review the completed ticket in read-only mode using a lightweight, deterministic
    - The implementation matches the ticket acceptance criteria at a surface level (files changed, behavior added/removed).
 5. Do NOT perform deep architectural review, style critique, speculative maintainability analysis, or unrelated refactor recommendations.
 6. Anchor every finding to specific evidence.
+7. Limit active review work to three minutes. Avoid broad exploration or recursive searches beyond the deterministic checks above.
+8. Do NOT require fixes for pre-existing environment failures (for example, failing tests or lint errors unrelated to the ticket). Note them only if they block verifying the ticket's changes.
 
 ## Completion Criteria
 
@@ -39,6 +41,7 @@ Rules:
 - Do NOT split keys or values across multiple lines. The entire JSON must be a single continuous block of text.
 - Every string must be on the same line as its surrounding quotes. Example: {"summary":"This is correct","findings":[]}
 - Do NOT pretty-print, indent, or add newlines inside the JSON object.
+- Emit the JSON object as a single line with no internal line breaks.
 
 Required schema:
 {"done":boolean,"summary":"string","findings":[{"severity":"minor|major|blocker","title":"string","detail":"string","suggestedFix":"string optional"}]}

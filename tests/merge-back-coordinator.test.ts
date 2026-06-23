@@ -5,9 +5,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 import { resolveExecutable } from '../src/executable-resolution.js';
-import { BaseMergeLock, mergeCompletedFeaturesToBase } from '../src/feature-base-merge.js';
+import {
+  BaseMergeLock,
+  featuresWithAllTicketsCompleted,
+  mergeCompletedFeaturesToBase,
+} from '../src/feature-base-merge.js';
 import { MergeBackCoordinator } from '../src/merge-back-coordinator.js';
 import { RuntimeStore } from '../src/runtime-store.js';
+import type { SchedulerTicketResult } from '../src/scheduler.js';
 import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
 
 const GIT_PATH = resolveExecutable('git');
@@ -610,6 +615,7 @@ test('reports post-merge cleanup failure without failing merge pipeline', async 
   writeFileSync(path.join(scratch.worktreePath, 'a.txt'), 'a\n');
   git(scratch.worktreePath, ['add', 'a.txt']);
   git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
+  writeFileSync(path.join(scratch.worktreePath, 'dirty.txt'), 'dirty\n');
 
   const store = new RuntimeStore({ repoRoot });
   const meta = setupTicketMetadata(store, feature, '001');
@@ -630,7 +636,7 @@ test('reports post-merge cleanup failure without failing merge pipeline', async 
         feature,
         issueName: '001',
         branchName: scratch.branchName,
-        worktreePath: path.join(repoRoot, '.worktree', 'does-not-exist'),
+        worktreePath: scratch.worktreePath,
         ...meta,
       },
     ],
@@ -644,14 +650,14 @@ test('reports post-merge cleanup failure without failing merge pipeline', async 
   assert.equal(result.cleanupResults[0].deletedBranch, false);
   assert.equal(result.cleanupResults[0].deletedWorktree, false);
   assert.equal(typeof result.cleanupResults[0].warning, 'string');
-  assert.equal(result.cleanupResults[0].warning?.includes('unavailable'), true);
+  assert.equal(result.cleanupResults[0].warning?.includes('uncommitted changes'), true);
   const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
   const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as Array<{ issueName: string }>;
   assert.equal(pending.length, 1);
   assert.equal(pending[0]?.issueName, '001');
 });
 
-test('skips deletion when merge proof guard fails', async () => {
+test('warns and continues deletion when merge proof guard fails', async () => {
   const repoRoot = createRepo('merge-back-guard-merge-proof-');
   const feature = 'feat-a';
   const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
@@ -683,8 +689,9 @@ test('skips deletion when merge proof guard fails', async () => {
 
   assert.equal(result.success, true);
   assert.equal(result.cleanupResults.length, 1);
-  assert.equal(result.cleanupResults[0].deletedBranch, false);
-  assert.equal(result.cleanupResults[0].deletedWorktree, false);
+  assert.equal(result.cleanupResults[0].success, true);
+  assert.equal(result.cleanupResults[0].deletedBranch, true);
+  assert.equal(result.cleanupResults[0].deletedWorktree, true);
   assert.equal(result.cleanupResults[0].warning?.includes('merge proof failed'), true);
 });
 
@@ -970,7 +977,7 @@ test('mergeWave and mergeFeatureBranchToBase targeting same branch name serializ
   assert.equal(order[3], 'second-end');
 });
 
-test('reports branch deletion failure as warning debt when merge proof succeeded', async () => {
+test('removes worktree and deletes branch even when branch is checked out elsewhere', async () => {
   const repoRoot = createRepo('merge-back-branch-delete-warning-');
   const feature = 'feat-a';
   const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
@@ -980,7 +987,7 @@ test('reports branch deletion failure as warning debt when merge proof succeeded
   git(scratch.worktreePath, ['add', 'a.txt']);
   git(scratch.worktreePath, ['commit', '-m', 'ticket-001']);
 
-  // Create a second worktree for the same branch to block branch deletion
+  // Create a second worktree for the same branch; cleanup should remove both worktrees then delete the branch
   const scratch2WorktreePath = path.join(repoRoot, '.worktree', `${feature}-001-copy`);
   git(repoRoot, ['worktree', 'add', '--force', scratch2WorktreePath, scratch.branchName]);
 
@@ -1007,24 +1014,19 @@ test('reports branch deletion failure as warning debt when merge proof succeeded
   assert.equal(result.success, true);
   assert.equal(result.failedTickets.length, 0);
   assert.equal(result.cleanupResults.length, 1);
-  assert.equal(result.cleanupResults[0].success, false);
+  assert.equal(result.cleanupResults[0].success, true);
   assert.equal(result.cleanupResults[0].deletedWorktree, true);
-  assert.equal(result.cleanupResults[0].deletedBranch, false);
-  assert.ok(result.cleanupResults[0].error);
-  assert.ok(
-    result.cleanupResults[0].error?.includes('branch delete failed') ||
-      result.cleanupResults[0].error?.includes('cannot delete branch'),
-  );
+  assert.equal(result.cleanupResults[0].deletedBranch, true);
+  assert.equal(existsSync(scratch.worktreePath), false);
+  assert.equal(existsSync(scratch2WorktreePath), false);
+  assert.throws(() => git(repoRoot, ['rev-parse', '--verify', scratch.branchName]));
 
-  // Verify the warning was persisted for later visibility
+  // No pending debt should remain
   const pendingPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'pending-post-merge-cleanup.json');
-  const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as Array<{ issueName: string; error?: string }>;
-  assert.equal(pending.length, 1);
-  assert.equal(pending[0]?.issueName, '001');
-  assert.ok(pending[0]?.error);
+  assert.equal(existsSync(pendingPath), false);
 });
 
-test('merges feature to base and reports cleanup warning when branch deletion fails', async () => {
+test('merges feature to base and deletes feature resources even when branch is checked out elsewhere', async () => {
   const repoRoot = createRepo('feature-base-merge-cleanup-warning-');
   const feature = 'feat-a';
   const featureWorktreePath = createFeatureWorktree(repoRoot, feature);
@@ -1032,7 +1034,7 @@ test('merges feature to base and reports cleanup warning when branch deletion fa
   git(featureWorktreePath, ['add', 'feature.txt']);
   git(featureWorktreePath, ['commit', '-m', 'feature work']);
 
-  // Create a second worktree checked out on the feature branch to block branch deletion
+  // Create a second worktree checked out on the feature branch; cleanup should remove both worktrees then delete the branch
   const secondWorktreePath = path.join(repoRoot, '.worktree', `${feature}-copy`);
   git(repoRoot, ['worktree', 'add', '--force', secondWorktreePath, feature]);
 
@@ -1066,16 +1068,13 @@ test('merges feature to base and reports cleanup warning when branch deletion fa
   assert.equal(results[0]?.branchName, feature);
   assert.equal(results[0]?.success, true);
   assert.equal(results[0]?.deletedWorktree, true);
-  assert.equal(results[0]?.deletedBranch, false);
-  assert.ok(results[0]?.warning);
-  assert.ok(
-    results[0]?.warning?.includes('branch delete failed') || results[0]?.warning?.includes('cannot delete branch'),
-  );
+  assert.equal(results[0]?.deletedBranch, true);
+  assert.equal(results[0]?.warning, undefined);
   assert.equal(git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
   assert.equal(readFileSync(path.join(repoRoot, 'feature.txt'), 'utf8'), 'feature\n');
   assert.equal(existsSync(featureWorktreePath), false);
-  // Feature branch should still exist because deletion was blocked
-  assert.doesNotThrow(() => git(repoRoot, ['rev-parse', '--verify', feature]));
+  assert.equal(existsSync(secondWorktreePath), false);
+  assert.throws(() => git(repoRoot, ['rev-parse', '--verify', feature]));
 });
 test('serializes concurrent base merge invocations for the same repo', async () => {
   const repoRoot = createRepo('concurrent-base-merge-');
@@ -1452,6 +1451,97 @@ test('resolveFeatureWorktreeConflicts fails when agent cannot resolve conflicts'
   assert.ok(result.reason?.includes('attempts'));
   assert.ok(result.conflictPaths);
   assert.equal(result.conflictPaths?.length, 1);
+});
+
+test('featuresWithAllTicketsCompleted selects only features whose own tickets completed', () => {
+  const ticketResults: SchedulerTicketResult[] = [
+    {
+      ticket: { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      outcome: 'completed',
+      message: '',
+    },
+    {
+      ticket: { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+      outcome: 'completed',
+      message: '',
+    },
+    {
+      ticket: { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+      outcome: 'failed',
+      message: '',
+    },
+    {
+      ticket: { path: '/tmp/b-2.md', feature: 'feat-b', issueName: '002', label: 'feat-b/002', executorAfk: true },
+      outcome: 'completed',
+      message: '',
+    },
+  ];
+
+  assert.deepEqual(featuresWithAllTicketsCompleted(ticketResults, ['feat-a', 'feat-b', 'feat-c']), ['feat-a']);
+});
+
+test('mergeCompletedFeaturesToBase continues to next feature when a merge fails', async () => {
+  const repoRoot = createRepo('feature-base-merge-continue-on-failure-');
+  const featureA = 'feat-a';
+  const featureB = 'feat-b';
+  const featureWorktreePathA = createFeatureWorktree(repoRoot, featureA);
+  const featureWorktreePathB = createFeatureWorktree(repoRoot, featureB);
+
+  writeFileSync(path.join(featureWorktreePathB, 'b.txt'), 'b\n');
+  git(featureWorktreePathB, ['add', 'b.txt']);
+  git(featureWorktreePathB, ['commit', '-m', 'feature-b work']);
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const originalMerge = coordinator.mergeFeatureBranchToBase.bind(coordinator);
+  coordinator.mergeFeatureBranchToBase = async (input) => {
+    if (input.feature === featureA) {
+      return { success: false, reason: 'simulated merge failure' };
+    }
+    return originalMerge(input);
+  };
+
+  const results = await mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureA, featureB],
+    checkoutsByFeature: {
+      [featureA]: {
+        featureSlug: featureA,
+        defaultWorktreeName: featureA,
+        effectiveWorktreeName: featureA,
+        defaultBranchName: featureA,
+        effectiveBranchName: featureA,
+        branchNameSource: 'fallback',
+        worktreePath: featureWorktreePathA,
+      },
+      [featureB]: {
+        featureSlug: featureB,
+        defaultWorktreeName: featureB,
+        effectiveWorktreeName: featureB,
+        defaultBranchName: featureB,
+        effectiveBranchName: featureB,
+        branchNameSource: 'fallback',
+        worktreePath: featureWorktreePathB,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(results.length, 2);
+  assert.equal(results[0]?.feature, featureA);
+  assert.equal(results[0]?.success, false);
+  assert.equal(results[0]?.reason, 'simulated merge failure');
+  assert.equal(results[1]?.feature, featureB);
+  assert.equal(results[1]?.success, true);
+  assert.equal(results[1]?.deletedBranch, true);
+  assert.equal(results[1]?.deletedWorktree, true);
+  assert.equal(readFileSync(path.join(repoRoot, 'b.txt'), 'utf8'), 'b\n');
+  assert.equal(existsSync(featureWorktreePathB), false);
 });
 
 function resolveGitDir(worktreePath: string): string {

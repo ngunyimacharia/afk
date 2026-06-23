@@ -177,6 +177,7 @@ test('afk summary includes pending post-merge cleanup debt details', async () =>
 
   assert.equal(result.code, 0);
   assert.match(result.message, /Pending post-merge cleanup debt/);
+  assert.match(result.message, /count: 1/);
   assert.match(result.message, /feat\/06-cleanup/);
   assert.match(result.message, /branch=afk\/feat\/06-cleanup/);
   assert.match(result.message, /worktree=\/tmp\/afk-feat-06-cleanup/);

@@ -266,7 +266,7 @@ async function promptMergeBackToBase(_io: PromptIO, initial?: boolean): Promise<
       name: 'value',
       message: 'After tickets complete, how should feature branches be handled?',
       choices,
-      initial: initial === true ? 0 : initial === false ? 1 : undefined,
+      initial: initial === true ? 0 : initial === false ? 1 : 0,
       suggest: async (input: string, choices: PromptSuggestChoice[]) => {
         const query = input.trim().toLowerCase();
         if (!query) return choices;

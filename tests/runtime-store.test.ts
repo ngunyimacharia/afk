@@ -289,6 +289,17 @@ test('initializes separate status fields on record creation', () => {
   assert.ok(record.handoffSentinelPath);
 });
 
+test('initializes active-tool and stale-recovery tracking fields on record creation', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-active-tool-'));
+  const store = new RuntimeStore({ repoRoot });
+  const record = store.createRecord({ featureSlug: 'feat', issueName: 'active-tool', ticketPath: '/tmp/ticket.md' });
+
+  const metadata = JSON.parse(readFileSync(record.metadataPath, 'utf8')) as Record<string, unknown>;
+  assert.equal(metadata.LAST_ACTIVE_TOOL_NAME, null);
+  assert.equal(metadata.LAST_ACTIVE_TOOL_STARTED_AT, null);
+  assert.equal(metadata.STALE_RECOVERY_COUNTS, 0);
+});
+
 test('writes handoff sentinel', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-handoff-'));
   const store = new RuntimeStore({ repoRoot });

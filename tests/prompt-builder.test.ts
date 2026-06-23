@@ -127,6 +127,9 @@ test('afk prompt includes budget, handoff guardrails, and worktree disappearance
     source,
     /When running shell commands \(tests, linters, builds, git\), always set the working directory to the Worktree path from Runtime Context/,
   );
+  assert.match(source, /## Timebox and Pre-existing Failure Policy/);
+  assert.match(source, /stop debugging it after five minutes/);
+  assert.match(source, /Before starting any shell command expected to take longer than five minutes/);
 });
 
 test('default execution prompt requires reviewer notes subsection', () => {

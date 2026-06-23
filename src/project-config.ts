@@ -10,6 +10,7 @@ export interface AfkProjectConfig {
   testEnvFile?: string;
   smokeTestCommand?: string;
   staticCheckCommands: string[];
+  environmentReadinessCommand?: string;
   linear?: LinearProjectConfig;
 }
 
@@ -101,6 +102,14 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
     errors.push('smokeTestCommand must be a string when present.');
   }
 
+  const environmentReadinessCommand = record.environmentReadinessCommand;
+  if (
+    environmentReadinessCommand !== undefined &&
+    (typeof environmentReadinessCommand !== 'string' || !environmentReadinessCommand.trim())
+  ) {
+    errors.push('environmentReadinessCommand must be a non-empty string when present.');
+  }
+
   const staticCheckCommands = record.staticCheckCommands ?? [];
   if (
     !Array.isArray(staticCheckCommands) ||
@@ -122,6 +131,9 @@ export function validateAfkProjectConfig(value: unknown): { config?: AfkProjectC
       ...(typeof testEnvFile === 'string' && testEnvFile.trim() ? { testEnvFile: testEnvFile.trim() } : {}),
       ...(typeof smokeTestCommand === 'string' && smokeTestCommand.trim()
         ? { smokeTestCommand: smokeTestCommand.trim() }
+        : {}),
+      ...(typeof environmentReadinessCommand === 'string' && environmentReadinessCommand.trim()
+        ? { environmentReadinessCommand: environmentReadinessCommand.trim() }
         : {}),
       staticCheckCommands: Array.isArray(staticCheckCommands)
         ? staticCheckCommands.map((item) => String(item).trim())
