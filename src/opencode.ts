@@ -6,9 +6,9 @@ import prompts from 'prompts';
 import type { LaunchModel } from './types.js';
 
 const OPENCODE_EPHEMERAL_PORT = 0;
-const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_MAX_STALE_RECOVERIES = 5;
+export const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 15 * 60_000;
+export const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 20 * 60_000;
+export const DEFAULT_MAX_STALE_RECOVERIES = 3;
 const YOLO_OPENCODE_AGENTS = ['build', 'plan', 'general', 'explore', 'scout'] as const;
 const YOLO_AGENT_PERMISSION = {
   bash: 'allow',
@@ -49,6 +49,7 @@ export interface OpenCodeSessionProgressEvent {
 
 interface OpenCodeActiveToolState {
   message: string;
+  toolName?: string | null;
   lastSeenAt: number;
 }
 
@@ -238,8 +239,10 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
           break;
         }
         staleRecoveries += 1;
+        const currentActiveTool = activeTool as OpenCodeActiveToolState | null;
+        const staleWhile = currentActiveTool?.toolName ? ` stale while: ${currentActiveTool.toolName};` : '';
         onProgress({
-          message: promptResult.message,
+          message: `${promptResult.message}${staleWhile}`,
           sessionId: sessionId || null,
         });
         await abortSession(sdk.client, sessionId, onProgress);
@@ -247,7 +250,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
           const sessionOutput = sessionId
             ? await readSessionOutput(sdk.client, sessionId)
             : { lines: [], terminalError: null, finalMessageText: null };
-          const terminalError = `opencode session stale after ${maxStaleRecoveries} recovery attempts`;
+          const terminalError = `opencode session stale after ${maxStaleRecoveries} recovery attempts${staleWhile}`;
           onProgress({ message: terminalError, sessionId: sessionId || null });
           return { sessionId: sessionId || null, output: sessionOutput.lines, terminalError, finalMessageText: null };
         }
@@ -257,7 +260,13 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
         });
         lastMeaningfulProgressAt = Date.now();
         activeTool = null;
-        promptText = buildStaleRecoveryPrompt(input.prompt, staleRecoveries, maxStaleRecoveries);
+        promptText = buildStaleRecoveryPrompt(
+          input.prompt,
+          staleRecoveries,
+          maxStaleRecoveries,
+          'OpenCode',
+          currentActiveTool?.toolName,
+        );
       }
       onProgress({ message: 'opencode prompt completed', sessionId: sessionId || null });
       const sessionOutput = sessionId
@@ -377,11 +386,13 @@ export function buildStaleRecoveryPrompt(
   _attempt?: number,
   _maxAttempts?: number,
   _providerName = 'OpenCode',
+  _activeToolName?: string | null,
 ): string {
+  const staleWhile = _activeToolName ? ` stale while: ${_activeToolName};` : '';
   if (typeof _attempt === 'number' && typeof _maxAttempts === 'number') {
-    return `Continue (stale recovery attempt ${_attempt}/${_maxAttempts}).`;
+    return `Continue (stale recovery attempt ${_attempt}/${_maxAttempts}).${staleWhile} Verify whether the active tool is still making progress, or report a blocker and stop.`;
   }
-  return 'Continue';
+  return `Continue.${staleWhile} Verify whether the active tool is still making progress, or report a blocker and stop.`;
 }
 
 function isMeaningfulProgress(event: OpenCodeSessionProgressEvent): boolean {
@@ -397,7 +408,7 @@ function updateActiveToolState(
 ): OpenCodeActiveToolState | null {
   if (event.activity !== 'tool') return current;
   if (event.toolStatus === 'running') {
-    return { message: event.message, lastSeenAt: now };
+    return { message: event.message, toolName: event.toolName, lastSeenAt: now };
   }
   if (event.toolStatus === 'completed' || event.toolStatus === 'error') return null;
   return current ? { ...current, message: event.message, lastSeenAt: now } : current;

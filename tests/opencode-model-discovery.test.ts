@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   buildAfkOpencodeConfigContent,
+  buildStaleRecoveryPrompt,
   createAfkOpencodeWith,
+  DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS,
+  DEFAULT_MAX_STALE_RECOVERIES,
+  DEFAULT_STALE_PROGRESS_TIMEOUT_MS,
   extractModelsFromProvidersPayload,
   extractSessionOutput,
   extractSessionOutputLines,
@@ -439,7 +443,7 @@ test('recovers stale opencode prompts in the same session', async () => {
   assert.equal(abortCalls, 1);
   assert.deepEqual(promptPaths, ['session-stale', 'session-stale']);
   assert.match(JSON.stringify(promptBodies[1]), /Continue/);
-  assert.match(progress.join('\n'), /opencode stale recovery attempt 1\/5/);
+  assert.match(progress.join('\n'), /opencode stale recovery attempt 1\/3/);
 });
 
 test('stops same-session stale recovery after configured cap', async () => {
@@ -582,7 +586,7 @@ test('marks a running opencode tool stale after the active tool timeout', async 
     onProgress: (event) => progress.push(event.message),
   });
 
-  assert.equal(result.terminalError, 'opencode session stale after 0 recovery attempts');
+  assert.equal(result.terminalError, 'opencode session stale after 0 recovery attempts stale while: bash;');
   assert.equal(abortCalls, 1);
   assert.match(
     progress.join('\n'),
@@ -666,6 +670,27 @@ test('omits directory query when workDir is undefined', async () => {
   assert.equal((createArgs[0] as { query?: unknown }).query, undefined);
   assert.equal(promptBodies.length, 1);
   assert.equal((promptBodies[0] as { query?: unknown }).query, undefined);
+});
+
+test('default stale timeouts and recovery cap are context-aware', () => {
+  assert.equal(DEFAULT_STALE_PROGRESS_TIMEOUT_MS, 15 * 60_000);
+  assert.equal(DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS, 20 * 60_000);
+  assert.equal(DEFAULT_MAX_STALE_RECOVERIES, 3);
+});
+
+test('stale recovery prompt names active tool and instructs progress check', () => {
+  const prompt = buildStaleRecoveryPrompt('Original prompt', 1, 3, 'OpenCode', 'bash');
+  assert.match(prompt, /stale recovery attempt 1\/3/);
+  assert.match(prompt, /stale while: bash/);
+  assert.match(prompt, /making progress/i);
+  assert.match(prompt, /report a blocker/i);
+});
+
+test('stale recovery prompt omits tool when none is active', () => {
+  const prompt = buildStaleRecoveryPrompt('Original prompt', 2, 3, 'OpenCode', null);
+  assert.match(prompt, /stale recovery attempt 2\/3/);
+  assert.doesNotMatch(prompt, /stale while:/);
+  assert.match(prompt, /making progress/i);
 });
 
 async function* oneEventAfterTick(event: unknown): AsyncIterable<unknown> {

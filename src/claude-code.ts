@@ -21,9 +21,9 @@ import type {
 import { buildStaleRecoveryPrompt, parseModelId } from './opencode.js';
 import type { LaunchModel } from './types.js';
 
-const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_MAX_STALE_RECOVERIES = 5;
+export const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 15 * 60_000;
+export const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 20 * 60_000;
+export const DEFAULT_MAX_STALE_RECOVERIES = 3;
 const KIMI_BASE_URL = 'https://api.kimi.com/coding/';
 const CLAUDE_LOCAL_SETTINGS_PATH = '.claude/settings.local.json';
 
@@ -243,13 +243,14 @@ export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
       }
 
       staleRecoveries += 1;
+      const staleWhile = consumeResult.staleToolName ? ` stale while: ${consumeResult.staleToolName};` : '';
       onProgress({
-        message: consumeResult.staleMessage ?? 'claude session stale',
+        message: `${consumeResult.staleMessage ?? 'claude session stale'}${staleWhile}`,
         sessionId,
       });
 
       if (staleRecoveries > maxStaleRecoveries) {
-        terminalError = `claude session stale after ${maxStaleRecoveries} recovery attempts`;
+        terminalError = `claude session stale after ${maxStaleRecoveries} recovery attempts${staleWhile}`;
         onProgress({ message: terminalError, sessionId });
         break;
       }
@@ -259,7 +260,13 @@ export class ClaudeCodeSessionExecutor implements OpenCodeSessionExecutor {
         sessionId,
       });
 
-      promptText = buildStaleRecoveryPrompt(input.prompt, staleRecoveries, maxStaleRecoveries, 'Claude');
+      promptText = buildStaleRecoveryPrompt(
+        input.prompt,
+        staleRecoveries,
+        maxStaleRecoveries,
+        'Claude',
+        consumeResult.staleToolName,
+      );
     }
 
     return {
@@ -278,9 +285,9 @@ async function consumeClaudeCodeQuery(
   activeToolStaleTimeoutMs: number,
   onMessage: (msg: SDKMessage) => void,
   signal?: AbortSignal,
-): Promise<{ completed: boolean; staleMessage?: string }> {
+): Promise<{ completed: boolean; staleMessage?: string; staleToolName?: string | null }> {
   let lastMeaningfulProgressAt = Date.now();
-  let activeTool: { message: string; lastSeenAt: number } | null = null;
+  let activeTool: { message: string; toolName?: string | null; lastSeenAt: number } | null = null;
   const iterator = queryHandle[Symbol.asyncIterator]();
 
   let nextPromise = iterator.next();
@@ -304,6 +311,7 @@ async function consumeClaudeCodeQuery(
           staleMessage: currentActiveTool
             ? `claude tool stale after ${formatDuration(timeoutMs)}: ${currentActiveTool.message}; interrupting session`
             : `claude session stale after ${formatDuration(timeoutMs)}; interrupting session`,
+          staleToolName: currentActiveTool?.toolName,
         };
       }
 
@@ -465,13 +473,13 @@ function isMeaningfulProgress(event: OpenCodeSessionProgressEvent): boolean {
 }
 
 function updateActiveToolState(
-  current: { message: string; lastSeenAt: number } | null,
+  current: { message: string; toolName?: string | null; lastSeenAt: number } | null,
   event: OpenCodeSessionProgressEvent,
   now: number,
-): { message: string; lastSeenAt: number } | null {
+): { message: string; toolName?: string | null; lastSeenAt: number } | null {
   if (event.activity !== 'tool') return current;
   if (event.toolStatus === 'running') {
-    return { message: event.message, lastSeenAt: now };
+    return { message: event.message, toolName: event.toolName, lastSeenAt: now };
   }
   if (event.toolStatus === 'completed' || event.toolStatus === 'error') return null;
   return current ? { ...current, message: event.message, lastSeenAt: now } : current;

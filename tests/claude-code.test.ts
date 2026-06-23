@@ -4,11 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 import {
+  DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS,
+  DEFAULT_MAX_STALE_RECOVERIES,
+  DEFAULT_STALE_PROGRESS_TIMEOUT_MS,
   discoverClaudeModels,
   parseClaudeCodeEvent,
   resetClaudeCodeExecutablePathCache,
   resolveClaudeRepoConfig,
 } from '../src/claude-code.js';
+import { buildStaleRecoveryPrompt } from '../src/opencode.js';
 import { detectClaudeCodeFailure } from '../src/provider-failure.js';
 
 function makeTempRepo(): string {
@@ -328,5 +332,21 @@ describe('detectClaudeCodeFailure', () => {
   test('returns null for empty output', () => {
     const failure = detectClaudeCodeFailure([]);
     assert.equal(failure, null);
+  });
+});
+
+describe('stale detection defaults', () => {
+  test('base timeout is 15 minutes, active-tool timeout is 20 minutes, max recoveries is 3', () => {
+    assert.equal(DEFAULT_STALE_PROGRESS_TIMEOUT_MS, 15 * 60_000);
+    assert.equal(DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS, 20 * 60_000);
+    assert.equal(DEFAULT_MAX_STALE_RECOVERIES, 3);
+  });
+
+  test('recovery prompt names active tool and instructs progress check', () => {
+    const prompt = buildStaleRecoveryPrompt('Original prompt', 1, 3, 'Claude', 'git');
+    assert.match(prompt, /stale recovery attempt 1\/3/);
+    assert.match(prompt, /stale while: git/);
+    assert.match(prompt, /making progress/i);
+    assert.match(prompt, /report a blocker/i);
   });
 });
