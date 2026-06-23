@@ -22,7 +22,11 @@ import {
   resolveExecutable,
   resolveExecutables,
 } from './executable-resolution.js';
-import { type FeatureBaseMergeResult, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
+import {
+  type FeatureBaseMergeResult,
+  featuresWithAllTicketsCompleted,
+  mergeCompletedFeaturesToBase,
+} from './feature-base-merge.js';
 import { buildFeatureExecutionGraph, type FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
@@ -959,18 +963,21 @@ export async function runAfk(
         runId,
         signal: killController.signal,
       });
-      if (mergeBackToBase && schedulerResult.ticketResults.every((result) => result.outcome === 'completed')) {
-        baseMergeResults = await mergeCompletedFeaturesToBase({
-          repoRoot,
-          baseBranch,
-          features: checkoutFeatures,
-          checkoutsByFeature,
-          coordinator: mergeBackCoordinator,
-          model: plan.model,
-          reviewerModel: plan.reviewerModel,
-          reviewerPrompt: plan.reviewerPrompt,
-          onProgress,
-        });
+      if (mergeBackToBase) {
+        const eligibleFeatures = featuresWithAllTicketsCompleted(schedulerResult.ticketResults, checkoutFeatures);
+        if (eligibleFeatures.length > 0) {
+          baseMergeResults = await mergeCompletedFeaturesToBase({
+            repoRoot,
+            baseBranch,
+            features: eligibleFeatures,
+            checkoutsByFeature,
+            coordinator: mergeBackCoordinator,
+            model: plan.model,
+            reviewerModel: plan.reviewerModel,
+            reviewerPrompt: plan.reviewerPrompt,
+            onProgress,
+          });
+        }
       }
       if (killPollInterval) clearInterval(killPollInterval);
       if (killController.signal.aborted) {

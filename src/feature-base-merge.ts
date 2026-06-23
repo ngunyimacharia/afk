@@ -1,6 +1,21 @@
 import type { MergeBackCoordinator } from './merge-back-coordinator.js';
+import type { SchedulerTicketResult } from './scheduler.js';
 import type { AgentExecutionProgressCallback, CheckoutContext, LaunchModel, ReviewerPromptTemplate } from './types.js';
 import { runGit } from './worktree-preparation-service.js';
+
+export function featuresWithAllTicketsCompleted(ticketResults: SchedulerTicketResult[], features: string[]): string[] {
+  const resultsByFeature = new Map<string, SchedulerTicketResult[]>();
+  for (const result of ticketResults) {
+    const list = resultsByFeature.get(result.ticket.feature) ?? [];
+    list.push(result);
+    resultsByFeature.set(result.ticket.feature, list);
+  }
+
+  return features.filter((feature) => {
+    const results = resultsByFeature.get(feature);
+    return results !== undefined && results.length > 0 && results.every((r) => r.outcome === 'completed');
+  });
+}
 
 export class BaseMergeLock {
   private running = new Set<string>();
@@ -112,7 +127,7 @@ export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput)
           message: `base merge failed for ${branchName}: ${merge.reason}`,
           kind: 'failure',
         });
-        break;
+        continue;
       }
 
       const cleanup = cleanupMergedFeatureBranch(input.repoRoot, input.baseBranch, checkout);
@@ -127,7 +142,7 @@ export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput)
               : `merged ${branchName} into ${input.baseBranch}; cleanup skipped: ${cleanup.reason ?? 'unknown error'}`,
         kind: cleanup.success ? 'message' : 'failure',
       });
-      if (!cleanup.success) break;
+      if (!cleanup.success) continue;
     } finally {
       release();
     }
