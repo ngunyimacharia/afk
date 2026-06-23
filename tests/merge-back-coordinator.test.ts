@@ -5,9 +5,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 import { resolveExecutable } from '../src/executable-resolution.js';
-import { BaseMergeLock, mergeCompletedFeaturesToBase } from '../src/feature-base-merge.js';
+import {
+  BaseMergeLock,
+  featuresWithAllTicketsCompleted,
+  mergeCompletedFeaturesToBase,
+} from '../src/feature-base-merge.js';
 import { MergeBackCoordinator } from '../src/merge-back-coordinator.js';
 import { RuntimeStore } from '../src/runtime-store.js';
+import type { SchedulerTicketResult } from '../src/scheduler.js';
 import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
 
 const GIT_PATH = resolveExecutable('git');
@@ -1446,6 +1451,97 @@ test('resolveFeatureWorktreeConflicts fails when agent cannot resolve conflicts'
   assert.ok(result.reason?.includes('attempts'));
   assert.ok(result.conflictPaths);
   assert.equal(result.conflictPaths?.length, 1);
+});
+
+test('featuresWithAllTicketsCompleted selects only features whose own tickets completed', () => {
+  const ticketResults: SchedulerTicketResult[] = [
+    {
+      ticket: { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      outcome: 'completed',
+      message: '',
+    },
+    {
+      ticket: { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+      outcome: 'completed',
+      message: '',
+    },
+    {
+      ticket: { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+      outcome: 'failed',
+      message: '',
+    },
+    {
+      ticket: { path: '/tmp/b-2.md', feature: 'feat-b', issueName: '002', label: 'feat-b/002', executorAfk: true },
+      outcome: 'completed',
+      message: '',
+    },
+  ];
+
+  assert.deepEqual(featuresWithAllTicketsCompleted(ticketResults, ['feat-a', 'feat-b', 'feat-c']), ['feat-a']);
+});
+
+test('mergeCompletedFeaturesToBase continues to next feature when a merge fails', async () => {
+  const repoRoot = createRepo('feature-base-merge-continue-on-failure-');
+  const featureA = 'feat-a';
+  const featureB = 'feat-b';
+  const featureWorktreePathA = createFeatureWorktree(repoRoot, featureA);
+  const featureWorktreePathB = createFeatureWorktree(repoRoot, featureB);
+
+  writeFileSync(path.join(featureWorktreePathB, 'b.txt'), 'b\n');
+  git(featureWorktreePathB, ['add', 'b.txt']);
+  git(featureWorktreePathB, ['commit', '-m', 'feature-b work']);
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const originalMerge = coordinator.mergeFeatureBranchToBase.bind(coordinator);
+  coordinator.mergeFeatureBranchToBase = async (input) => {
+    if (input.feature === featureA) {
+      return { success: false, reason: 'simulated merge failure' };
+    }
+    return originalMerge(input);
+  };
+
+  const results = await mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [featureA, featureB],
+    checkoutsByFeature: {
+      [featureA]: {
+        featureSlug: featureA,
+        defaultWorktreeName: featureA,
+        effectiveWorktreeName: featureA,
+        defaultBranchName: featureA,
+        effectiveBranchName: featureA,
+        branchNameSource: 'fallback',
+        worktreePath: featureWorktreePathA,
+      },
+      [featureB]: {
+        featureSlug: featureB,
+        defaultWorktreeName: featureB,
+        effectiveWorktreeName: featureB,
+        defaultBranchName: featureB,
+        effectiveBranchName: featureB,
+        branchNameSource: 'fallback',
+        worktreePath: featureWorktreePathB,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(results.length, 2);
+  assert.equal(results[0]?.feature, featureA);
+  assert.equal(results[0]?.success, false);
+  assert.equal(results[0]?.reason, 'simulated merge failure');
+  assert.equal(results[1]?.feature, featureB);
+  assert.equal(results[1]?.success, true);
+  assert.equal(results[1]?.deletedBranch, true);
+  assert.equal(results[1]?.deletedWorktree, true);
+  assert.equal(readFileSync(path.join(repoRoot, 'b.txt'), 'utf8'), 'b\n');
+  assert.equal(existsSync(featureWorktreePathB), false);
 });
 
 function resolveGitDir(worktreePath: string): string {

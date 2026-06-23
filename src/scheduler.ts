@@ -1,7 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { ScratchWorktreeService } from './scratch-worktree-service.js';
 import type { SingleTicketRunner, SingleTicketRunResult } from './single-ticket-runner.js';
 import type { AgentExecutionProgressCallback, LaunchBlockEvidence, LaunchPlan, TicketRecord } from './types.js';
-import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
+import { type PreparedCheckoutContext, runGit } from './worktree-preparation-service.js';
 
 export interface FeatureLockProvider {
   isLocked(feature: string): boolean;
@@ -19,11 +21,18 @@ export interface SchedulerTicketResult {
   launchBlock?: LaunchBlockEvidence;
 }
 
+export interface SchedulerCleanupResult {
+  ticket: TicketRecord;
+  success: boolean;
+  reason?: string;
+}
+
 export interface SchedulerRunResult {
   scheduled: boolean;
   message: string;
   ticketResults: SchedulerTicketResult[];
   launchBlocks?: LaunchBlockEvidence[];
+  cleanupResults?: SchedulerCleanupResult[];
 }
 
 export interface SchedulerDependencies {
@@ -332,13 +341,115 @@ export class Scheduler {
       failures.push(message);
     }
 
+    const cleanupResults = this.sweepFailedOrAbortedWorktrees(ticketResults, scratchWorktrees, options.onProgress);
+
     return {
       scheduled: true,
       message: failures.length ? failures.join('\n') : `Scheduled ${plan.tickets.length} tickets`,
       ticketResults,
       launchBlocks: launchBlocks.length ? launchBlocks : undefined,
+      cleanupResults,
     };
   }
+  private sweepFailedOrAbortedWorktrees(
+    ticketResults: SchedulerTicketResult[],
+    scratchWorktrees: Map<string, PreparedCheckoutContext>,
+    onProgress?: AgentExecutionProgressCallback,
+  ): SchedulerCleanupResult[] {
+    const results: SchedulerCleanupResult[] = [];
+    const sweepableOutcomes = new Set<string>(['failed', 'not-scheduled', 'blocked']);
+    for (const result of ticketResults) {
+      if (!sweepableOutcomes.has(result.outcome)) continue;
+      const checkout = scratchWorktrees.get(ticketKey(result.ticket));
+      if (!checkout) continue;
+      const safety = isWorktreeSafeToRemove(checkout.worktreePath);
+      if (!safety.ok) {
+        onProgress?.({
+          ticketLabel: result.ticket.label,
+          message: `sweeper skipped: ${safety.reason}`,
+          kind: 'failure',
+        });
+        results.push({ ticket: result.ticket, success: false, reason: safety.reason });
+        continue;
+      }
+      const repoRoot = path.resolve(checkout.worktreePath, '..', '..');
+      const removal = removeIssueWorktree(repoRoot, checkout);
+      if (!removal.success) {
+        onProgress?.({
+          ticketLabel: result.ticket.label,
+          message: `sweeper failed: ${removal.error ?? 'unknown error'}`,
+          kind: 'failure',
+        });
+      } else {
+        onProgress?.({
+          ticketLabel: result.ticket.label,
+          message: 'sweeper removed failed/aborted worktree and branch',
+          kind: 'message',
+        });
+      }
+      results.push({ ticket: result.ticket, success: removal.success, reason: removal.error });
+    }
+    return results;
+  }
+}
+
+function isWorktreeSafeToRemove(worktreePath: string): { ok: true } | { ok: false; reason: string } {
+  const gitDir = resolveGitDir(worktreePath);
+  if (existsSync(path.join(gitDir, 'MERGE_HEAD'))) {
+    return { ok: false, reason: `worktree is in a merge: ${worktreePath}` };
+  }
+  if (existsSync(path.join(gitDir, 'index.lock'))) {
+    return { ok: false, reason: `worktree index is locked: ${worktreePath}` };
+  }
+  try {
+    const status = runGit(worktreePath, ['status', '--porcelain']);
+    if (status.trim().length > 0) {
+      return { ok: false, reason: `worktree has uncommitted changes: ${worktreePath}` };
+    }
+  } catch {
+    return { ok: false, reason: `worktree is unavailable: ${worktreePath}` };
+  }
+  return { ok: true };
+}
+
+function removeIssueWorktree(
+  repoRoot: string,
+  checkout: PreparedCheckoutContext,
+): { success: boolean; deletedBranch: boolean; deletedWorktree: boolean; error?: string } {
+  let deletedWorktree = false;
+  let deletedBranch = false;
+  const errors: string[] = [];
+  try {
+    runGit(repoRoot, ['worktree', 'remove', '-f', checkout.worktreePath]);
+    deletedWorktree = true;
+  } catch (error) {
+    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    runGit(repoRoot, ['branch', '-D', checkout.effectiveBranchName]);
+    deletedBranch = true;
+  } catch (error) {
+    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return {
+    success: deletedWorktree && deletedBranch,
+    deletedBranch,
+    deletedWorktree,
+    error: errors.length > 0 ? errors.join(' | ') : undefined,
+  };
+}
+
+function resolveGitDir(worktreePath: string): string {
+  const gitFile = path.join(worktreePath, '.git');
+  try {
+    const content = readFileSync(gitFile, 'utf8').trim();
+    if (content.startsWith('gitdir:')) {
+      return content.slice(7).trim();
+    }
+  } catch {
+    // .git is a directory
+  }
+  return gitFile;
 }
 
 function ticketKey(ticket: TicketRecord): string {

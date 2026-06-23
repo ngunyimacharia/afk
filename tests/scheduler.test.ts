@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { resolveExecutable } from '../src/executable-resolution.js';
 import { type FeatureLockProvider, type FeatureMergeBackProvider, Scheduler } from '../src/scheduler.js';
+import { ScratchWorktreeService } from '../src/scratch-worktree-service.js';
 import type { LaunchPlan, TicketRecord } from '../src/types.js';
+import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
 
 function createMockScratchWorktreeService() {
   return {
@@ -60,12 +64,29 @@ function basePlan(overrides: Partial<LaunchPlan> & { tickets: TicketRecord[] }):
       defaultWorktreeName: 'feat-a',
       effectiveWorktreeName: 'feat-a',
       defaultBranchName: 'feat-a',
-      effectiveBranchName: 'feat-a',
+      effectiveBranchName: 'main',
       branchNameSource: 'fallback',
       worktreePath: '/tmp/worktree',
     },
     ...overrides,
   };
+}
+
+const GIT_PATH = resolveExecutable('git');
+
+function git(repoRoot: string, args: string[]): string {
+  return execFileSync(GIT_PATH, args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+}
+
+function createRepo(prefix: string): string {
+  const repoRoot = mkRepoLocalTempDir(prefix);
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.name', 'Test']);
+  git(repoRoot, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
+  git(repoRoot, ['add', 'README.md']);
+  git(repoRoot, ['commit', '-m', 'initial']);
+  return repoRoot;
 }
 
 test('runs ready tickets in parallel and caps global concurrency', async () => {
@@ -989,4 +1010,83 @@ test('isPaused reflects current pause state', () => {
   assert.equal(scheduler.isPaused(), true);
   scheduler.resume();
   assert.equal(scheduler.isPaused(), false);
+});
+
+test('sweeps failed and aborted scratch worktrees after run', async () => {
+  const repoRoot = createRepo('scheduler-sweeper-');
+  const scheduler = new Scheduler({
+    runner: {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        if (ticket.feature === 'feat-a' && ticket.issueName === '001') {
+          return { scheduled: true, message: ticket.label, outcome: 'failed' };
+        }
+        return { scheduled: true, message: ticket.label, outcome: 'completed' };
+      },
+    } as never,
+    scratchWorktreeService: new ScratchWorktreeService(),
+    featureMergeBackProvider: { isWaveMerged: () => false },
+    concurrencyLimit: 3,
+  });
+
+  const plan = basePlan({
+    repoRoot,
+    tickets: [
+      { path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true },
+      { path: '/tmp/a-2.md', feature: 'feat-a', issueName: '002', label: 'feat-a/002', executorAfk: true },
+      { path: '/tmp/b-1.md', feature: 'feat-b', issueName: '001', label: 'feat-b/001', executorAfk: true },
+    ],
+  });
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.ticketResults.length, 3);
+  assert.equal(result.ticketResults.find((r) => r.ticket.label === 'feat-a/001')?.outcome, 'failed');
+  assert.equal(result.ticketResults.find((r) => r.ticket.label === 'feat-a/002')?.outcome, 'completed');
+  assert.equal(result.ticketResults.find((r) => r.ticket.label === 'feat-b/001')?.outcome, 'completed');
+
+  const failedCleanup = result.cleanupResults?.find((r) => r.ticket.label === 'feat-a/001');
+  assert.ok(failedCleanup);
+  assert.equal(failedCleanup.success, true);
+
+  const failedWorktree = path.join(repoRoot, '.worktree', 'feat-a-001');
+  const failedBranch = 'afk/feat-a/001';
+  assert.equal(existsSync(failedWorktree), false);
+  assert.throws(() => git(repoRoot, ['rev-parse', '--verify', failedBranch]));
+
+  assert.equal(existsSync(path.join(repoRoot, '.worktree', 'feat-a-002')), true);
+  assert.equal(existsSync(path.join(repoRoot, '.worktree', 'feat-b-001')), true);
+});
+
+test('sweeper skips failed worktrees with uncommitted changes and reports the failure', async () => {
+  const repoRoot = createRepo('scheduler-sweeper-dirty-');
+  const scheduler = new Scheduler({
+    runner: {
+      launch: async (plan: LaunchPlan) => {
+        const ticket = plan.tickets[0];
+        assert.ok(ticket);
+        writeFileSync(path.join(plan.checkout.worktreePath, 'dirty.txt'), 'dirty\n');
+        return { scheduled: true, message: ticket.label, outcome: 'failed' };
+      },
+    } as never,
+    scratchWorktreeService: new ScratchWorktreeService(),
+    featureMergeBackProvider: { isWaveMerged: () => false },
+    concurrencyLimit: 1,
+  });
+
+  const plan = basePlan({
+    repoRoot,
+    tickets: [{ path: '/tmp/a-1.md', feature: 'feat-a', issueName: '001', label: 'feat-a/001', executorAfk: true }],
+  });
+
+  const result = await scheduler.launch(plan as never);
+  assert.equal(result.ticketResults[0]?.outcome, 'failed');
+
+  const cleanup = result.cleanupResults?.[0];
+  assert.ok(cleanup);
+  assert.equal(cleanup.success, false);
+  assert.ok(cleanup.reason?.includes('uncommitted changes'));
+
+  const worktreePath = path.join(repoRoot, '.worktree', 'feat-a-001');
+  assert.equal(existsSync(worktreePath), true);
 });
