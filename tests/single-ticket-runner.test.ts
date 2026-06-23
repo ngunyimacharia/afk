@@ -1498,6 +1498,83 @@ test('treats failed reviewer sessions as provider failures instead of malformed 
   assert.notEqual(metadata.FINAL_REVIEW_CLASSIFICATION, 'malformed-output-handoff');
 });
 
+test('records active tool and stale recovery counts from progress events', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-active-tool-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ onProgress, invocationMode }) => {
+      if (invocationMode === 'execution') {
+        onProgress?.({
+          ticketLabel: 'feat/active-tool',
+          message: 'tool bash running',
+          toolName: 'bash',
+          toolStatus: 'running',
+          sessionId: 's-exec',
+        });
+        onProgress?.({
+          ticketLabel: 'feat/active-tool',
+          message: 'opencode stale recovery attempt 1/5',
+          sessionId: 's-exec',
+        });
+        onProgress?.({
+          ticketLabel: 'feat/active-tool',
+          message: 'opencode stale recovery attempt 2/5',
+          sessionId: 's-exec',
+        });
+      }
+      if (invocationMode === 'reviewer') {
+        return {
+          status: 'completed',
+          sessionId: 's-review',
+          output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
+        };
+      }
+      return { status: 'completed', sessionId: 's-exec' };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      { path: ticketPath, feature: 'feat', issueName: 'active-tool', label: 'feat/active-tool', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  const metadataPath = path.join(
+    repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    'runtime-metadata',
+    'feat-active-tool.json',
+  );
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    LAST_ACTIVE_TOOL_NAME?: string | null;
+    LAST_ACTIVE_TOOL_STARTED_AT?: string | null;
+    STALE_RECOVERY_COUNTS?: number;
+    STATUS?: string;
+  };
+  assert.equal(metadata.LAST_ACTIVE_TOOL_NAME, 'bash');
+  assert.ok(metadata.LAST_ACTIVE_TOOL_STARTED_AT);
+  assert.equal(metadata.STALE_RECOVERY_COUNTS, 2);
+  assert.equal(metadata.STATUS, 'completed');
+});
+
 test('applies real fixup cap to major findings and then hands off', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-budget-fixup-'));
   const store = new RuntimeStore({ repoRoot });

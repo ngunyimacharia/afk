@@ -394,6 +394,55 @@ Outcome: completed
   assert.doesNotMatch(report.message, /Not yet started[\s\S]*feat\/01/);
 });
 
+test('reports budget exceeded tickets and leftover cleanup counts', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  mkdirSync(metadataDir, { recursive: true });
+
+  writeFileSync(
+    path.join(metadataDir, 'feat-01.json'),
+    JSON.stringify(
+      {
+        TICKET_PATH: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'),
+        FEATURE_SLUG: 'feat',
+        ISSUE_NAME: '01',
+        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
+        START_TIME: '2026-05-18T00:00:00.000Z',
+        START_EPOCH: 1,
+        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
+        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
+        STATUS: 'blocked',
+        RUN_STATUS: 'blocked',
+        EXECUTION_PROVIDER: 'opencode',
+        PROVIDER_SESSION_ID: null,
+        PROVIDER_SESSION_REMOVABLE: false,
+        INSPECTION_PROVIDER: null,
+        INSPECTION_TARGET_IDENTIFIER: null,
+        UNSAFE_REASON: null,
+        BUDGET_EXCEEDED_EVENTS: [
+          {
+            budgetName: 'phase-execution-wall-clock-ms',
+            limit: 5000,
+            observed: 7200,
+            phase: 'execution',
+            cycle: 1,
+            evidence: 'execution phase exceeded budget',
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Budget exceeded tickets/);
+  assert.match(report.message, /feat\/01: phase-execution-wall-clock-ms \(execution#1, 7200ms > 5000ms\)/);
+  assert.match(report.message, /Leftover cleanup counts/);
+  assert.match(report.message, /leftover branches: 0/);
+  assert.match(report.message, /leftover worktrees: 0/);
+});
+
 test('can read summaries through a provider-backed source', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const provider = makeSummaryProvider([
@@ -422,6 +471,49 @@ Outcome: completed
 
   assert.match(report.message, /Completed or successful work[\s\S]*feat\/01/);
   assert.doesNotMatch(report.message, /Missing summaries[\s\S]*feat\/01/);
+});
+
+test('counts leftover worktrees excluding active runtime worktree paths', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
+  const worktreeRoot = path.join(repoRoot, '.worktree');
+  mkdirSync(metadataDir, { recursive: true });
+  mkdirSync(path.join(worktreeRoot, 'active-run'), { recursive: true });
+  mkdirSync(path.join(worktreeRoot, 'orphan'), { recursive: true });
+
+  writeFileSync(
+    path.join(metadataDir, 'feat-01.json'),
+    JSON.stringify(
+      {
+        TICKET_PATH: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'),
+        FEATURE_SLUG: 'feat',
+        ISSUE_NAME: '01',
+        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
+        START_TIME: '2026-05-18T00:00:00.000Z',
+        START_EPOCH: 1,
+        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
+        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
+        STATUS: 'running',
+        RUN_STATUS: 'running',
+        EXECUTION_PROVIDER: 'opencode',
+        PROVIDER_SESSION_ID: null,
+        PROVIDER_SESSION_REMOVABLE: false,
+        INSPECTION_PROVIDER: null,
+        INSPECTION_TARGET_IDENTIFIER: null,
+        UNSAFE_REASON: null,
+        SNAPSHOT_SAFE_FIELDS: {
+          worktreePath: path.join(worktreeRoot, 'active-run'),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /Leftover cleanup counts/);
+  assert.match(report.message, /leftover worktrees: 1/);
+  assert.match(report.message, /leftover branches: 0/);
 });
 
 function makeSummaryProvider(items: TrackerWorkItem[]): TrackerProvider {
