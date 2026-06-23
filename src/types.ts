@@ -290,6 +290,9 @@ export interface RuntimeMetadataRecord {
   PROVIDER_FAILURE_SOURCE?: ProviderFailureSource | null;
   PROVIDER_FAILURE_EVIDENCE?: string | null;
   DETERMINISTIC_PROVIDER_FAILURE?: boolean;
+  LAST_ACTIVE_TOOL_NAME?: string | null;
+  LAST_ACTIVE_TOOL_STARTED_AT?: string | null;
+  STALE_RECOVERY_COUNTS?: number;
   SNAPSHOT_GENERATED_AT?: string;
   MERGE_STATUS?: 'merged' | 'conflict-resolved' | 'failed' | 'blocked' | null;
   MERGE_CONFLICT_PATHS?: string[] | null;
@@ -334,6 +337,8 @@ export interface AgentExecutionProgressEvent {
   message: string;
   sessionId?: string | null;
   kind?: 'message' | 'permission' | 'failure';
+  toolName?: string | null;
+  toolStatus?: string | null;
   permissionId?: string | null;
   permissionPatterns?: string[];
   permissionType?: string | null;

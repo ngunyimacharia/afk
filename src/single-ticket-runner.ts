@@ -1259,6 +1259,7 @@ export class SingleTicketRunner {
     onProgress: AgentExecutionProgressCallback | undefined,
   ): AgentExecutionProgressCallback {
     const observedSessionIds = new Set<string>();
+    const staleRecoveryPattern = /stale recovery attempt \d+\/\d+/i;
     return (event) => {
       if (event.sessionId && !observedSessionIds.has(event.sessionId)) {
         observedSessionIds.add(event.sessionId);
@@ -1272,6 +1273,19 @@ export class SingleTicketRunner {
           });
           this.runtimeStore.appendLog(logPath, `provider session observed: ${event.sessionId}`);
         }
+      }
+      if (event.toolName && event.toolStatus === 'running') {
+        this.runtimeStore.updateMetadata(metadataPath, {
+          LAST_ACTIVE_TOOL_NAME: event.toolName,
+          LAST_ACTIVE_TOOL_STARTED_AT: new Date().toISOString(),
+        });
+      }
+      if (event.message && staleRecoveryPattern.test(event.message)) {
+        const metadata = this.runtimeStore.readMetadata(metadataPath);
+        this.runtimeStore.updateMetadata(metadataPath, {
+          STALE_RECOVERY_COUNTS: (metadata.STALE_RECOVERY_COUNTS ?? 0) + 1,
+        });
+        this.runtimeStore.appendLog(logPath, `stale recovery count: ${(metadata.STALE_RECOVERY_COUNTS ?? 0) + 1}`);
       }
       if (event.kind === 'permission') this.runtimeStore.appendLog(logPath, `permission required: ${event.message}`);
       else if (event.kind === 'failure') this.runtimeStore.appendLog(logPath, event.message);
