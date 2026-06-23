@@ -26,6 +26,41 @@ test('loads valid afk project config', () => {
   });
 });
 
+test('loads environmentReadinessCommand when present', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-config-env-'));
+  writeFileSync(
+    path.join(repoRoot, 'afk.json'),
+    JSON.stringify({
+      testsEnabled: false,
+      staticCheckCommands: [],
+      environmentReadinessCommand: 'which php',
+    }),
+  );
+
+  const result = loadAfkProjectConfig(repoRoot);
+
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.config?.environmentReadinessCommand, 'which php');
+});
+
+test('rejects empty or non-string environmentReadinessCommand', () => {
+  const emptyResult = validateAfkProjectConfig({
+    testsEnabled: false,
+    staticCheckCommands: [],
+    environmentReadinessCommand: '   ',
+  });
+  assert.equal(emptyResult.config, undefined);
+  assert.match(emptyResult.errors.join('\n'), /environmentReadinessCommand must be a non-empty string/);
+
+  const numericResult = validateAfkProjectConfig({
+    testsEnabled: false,
+    staticCheckCommands: [],
+    environmentReadinessCommand: 123 as unknown as string,
+  });
+  assert.equal(numericResult.config, undefined);
+  assert.match(numericResult.errors.join('\n'), /environmentReadinessCommand must be a non-empty string/);
+});
+
 test('requires smoke test command when tests are enabled', () => {
   const result = validateAfkProjectConfig({ testsEnabled: true, staticCheckCommands: [] });
 
