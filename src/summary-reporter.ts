@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import { readPendingPostMergeCleanupItems } from './cleanup.js';
+import {
+  countLeftoverBranches,
+  countLeftoverWorktrees,
+  readPendingPostMergeCleanupItems,
+  safeRealpath,
+} from './cleanup.js';
 import type { TrackerProvider } from './tracker-contract.js';
 import type { RuntimeMetadataRecord } from './types.js';
 
@@ -364,6 +369,50 @@ function summarizePendingPostMergeCleanup(repoRoot: string): string[] {
   ];
 }
 
+function summarizeBudgetExceeded(metadata: RuntimeMetadataRecord[]): string[] {
+  const exceeded = metadata.filter((entry) => (entry.BUDGET_EXCEEDED_EVENTS ?? []).length > 0);
+  if (!exceeded.length) return ['- none'];
+  return exceeded.map((entry) => {
+    const ticket = `${entry.FEATURE_SLUG}/${entry.ISSUE_NAME}`;
+    const events = (entry.BUDGET_EXCEEDED_EVENTS ?? [])
+      .map(
+        (event) =>
+          `${event.budgetName} (${event.phase}${typeof event.cycle === 'number' ? `#${event.cycle}` : ''}, ${event.observed}ms > ${event.limit}ms)`,
+      )
+      .join('; ');
+    return `- ${ticket}: ${events}`;
+  });
+}
+
+function isActiveRuntimeStatus(status: string | undefined): boolean {
+  const terminal = new Set([
+    'completed',
+    'failed',
+    'blocked',
+    'interrupted',
+    'handoff',
+    'done',
+    'closed',
+    'complete',
+    'resolved',
+  ]);
+  return !terminal.has(normalize(status));
+}
+
+function summarizeLeftoverCounts(repoRoot: string, metadata: RuntimeMetadataRecord[]): string[] {
+  const activeTickets = new Set<string>();
+  const activeWorktreePaths = new Set<string>();
+  for (const entry of metadata) {
+    if (!isActiveRuntimeStatus(entry.RUN_STATUS ?? entry.STATUS)) continue;
+    activeTickets.add(`${entry.FEATURE_SLUG}/${entry.ISSUE_NAME}`);
+    const worktreePath = entry.SNAPSHOT_SAFE_FIELDS?.worktreePath;
+    if (worktreePath) activeWorktreePaths.add(safeRealpath(worktreePath));
+  }
+  const branchCount = countLeftoverBranches(repoRoot, activeTickets);
+  const worktreeCount = countLeftoverWorktrees(repoRoot, activeWorktreePaths);
+  return [`- leftover branches: ${branchCount}`, `- leftover worktrees: ${worktreeCount}`];
+}
+
 export class SummaryReporter {
   constructor(private readonly input: SummaryReporterInput) {}
 
@@ -460,11 +509,17 @@ export class SummaryReporter {
       'Phase timing highlights',
       ...summarizeSlowPhases(metadata),
       '',
+      'Budget exceeded tickets',
+      ...summarizeBudgetExceeded(metadata),
+      '',
       'Failure kind totals',
       ...summarizeFailureKinds(metadata),
       '',
       'Pending post-merge cleanup debt',
       ...summarizePendingPostMergeCleanup(this.input.repoRoot),
+      '',
+      'Leftover cleanup counts',
+      ...summarizeLeftoverCounts(this.input.repoRoot, metadata),
     ];
 
     const permission = this.input.permission;

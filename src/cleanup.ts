@@ -417,6 +417,46 @@ function parseAfkIssueBranch(branchName: string): { feature: string; issueName: 
   return { feature: segments[1], issueName: segments[2] };
 }
 
+function parseNgunyimachariaIssueBranch(branchName: string): { feature: string; issueName: string } | null {
+  const segments = branchName.split('/');
+  if (segments.length !== 3 || segments[0] !== 'ngunyimacharia') return null;
+  return { feature: segments[1], issueName: segments[2] };
+}
+
+export function countLeftoverBranches(repoRoot: string, activeTickets: Set<string>): number {
+  let output: string;
+  try {
+    output = runGit(repoRoot, ['branch', '--format', '%(refname:short)']);
+  } catch {
+    return 0;
+  }
+  return output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((branchName) => {
+      if (!branchName.startsWith('afk/') && !branchName.startsWith('ngunyimacharia/')) return false;
+      const parsed = parseAfkIssueBranch(branchName) ?? parseNgunyimachariaIssueBranch(branchName);
+      if (!parsed) return true;
+      return !activeTickets.has(`${parsed.feature}/${parsed.issueName}`);
+    }).length;
+}
+
+export function countLeftoverWorktrees(repoRoot: string, activeWorktreePaths: Set<string>): number {
+  const worktreeRoot = path.join(repoRoot, '.worktree');
+  if (!exists(worktreeRoot)) return 0;
+  try {
+    return readdirSync(worktreeRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .filter((entry) => {
+        const candidate = path.join(worktreeRoot, entry.name);
+        return !activeWorktreePaths.has(safeRealpath(candidate));
+      }).length;
+  } catch {
+    return 0;
+  }
+}
+
 function safeRealpath(target: string): string {
   try {
     return realpathSync(target);
@@ -424,6 +464,8 @@ function safeRealpath(target: string): string {
     return path.resolve(target);
   }
 }
+
+export { safeRealpath };
 
 function isWithinRepoLocalWorktree(worktreePath: string, repoRoot: string): boolean {
   const resolvedRoot = safeRealpath(repoRoot);
