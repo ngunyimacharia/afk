@@ -49,6 +49,12 @@ const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
   fixupCycleLimit: 50,
   providerFailureRetries: 10,
   deterministicProviderFailureRetries: 2,
+  ticketWallClockMs: 30 * 60 * 1000,
+  phaseWallClockMs: {
+    execution: 15 * 60 * 1000,
+    review: 5 * 60 * 1000,
+    fixup: 5 * 60 * 1000,
+  },
 };
 
 export interface SingleTicketRunResult {
