@@ -53,6 +53,7 @@ test('reviewer prompt enforces strict json and schema examples', () => {
   assert.match(source, /"severity":"minor\|major\|blocker"/);
   assert.match(source, /Clean pass example:/);
   assert.match(source, /Finding example:/);
+  assert.match(source, /Emit the JSON object as a single line/);
 });
 
 test('reviewer completion criteria require AFK Summary with Reviewer Notes and ticket finalization', () => {
@@ -60,6 +61,8 @@ test('reviewer completion criteria require AFK Summary with Reviewer Notes and t
   assert.match(source, /status: done/);
   assert.match(source, /## AFK Summary/);
   assert.match(source, /Reviewer Notes/);
+  assert.match(source, /Limit active review work to three minutes/);
+  assert.match(source, /Do NOT require fixes for pre-existing environment failures/);
 });
 
 test('reviewer prompt instructs exact paths first and avoids broad searches', () => {
@@ -81,6 +84,9 @@ test('lightweight review prompt is explicit, deterministic, and not skip-review'
   assert.match(template.content ?? '', /Do NOT perform deep architectural review/);
   assert.match(template.content ?? '', /You must return \*\*exactly one JSON object\*\*/);
   assert.match(template.content ?? '', /"done":boolean/);
+  assert.match(template.content ?? '', /Limit active review work to three minutes/);
+  assert.match(template.content ?? '', /Do NOT require fixes for pre-existing environment failures/);
+  assert.match(template.content ?? '', /Emit the JSON object as a single line/);
 });
 
 test('lightweight reviewer prompt instructs exact paths first and avoids broad searches', () => {

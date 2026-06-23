@@ -15,6 +15,11 @@ Implement the provided ticket autonomously. Do not ask questions or wait for app
 9. Stop once the ticket is satisfied. Do not continue working after the code diff meets requirements, listed verification passes, the local run result is updated, and changes are committed.
 10. If the assigned worktree disappears or becomes invalid, stop and record the blocker. Do not continue execution in the repo root or any other directory.
 
+## Timebox and Pre-existing Failure Policy
+
+1. If a test, lint, build, or dependency failure appears unrelated to your changes (a pre-existing environment failure), stop debugging it after five minutes. Record it as a blocker in the `## AFK Summary` and move on.
+2. Before starting any shell command expected to take longer than five minutes, warn the runner by sending a short message explaining the estimated duration and purpose.
+
 ## Tests
 
 1. Write the **minimum** set of tests required to prove the ticket works and to guard against regressions it introduces. Prefer updating existing tests over creating new files.
