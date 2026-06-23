@@ -1775,6 +1775,155 @@ test('hands off when per-ticket wall clock budget is exceeded', async () => {
   assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'ticket-wall-clock-ms');
 });
 
+test('writes default wall-clock budgets to runtime metadata', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-default-budgets-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) =>
+      invocationMode === 'reviewer'
+        ? {
+            status: 'completed',
+            sessionId: 's-review',
+            output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
+          }
+        : { status: 'completed', sessionId: 's-exec' },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'db', label: 'feat/db', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-db.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    EFFECTIVE_BUDGETS?: {
+      ticketWallClockMs: number;
+      phaseWallClockMs?: Record<string, number>;
+    };
+  };
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.ticketWallClockMs, 30 * 60 * 1000);
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.execution, 15 * 60 * 1000);
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.review, 5 * 60 * 1000);
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.fixup, 5 * 60 * 1000);
+});
+
+test('hands off when default ticket wall-clock budget is exceeded', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-default-ticket-budget-'));
+  let calls = 0;
+  const minute = 60 * 1000;
+  const realDateNow = Date.now;
+  Date.now = () => ++calls * 31 * minute;
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) =>
+      invocationMode === 'reviewer'
+        ? {
+            status: 'completed',
+            sessionId: 's-review',
+            output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
+          }
+        : { status: 'completed', sessionId: 's-exec' },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'dtb', label: 'feat/dtb', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  try {
+    await runner.launch(plan as never);
+  } finally {
+    Date.now = realDateNow;
+  }
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-dtb.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    STATUS: string;
+    BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }>;
+  };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'ticket-wall-clock-ms');
+});
+
+test('hands off when default execution phase wall-clock budget is exceeded', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-default-phase-budget-'));
+  let tick = 0;
+  const minute = 60 * 1000;
+  const store = new RuntimeStore({
+    repoRoot,
+    now: () => {
+      tick += 1;
+      return tick * 20 * minute;
+    },
+  });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) =>
+      invocationMode === 'reviewer'
+        ? {
+            status: 'completed',
+            sessionId: 's-review',
+            output: [JSON.stringify({ done: true, summary: 'ok', findings: [] })],
+          }
+        : { status: 'completed', sessionId: 's-exec' },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'dpb', label: 'feat/dpb', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-dpb.json');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
+    STATUS: string;
+    BUDGET_EXCEEDED_EVENTS?: Array<{ budgetName: string }>;
+  };
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.BUDGET_EXCEEDED_EVENTS?.[0]?.budgetName, 'phase-execution-wall-clock-ms');
+});
+
 test('blocks launch when selected ticket path is missing', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-missing-path-'));
   const store = new RuntimeStore({ repoRoot });
