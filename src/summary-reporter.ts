@@ -355,10 +355,13 @@ function summarizeFailureKinds(metadata: RuntimeMetadataRecord[]): string[] {
 function summarizePendingPostMergeCleanup(repoRoot: string): string[] {
   const items = readPendingPostMergeCleanupItems(repoRoot);
   if (!items.length) return ['- none'];
-  return items.map(
-    (item) =>
-      `- ${item.feature}/${item.issueName} branch=${item.branchName} worktree=${item.worktreePath} reason=${item.warning ?? item.error ?? 'pending retry'}`,
-  );
+  return [
+    `count: ${items.length}`,
+    ...items.map(
+      (item) =>
+        `- ${item.feature}/${item.issueName} branch=${item.branchName} worktree=${item.worktreePath} reason=${item.warning ?? item.error ?? 'pending retry'}`,
+    ),
+  ];
 }
 
 export class SummaryReporter {
