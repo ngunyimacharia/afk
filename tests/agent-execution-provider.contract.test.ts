@@ -927,6 +927,34 @@ test('pull-request policy blocks workspace and scratch mutation', () => {
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'scratch-write' }), false);
 });
 
+test('pull-request permission allows required push and PR creation bash commands', async () => {
+  const pullRequestPolicy = resolveAgentInvocationPolicy('pull-request');
+
+  const pushDecision = await decideAfkPermission(
+    {
+      sessionId: 'session-pr',
+      permissionId: 'permission-push',
+      type: 'bash',
+      title: 'bash',
+      patterns: ['git push origin HEAD'],
+    },
+    { policy: pullRequestPolicy },
+  );
+  const createPrDecision = await decideAfkPermission(
+    {
+      sessionId: 'session-pr',
+      permissionId: 'permission-create-pr',
+      type: 'bash',
+      title: 'bash',
+      patterns: ['gh pr create --fill'],
+    },
+    { policy: pullRequestPolicy },
+  );
+
+  assert.equal(pushDecision, 'always');
+  assert.equal(createPrDecision, 'always');
+});
+
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (condition()) return;
