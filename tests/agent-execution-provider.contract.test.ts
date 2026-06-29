@@ -110,6 +110,32 @@ test('opencode reviewer invocation does not force the silent review agent', asyn
   assert.equal(result.status, 'completed');
 });
 
+test('opencode pull-request invocation does not use the yolo build agent', async () => {
+  let capturedAgent: string | undefined = 'unset';
+  let capturedPermissionMode: string | undefined;
+  let capturedTitle = '';
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedAgent = input.agent;
+      capturedPermissionMode = input.permissionMode;
+      capturedTitle = input.title;
+      return { sessionId: 'session-pr', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'open pr',
+    invocationMode: 'pull-request',
+    sessionId: 'session-existing',
+  });
+
+  assert.equal(capturedAgent, undefined);
+  assert.equal(capturedPermissionMode, 'ask');
+  assert.equal(capturedTitle, 'afk pull request: feat/01');
+});
+
 test('opencode execution resumes existing session when provided', async () => {
   let capturedSessionId: string | null | undefined;
   const provider = new OpenCodeAgentExecutionProvider({
@@ -479,6 +505,76 @@ test('AFK permission policy auto-approves all requests including bash', async ()
   );
 });
 
+test('pull-request permission policy rejects source edits and scratch writes', async () => {
+  const policy = resolveAgentInvocationPolicy('pull-request');
+
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_edit',
+        type: 'edit',
+        title: 'edit src/index.ts',
+        patterns: ['src/index.ts'],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_scratch',
+        type: 'write',
+        title: 'write .scratch ticket',
+        patterns: ['.scratch/feature/001.md'],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_read',
+        type: 'read',
+        title: 'read file',
+        patterns: ['src/index.ts'],
+      },
+      { policy },
+    ),
+    'always',
+  );
+});
+
+test('opencode provider supplies pull-request permission policy to executor', async () => {
+  let editDecision = '';
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      editDecision =
+        (await input.decidePermission?.({
+          sessionId: 'session-42',
+          permissionId: 'per_1',
+          type: 'edit',
+          title: 'edit src/index.ts',
+          patterns: ['src/index.ts'],
+        })) ?? '';
+      return { sessionId: 'session-42', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { repoRoot: '/repo', model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'open pr',
+    invocationMode: 'pull-request',
+  });
+
+  assert.equal(editDecision, 'reject');
+});
+
 test('opencode provider aborts when signal is triggered', async () => {
   const controller = new AbortController();
   controller.abort();
@@ -624,6 +720,22 @@ test('reviewer policy allows scratch-write and git-commit', () => {
   assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'git-commit' }), true);
   assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'write' }), false);
   assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'git-push' }), false);
+});
+
+test('pull-request policy blocks workspace and scratch mutation', () => {
+  const pullRequestPolicy = resolveAgentInvocationPolicy('pull-request');
+
+  assert.deepEqual(pullRequestPolicy.allowedCommandKinds, ['read', 'diagnostic', 'git-commit']);
+  assert.equal(pullRequestPolicy.canMutateWorkspace, false);
+  assert.equal(pullRequestPolicy.canMutateGitState, true);
+  assert.equal(pullRequestPolicy.canMutateScratch, false);
+
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'read' }), true);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'git-commit' }), true);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'write' }), false);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'edit' }), false);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'delete' }), false);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'scratch-write' }), false);
 });
 
 async function waitFor(condition: () => boolean): Promise<void> {
