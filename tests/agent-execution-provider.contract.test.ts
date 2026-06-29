@@ -623,6 +623,20 @@ test('pull-request permission policy rejects source edits and scratch writes', a
     ),
     'reject',
   );
+
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_titled_bash_touch',
+        type: 'tool',
+        title: 'Run bash command',
+        patterns: ['touch src/new.ts'],
+      },
+      { policy },
+    ),
+    'reject',
+  );
 });
 
 test('opencode provider supplies pull-request permission policy to executor', async () => {

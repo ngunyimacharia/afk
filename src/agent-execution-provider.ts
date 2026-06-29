@@ -359,7 +359,9 @@ function commandKindFromPermissionRequest(request: OpenCodePermissionRequest): A
 }
 
 function isBashPermissionRequest(request: OpenCodePermissionRequest): boolean {
-  return request.type.toLowerCase() === 'bash' || request.title.toLowerCase() === 'bash';
+  const type = request.type.toLowerCase();
+  const title = request.title.toLowerCase();
+  return type === 'bash' || title === 'bash' || /\bbash\b/.test(title);
 }
 
 function commandKindFromBashPermission(patterns: string[]): AgentCommandKind | null {
