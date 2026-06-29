@@ -350,9 +350,20 @@ function isPermissionAllowedByPolicy(request: OpenCodePermissionRequest, policy:
 
 function commandKindFromPermissionRequest(request: OpenCodePermissionRequest): AgentCommandKind | null {
   const value = `${request.type} ${request.title}`.toLowerCase();
+  if (request.type.toLowerCase() === 'bash') return commandKindFromBashPermission(request.patterns);
   if (value.includes('scratch')) return 'scratch-write';
   if (value.includes('delete') || value.includes('remove')) return 'delete';
   if (value.includes('edit') || value.includes('write') || value.includes('patch')) return 'edit';
+  return null;
+}
+
+function commandKindFromBashPermission(patterns: string[]): AgentCommandKind | null {
+  const command = patterns.join('\n').toLowerCase();
+  if (!command) return null;
+  if (/\b(rm|unlink|rmdir)\b/.test(command)) return 'delete';
+  if (/\b(cat|printf|tee)\b[^\n]*(>|>>)\s*\.scratch\b/.test(command)) return 'scratch-write';
+  if (/\b(git\s+apply|apply_patch|patch|sed\s+-i|perl\s+-i)\b/.test(command)) return 'edit';
+  if (/(^|\s)(>|>>)\s*\S+/.test(command) || /\btee\b/.test(command)) return 'edit';
   return null;
 }
 
