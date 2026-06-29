@@ -2,7 +2,7 @@ import { checkBranchWorktreesClean, removeWorktreesForBranch } from './cleanup.j
 import type { MergeBackCoordinator } from './merge-back-coordinator.js';
 import type { SchedulerTicketResult } from './scheduler.js';
 import type { AgentExecutionProgressCallback, CheckoutContext, LaunchModel, ReviewerPromptTemplate } from './types.js';
-import { runGit } from './worktree-preparation-service.js';
+import { branchExists, runGit } from './worktree-preparation-service.js';
 
 export function featuresWithAllTicketsCompleted(ticketResults: SchedulerTicketResult[], features: string[]): string[] {
   const resultsByFeature = new Map<string, SchedulerTicketResult[]>();
@@ -87,6 +87,24 @@ export async function mergeCompletedFeaturesToBase(input: FeatureBaseMergeInput)
 
     if (branchName === input.baseBranch) {
       results.push({ feature, branchName, success: true, deletedBranch: false, deletedWorktree: false });
+      continue;
+    }
+
+    if (!branchExists(input.repoRoot, branchName)) {
+      const reason = `feature branch ${branchName} does not exist; cannot merge into ${input.baseBranch}`;
+      results.push({
+        feature,
+        branchName,
+        success: false,
+        deletedBranch: false,
+        deletedWorktree: false,
+        reason,
+      });
+      input.onProgress?.({
+        ticketLabel,
+        message: reason,
+        kind: 'failure',
+      });
       continue;
     }
 

@@ -1544,6 +1544,79 @@ test('mergeCompletedFeaturesToBase continues to next feature when a merge fails'
   assert.equal(existsSync(featureWorktreePathB), false);
 });
 
+test('mergeCompletedFeaturesToBase fails fast when feature branch does not exist', async () => {
+  const repoRoot = createRepo('feature-base-missing-branch-');
+  const feature = 'feat-a';
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: new FakeAgentExecutionProvider({ status: 'completed', sessionId: null, removable: true }),
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const progressEvents: Array<{ message: string; kind?: string }> = [];
+  const results = await mergeCompletedFeaturesToBase({
+    repoRoot,
+    baseBranch: 'main',
+    features: [feature],
+    checkoutsByFeature: {
+      [feature]: {
+        featureSlug: feature,
+        defaultWorktreeName: feature,
+        effectiveWorktreeName: feature,
+        defaultBranchName: feature,
+        effectiveBranchName: feature,
+        branchNameSource: 'fallback',
+        worktreePath: repoRoot,
+      },
+    },
+    coordinator,
+    model: { id: 'model-1' },
+    onProgress: (event) => progressEvents.push({ message: event.message, kind: event.kind }),
+  });
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.feature, feature);
+  assert.equal(results[0]?.success, false);
+  assert.ok(results[0]?.reason?.includes('does not exist'));
+  assert.equal(results[0]?.deletedBranch, false);
+  assert.equal(results[0]?.deletedWorktree, false);
+  assert.equal(
+    progressEvents.some((e) => e.message.includes('does not exist') && e.kind === 'failure'),
+    true,
+  );
+  assert.equal(git(repoRoot, ['status', '--porcelain']), '');
+});
+
+test('mergeFeatureBranchToBase fails fast when feature branch is an invalid ref', async () => {
+  const repoRoot = createRepo('feature-base-invalid-ref-');
+  const feature = 'feat-a';
+
+  const agentProvider = new FakeAgentExecutionProvider({
+    status: 'completed',
+    sessionId: null,
+    removable: true,
+    output: ['should not be invoked'],
+  });
+
+  const coordinator = new MergeBackCoordinator({
+    agentExecutionProvider: agentProvider,
+    runtimeStore: new RuntimeStore({ repoRoot }),
+  });
+
+  const result = await coordinator.mergeFeatureBranchToBase({
+    repoRoot,
+    baseBranch: 'main',
+    featureBranch: feature,
+    feature,
+    model: { id: 'model-1' },
+  });
+
+  assert.equal(result.success, false);
+  assert.ok(result.reason?.includes('does not exist') || result.reason?.includes('not a valid merge target'));
+  assert.equal(git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
+  assert.equal(git(repoRoot, ['status', '--porcelain']), '');
+});
+
 function resolveGitDir(worktreePath: string): string {
   const gitFile = path.join(worktreePath, '.git');
   try {

@@ -250,6 +250,14 @@ export class MergeBackCoordinator implements FeatureLockProvider, FeatureMergeBa
           return { success: true, reason: '' };
         }
 
+        if (isInvalidRefMergeFailure(mergeResult.output)) {
+          abortMerge(repoRoot);
+          return {
+            success: false,
+            reason: `Feature branch ${featureBranch} does not exist or is not a valid merge target`,
+          };
+        }
+
         const budget = this.deps.conflictResolutionBudget ?? DEFAULT_CONFLICT_RESOLUTION_BUDGET;
         let finalDiagnostics = getMergeConflictDiagnostics(repoRoot);
 
@@ -688,6 +696,16 @@ function tryMerge(worktreePath: string, branchName: string): { success: boolean;
     const output = error instanceof Error ? error.message : String(error);
     return { success: false, output };
   }
+}
+
+function isInvalidRefMergeFailure(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return (
+    normalized.includes('not a valid object name') ||
+    normalized.includes('not something we can merge') ||
+    normalized.includes('could not resolve reference') ||
+    normalized.includes('invalid reference')
+  );
 }
 
 function discardWorktreeChanges(worktreePath: string): void {
