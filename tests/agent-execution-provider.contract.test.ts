@@ -732,6 +732,8 @@ test('pull-request permission policy rejects source edits and scratch writes', a
 
 test('opencode provider supplies pull-request permission policy to executor', async () => {
   let editDecision = '';
+  let pushDecision = '';
+  let createPrDecision = '';
   const provider = new OpenCodeAgentExecutionProvider({
     run: async (input) => {
       editDecision =
@@ -741,6 +743,22 @@ test('opencode provider supplies pull-request permission policy to executor', as
           type: 'edit',
           title: 'edit src/index.ts',
           patterns: ['src/index.ts'],
+        })) ?? '';
+      pushDecision =
+        (await input.decidePermission?.({
+          sessionId: 'session-42',
+          permissionId: 'per_push',
+          type: 'bash',
+          title: 'bash',
+          patterns: ['git push origin HEAD'],
+        })) ?? '';
+      createPrDecision =
+        (await input.decidePermission?.({
+          sessionId: 'session-42',
+          permissionId: 'per_create_pr',
+          type: 'bash',
+          title: 'bash',
+          patterns: ['gh pr create --fill'],
         })) ?? '';
       return { sessionId: 'session-42', output: ['ok'] };
     },
@@ -754,6 +772,8 @@ test('opencode provider supplies pull-request permission policy to executor', as
   });
 
   assert.equal(editDecision, 'reject');
+  assert.equal(pushDecision, 'always');
+  assert.equal(createPrDecision, 'always');
 });
 
 test('opencode provider aborts when signal is triggered', async () => {
