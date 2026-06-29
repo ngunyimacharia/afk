@@ -1893,10 +1893,10 @@ test('writes default wall-clock budgets to runtime metadata', async () => {
       phaseWallClockMs?: Record<string, number>;
     };
   };
-  assert.equal(metadata.EFFECTIVE_BUDGETS?.ticketWallClockMs, 30 * 60 * 1000);
-  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.execution, 15 * 60 * 1000);
-  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.review, 5 * 60 * 1000);
-  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.fixup, 5 * 60 * 1000);
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.ticketWallClockMs, 60 * 60 * 1000);
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.execution, 30 * 60 * 1000);
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.review, 10 * 60 * 1000);
+  assert.equal(metadata.EFFECTIVE_BUDGETS?.phaseWallClockMs?.fixup, 10 * 60 * 1000);
 });
 
 test('hands off when default ticket wall-clock budget is exceeded', async () => {
@@ -1904,7 +1904,7 @@ test('hands off when default ticket wall-clock budget is exceeded', async () => 
   let calls = 0;
   const minute = 60 * 1000;
   const realDateNow = Date.now;
-  Date.now = () => ++calls * 31 * minute;
+  Date.now = () => ++calls * 70 * minute;
   const store = new RuntimeStore({ repoRoot });
   const ticketPath = path.join(repoRoot, 'ticket.md');
   writeFileSync(ticketPath, 'Status: ready-for-agent\n');
@@ -1958,7 +1958,7 @@ test('hands off when default execution phase wall-clock budget is exceeded', asy
     repoRoot,
     now: () => {
       tick += 1;
-      return tick * 20 * minute;
+      return tick * 35 * minute;
     },
   });
   const ticketPath = path.join(repoRoot, 'ticket.md');
