@@ -376,8 +376,9 @@ function commandKindFromBashPermission(title: string, patterns: string[]): Agent
   const command = [title, ...patterns].join('\n').toLowerCase();
   if (!command) return null;
   if (/\b(rm|unlink|rmdir)\b/.test(command)) return 'delete';
-  if (/\bgit\s+push\b/.test(command)) return 'git-push';
-  if (/\bgh\s+pr\s+create\b/.test(command)) return 'github-pr';
+  if (/\bgit(?:\s+-c\s+\S+|\s+-C\s+\S+|\s+--git-dir(?:=|\s+)\S+|\s+--work-tree(?:=|\s+)\S+)*\s+push\b/.test(command))
+    return 'git-push';
+  if (/\bgh(?:\s+(?:--repo|-R)\s+\S+|\s+--repo=\S+)*\s+pr\s+create\b/.test(command)) return 'github-pr';
   if (/\b(mkdir|touch|cp|mv|install)\b[^\n]*\b\.scratch\b/.test(command)) return 'scratch-write';
   if (/\b(cat|printf|tee)\b[^\n]*(>|>>)\s*\.scratch\b/.test(command)) return 'scratch-write';
   if (/\b(mkdir|touch|cp|mv|install)\b/.test(command)) return 'edit';
