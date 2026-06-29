@@ -29,6 +29,9 @@ const YOLO_AGENT_PERMISSION = {
   webfetch: 'allow',
   websearch: 'allow',
 } as const;
+const ASK_AGENT_PERMISSION = Object.fromEntries(
+  Object.keys(YOLO_AGENT_PERMISSION).map((permissionName) => [permissionName, 'ask']),
+) as Record<keyof typeof YOLO_AGENT_PERMISSION, 'ask'>;
 
 type OpenCodeActivityKind = 'assistant' | 'tool' | 'permission' | 'session' | 'diff' | 'other';
 
@@ -455,10 +458,11 @@ export function buildAfkOpencodeConfigContent(
   void repoRoot;
   const existing = parseConfigContent(existingContent);
   const existingAgent = readConfigObject(existing.agent);
+  const agentPermission = permissionMode === 'ask' ? ASK_AGENT_PERMISSION : YOLO_AGENT_PERMISSION;
   const yoloAgents = Object.fromEntries(
     YOLO_OPENCODE_AGENTS.map((agentName) => {
       const agentConfig = readConfigObject(existingAgent[agentName]);
-      return [agentName, { ...agentConfig, permission: YOLO_AGENT_PERMISSION }];
+      return [agentName, { ...agentConfig, permission: agentPermission }];
     }),
   );
 

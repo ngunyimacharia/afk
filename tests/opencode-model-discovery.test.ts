@@ -387,7 +387,9 @@ test('builds ask-based permission config for pull-request opencode sessions', ()
   const config = JSON.parse(buildAfkOpencodeConfigContent('/repo/', undefined, 'ask') ?? '{}');
 
   assert.equal(config.permission, 'ask');
-  assert.equal(config.agent.build.permission.edit, 'allow');
+  assert.equal(config.agent.build.permission.edit, 'ask');
+  assert.equal(config.agent.build.permission.bash, 'ask');
+  assert.equal(config.agent.plan.permission.edit, 'ask');
 });
 
 test('recovers stale opencode prompts in the same session', async () => {
