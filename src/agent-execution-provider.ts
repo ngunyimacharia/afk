@@ -376,13 +376,13 @@ function commandKindFromBashPermission(title: string, patterns: string[]): Agent
   const command = [title, ...patterns].join('\n').toLowerCase();
   if (!command) return null;
   if (/\b(rm|unlink|rmdir)\b/.test(command)) return 'delete';
+  if (/\bgit\s+push\b/.test(command)) return 'git-push';
+  if (/\bgh\s+pr\s+create\b/.test(command)) return 'github-pr';
   if (/\b(mkdir|touch|cp|mv|install)\b[^\n]*\b\.scratch\b/.test(command)) return 'scratch-write';
   if (/\b(cat|printf|tee)\b[^\n]*(>|>>)\s*\.scratch\b/.test(command)) return 'scratch-write';
   if (/\b(mkdir|touch|cp|mv|install)\b/.test(command)) return 'edit';
   if (/\b(git\s+apply|apply_patch|patch|sed\s+-i|perl\s+-i)\b/.test(command)) return 'edit';
   if (/(^|\s)(>|>>)\s*\S+/.test(command) || /\btee\b/.test(command)) return 'edit';
-  if (/\bgit\s+push\b/.test(command)) return 'git-push';
-  if (/\bgh\s+pr\s+create\b/.test(command)) return 'github-pr';
   if (/\b(bun|npm|pnpm|yarn)\s+(test|run|exec)\b/.test(command)) return 'diagnostic';
   if (/\b(git\s+(diff|status|log|show)|ls|find|rg|grep)\b/.test(command)) return 'read';
   return null;

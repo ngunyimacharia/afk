@@ -616,6 +616,19 @@ test('pull-request permission policy rejects source edits and scratch writes', a
     await decideAfkPermission(
       {
         sessionId: 'session-42',
+        permissionId: 'per_titled_bash_gh_pr_create_body',
+        type: 'tool',
+        title: 'Run bash command',
+        patterns: ['gh pr create --title "Fix" --body "Review notes:\n> ready"'],
+      },
+      { policy },
+    ),
+    'always',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
         permissionId: 'per_bash_git_push_title',
         type: 'bash',
         title: 'git push origin HEAD',
