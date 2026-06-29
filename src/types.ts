@@ -62,6 +62,8 @@ export interface LaunchModel {
   label?: string;
 }
 
+export type FeatureCompletionAction = 'merge-to-base' | 'create-pr';
+
 export interface LaunchPreferences {
   harness?: SelectableHarnessId;
   modelId?: string;
@@ -69,6 +71,7 @@ export interface LaunchPreferences {
   reviewerModelId?: string;
   concurrency?: number;
   budgets?: Partial<BudgetPolicy>;
+  featureCompletionAction?: FeatureCompletionAction;
   mergeBackToBase?: boolean;
 }
 

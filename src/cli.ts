@@ -595,7 +595,7 @@ export async function runAfk(
         reviewerHarness: wizard.reviewerHarness,
         reviewerModelId: reviewerModel?.id,
         concurrency,
-        mergeBackToBase,
+        featureCompletionAction: wizard.featureCompletionAction,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown model discovery error';

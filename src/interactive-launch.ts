@@ -1,7 +1,13 @@
 import prompts from 'prompts';
 import { displayNameForHarness, isSelectableHarnessId, type SelectableHarnessId } from './harness-registry.js';
 import { resolveReviewerPromptTemplate } from './reviewer-prompt-catalog.js';
-import type { LaunchModel, LaunchPreferences, ReviewerPromptTemplate, TicketRecord } from './types.js';
+import type {
+  FeatureCompletionAction,
+  LaunchModel,
+  LaunchPreferences,
+  ReviewerPromptTemplate,
+  TicketRecord,
+} from './types.js';
 
 export interface PromptIO {
   stdin: NodeJS.ReadStream;
@@ -17,8 +23,14 @@ export interface LaunchWizardResult {
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
   concurrency?: number;
+  featureCompletionAction?: FeatureCompletionAction;
   mergeBackToBase?: boolean;
 }
+
+export const featureCompletionActionChoices: Array<{ title: string; value: FeatureCompletionAction }> = [
+  { title: 'Merge back to base branch on completion', value: 'merge-to-base' },
+  { title: 'Create a GitHub PR for completed feature branches', value: 'create-pr' },
+];
 
 export function isInteractiveLaunchAllowed(io: PromptIO, env: NodeJS.ProcessEnv): { ok: boolean; reason?: string } {
   if (env.CI) return { ok: false, reason: 'AFK launch requires an interactive TTY and does not run in CI.' };
@@ -104,8 +116,9 @@ export async function runInteractiveLaunchWizard(input: {
   if (!selectedTickets) return { cancelled: true };
   const concurrency = await promptConcurrency(input.io, input.preferences?.concurrency ?? 3);
   if (!concurrency) return { cancelled: true };
-  const mergeBackToBase = await promptMergeBackToBase(input.io, input.preferences?.mergeBackToBase);
-  if (mergeBackToBase === null) return { cancelled: true };
+  const featureCompletionAction = await promptFeatureCompletionAction(input.io, input.preferences);
+  if (!featureCompletionAction) return { cancelled: true };
+  const mergeBackToBase = featureCompletionAction === 'merge-to-base';
 
   return {
     cancelled: false,
@@ -116,6 +129,7 @@ export async function runInteractiveLaunchWizard(input: {
     reviewerPrompt,
     tickets: selectedTickets,
     concurrency,
+    featureCompletionAction,
     mergeBackToBase,
   };
 }
@@ -255,18 +269,25 @@ async function promptConcurrency(io: PromptIO, initial: number): Promise<number 
   }
 }
 
-async function promptMergeBackToBase(_io: PromptIO, initial?: boolean): Promise<boolean | null> {
-  const choices = [
-    { title: 'Merge back to base branch on completion', value: 'true' },
-    { title: 'Leave feature branches for manual inspection', value: 'false' },
-  ];
+function preferredFeatureCompletionAction(preferences?: LaunchPreferences): FeatureCompletionAction {
+  if (preferences?.featureCompletionAction) return preferences.featureCompletionAction;
+  if (preferences?.mergeBackToBase === false) return 'create-pr';
+  return 'merge-to-base';
+}
+
+async function promptFeatureCompletionAction(
+  _io: PromptIO,
+  preferences?: LaunchPreferences,
+): Promise<FeatureCompletionAction | null> {
+  const initialValue = preferredFeatureCompletionAction(preferences);
+  const initial = featureCompletionActionChoices.findIndex((choice) => choice.value === initialValue);
   const result = await prompts(
     {
       type: 'autocomplete',
       name: 'value',
       message: 'After tickets complete, how should feature branches be handled?',
-      choices,
-      initial: initial === true ? 0 : initial === false ? 1 : 0,
+      choices: featureCompletionActionChoices,
+      initial: initial >= 0 ? initial : 0,
       suggest: async (input: string, choices: PromptSuggestChoice[]) => {
         const query = input.trim().toLowerCase();
         if (!query) return choices;
@@ -279,6 +300,6 @@ async function promptMergeBackToBase(_io: PromptIO, initial?: boolean): Promise<
     },
     { onCancel: () => true },
   );
-  if (typeof result.value !== 'string') return null;
-  return result.value === 'true';
+  if (result.value === 'merge-to-base' || result.value === 'create-pr') return result.value;
+  return null;
 }

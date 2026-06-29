@@ -83,6 +83,7 @@ test('round-trips launch preferences', () => {
     modelId: 'provider/exec',
     reviewerHarness: 'Claude',
     reviewerModelId: 'provider/review',
+    featureCompletionAction: 'create-pr',
   });
 
   assert.deepEqual(store.readLaunchPreferences(), {
@@ -90,7 +91,32 @@ test('round-trips launch preferences', () => {
     modelId: 'provider/exec',
     reviewerHarness: 'Claude',
     reviewerModelId: 'provider/review',
+    featureCompletionAction: 'create-pr',
   });
+});
+
+test('reads legacy merge-back launch preferences as feature completion actions', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
+  const store = new RuntimeStore({ repoRoot });
+  const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
+  mkdirSync(path.dirname(preferencesPath), { recursive: true });
+
+  writeFileSync(preferencesPath, JSON.stringify({ mergeBackToBase: true }), 'utf8');
+  assert.equal(store.readLaunchPreferences().featureCompletionAction, 'merge-to-base');
+
+  writeFileSync(preferencesPath, JSON.stringify({ mergeBackToBase: false }), 'utf8');
+  assert.equal(store.readLaunchPreferences().featureCompletionAction, 'create-pr');
+});
+
+test('writes feature completion action instead of legacy merge-back preference', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
+  const store = new RuntimeStore({ repoRoot });
+  store.writeLaunchPreferences({ mergeBackToBase: true });
+
+  const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
+  const preferences = JSON.parse(readFileSync(preferencesPath, 'utf8')) as Record<string, unknown>;
+  assert.equal(preferences.featureCompletionAction, 'merge-to-base');
+  assert.equal('mergeBackToBase' in preferences, false);
 });
 
 test('reads optional budget preferences', () => {
