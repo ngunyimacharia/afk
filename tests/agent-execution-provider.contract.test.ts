@@ -559,6 +559,58 @@ test('pull-request permission policy rejects source edits and scratch writes', a
     ),
     'always',
   );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_bash_delete',
+        type: 'bash',
+        title: 'bash',
+        patterns: ['rm src/index.ts'],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_bash_scratch',
+        type: 'bash',
+        title: 'bash',
+        patterns: ['cat > .scratch/feature/001.md'],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_bash_edit',
+        type: 'bash',
+        title: 'bash',
+        patterns: ["apply_patch <<'PATCH'"],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_bash_test',
+        type: 'bash',
+        title: 'bash',
+        patterns: ['bun test'],
+      },
+      { policy },
+    ),
+    'always',
+  );
 });
 
 test('opencode provider supplies pull-request permission policy to executor', async () => {
