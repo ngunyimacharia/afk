@@ -5,6 +5,7 @@ import { assertPathWithinRoot } from './path-validation.js';
 import type {
   BudgetExceededEvent,
   BudgetPolicy,
+  FeatureCompletionAction,
   LaunchPreferences,
   LinearProviderIdentity,
   PhaseHistoryEntry,
@@ -45,6 +46,16 @@ function isoFromEpoch(epochMs: number): string {
   return new Date(epochMs).toISOString();
 }
 
+function isFeatureCompletionAction(value: unknown): value is FeatureCompletionAction {
+  return value === 'merge-to-base' || value === 'create-pr';
+}
+
+function resolveFeatureCompletionAction(value: Record<string, unknown>): FeatureCompletionAction | undefined {
+  if (isFeatureCompletionAction(value.featureCompletionAction)) return value.featureCompletionAction;
+  if (typeof value.mergeBackToBase === 'boolean') return value.mergeBackToBase ? 'merge-to-base' : 'create-pr';
+  return undefined;
+}
+
 export class RuntimeStore {
   private readonly logRoot: string;
   private readonly metadataRoot: string;
@@ -80,7 +91,8 @@ export class RuntimeStore {
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)
         preferences.concurrency = value.concurrency;
-      if (typeof value.mergeBackToBase === 'boolean') preferences.mergeBackToBase = value.mergeBackToBase;
+      const featureCompletionAction = resolveFeatureCompletionAction(value);
+      if (featureCompletionAction) preferences.featureCompletionAction = featureCompletionAction;
       const budgets = value.budgets;
       if (budgets && typeof budgets === 'object' && !Array.isArray(budgets)) {
         const budgetRecord = budgets as Record<string, unknown>;
@@ -117,7 +129,23 @@ export class RuntimeStore {
   writeLaunchPreferences(preferences: LaunchPreferences): void {
     this.assertManagedPath(this.launchPreferencesPath, 'launch preferences');
     mkdirSync(path.dirname(this.launchPreferencesPath), { recursive: true });
-    writeFileSync(this.launchPreferencesPath, `${JSON.stringify(preferences, null, 2)}\n`, 'utf8');
+    const featureCompletionAction =
+      preferences.featureCompletionAction ??
+      (typeof preferences.mergeBackToBase === 'boolean'
+        ? preferences.mergeBackToBase
+          ? 'merge-to-base'
+          : 'create-pr'
+        : undefined);
+    const normalized: LaunchPreferences = {
+      harness: preferences.harness,
+      modelId: preferences.modelId,
+      reviewerHarness: preferences.reviewerHarness,
+      reviewerModelId: preferences.reviewerModelId,
+      concurrency: preferences.concurrency,
+      budgets: preferences.budgets,
+      featureCompletionAction,
+    };
+    writeFileSync(this.launchPreferencesPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
   }
 
   createRecord(context: RuntimeTicketContext): RuntimeRecordHandle {

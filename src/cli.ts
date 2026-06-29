@@ -29,6 +29,7 @@ import {
 } from './feature-base-merge.js';
 import { buildFeatureExecutionGraph, type FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
+import { createPullRequestsForCompletedFeatures, type FeaturePrCreationResult } from './feature-pr-creation.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import {
   createHarnessAgentExecutionProvider,
@@ -77,7 +78,7 @@ import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
 import type { TrackerProvider } from './tracker-contract.js';
 import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
-import type { LaunchModel, TicketRecord } from './types.js';
+import type { FeatureCompletionAction, LaunchModel, TicketRecord } from './types.js';
 import {
   orderSelectedFeaturesByWaves,
   refreshWorkspaceExecutionGraph,
@@ -556,6 +557,7 @@ export async function runAfk(
     let selectedTickets: TicketRecord[] = [];
     let concurrency = 3;
     let mergeBackToBase = false;
+    let featureCompletionAction: FeatureCompletionAction = 'merge-to-base';
     let harness: SelectableHarnessId = 'OpenCode';
     let reviewerHarness: SelectableHarnessId = 'OpenCode';
 
@@ -589,13 +591,14 @@ export async function runAfk(
       selectedTickets = wizard.tickets ?? [];
       concurrency = wizard.concurrency ?? concurrency;
       mergeBackToBase = wizard.mergeBackToBase ?? false;
+      featureCompletionAction = wizard.featureCompletionAction ?? (mergeBackToBase ? 'merge-to-base' : 'create-pr');
       runtimeStore.writeLaunchPreferences({
         harness: wizard.harness,
         modelId: model?.id,
         reviewerHarness: wizard.reviewerHarness,
         reviewerModelId: reviewerModel?.id,
         concurrency,
-        mergeBackToBase,
+        featureCompletionAction: wizard.featureCompletionAction,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown model discovery error';
@@ -711,6 +714,7 @@ export async function runAfk(
         concurrency,
         budgets: launchPreferences.budgets,
         mergeBackToBase,
+        featureCompletionAction,
         baseBranch,
       };
       const spawnDaemon = runtime.spawnDaemon ?? defaultSpawnDaemon;
@@ -948,6 +952,7 @@ export async function runAfk(
 
     let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
     let baseMergeResults: FeatureBaseMergeResult[] = [];
+    let prCreationResults: FeaturePrCreationResult[] = [];
     try {
       commandPollInterval = setInterval(() => {
         const { commands, nextOffset } = activeRunControlPlane.readCommands(runId, lastCommandOffset);
@@ -963,7 +968,7 @@ export async function runAfk(
         runId,
         signal: killController.signal,
       });
-      if (mergeBackToBase) {
+      if (featureCompletionAction === 'merge-to-base') {
         const eligibleFeatures = featuresWithAllTicketsCompleted(schedulerResult.ticketResults, checkoutFeatures);
         if (eligibleFeatures.length > 0) {
           baseMergeResults = await mergeCompletedFeaturesToBase({
@@ -975,6 +980,20 @@ export async function runAfk(
             model: plan.model,
             reviewerModel: plan.reviewerModel,
             reviewerPrompt: plan.reviewerPrompt,
+            onProgress,
+          });
+        }
+      } else if (featureCompletionAction === 'create-pr') {
+        const eligibleFeatures = featuresWithAllTicketsCompleted(schedulerResult.ticketResults, checkoutFeatures);
+        if (eligibleFeatures.length > 0) {
+          prCreationResults = await createPullRequestsForCompletedFeatures({
+            repoRoot,
+            baseBranch,
+            features: eligibleFeatures,
+            checkoutsByFeature,
+            agentExecutionProvider: new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
+            model: plan.model,
+            ticketResults: schedulerResult.ticketResults,
             onProgress,
           });
         }
@@ -1031,6 +1050,7 @@ export async function runAfk(
           ticketResults: schedulerResult.ticketResults,
         }),
         ...formatFeatureBaseMergeResultLines(baseMergeResults),
+        ...formatFeaturePrCreationResultLines(prCreationResults),
         ...formatManualPermissionReviewLines(permissionCoordinator.history),
       ].join('\n'),
     };
@@ -1050,6 +1070,24 @@ function formatFeatureBaseMergeResultLines(results: FeatureBaseMergeResult[]): s
         status = 'merged and cleaned up';
       } else if (result.warning) {
         status = `merged with cleanup warnings (${result.warning})`;
+      } else {
+        status = `failed (${result.reason ?? 'unknown error'})`;
+      }
+      return `- ${result.feature}: ${status}`;
+    }),
+  ];
+}
+
+export function formatFeaturePrCreationResultLines(results: FeaturePrCreationResult[]): string[] {
+  if (!results.length) return [];
+  return [
+    'Feature pull request results',
+    ...results.map((result) => {
+      let status: string;
+      if (result.success && result.prUrl) {
+        status = result.warning
+          ? `pull request created: ${result.prUrl} (cleanup warning: ${result.warning})`
+          : `pull request created: ${result.prUrl}`;
       } else {
         status = `failed (${result.reason ?? 'unknown error'})`;
       }

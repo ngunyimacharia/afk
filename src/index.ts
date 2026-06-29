@@ -1,5 +1,7 @@
 export { assertCommandAllowed, resolveAgentInvocationPolicy } from './agent-execution-provider.js';
 export { runAfk } from './cli.js';
+export type { GithubPrTemplateDiscoveryResult } from './github-pr-template-discovery.js';
+export { discoverGithubPrTemplates } from './github-pr-template-discovery.js';
 export { buildLaunchPlan } from './launch-context-builder.js';
 export { resolveLaunchModelSelection } from './launch-models.js';
 export {

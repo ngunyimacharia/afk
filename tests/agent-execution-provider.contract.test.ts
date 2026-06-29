@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  assertCommandAllowed,
   ClaudeAgentExecutionProvider,
   CodexAgentExecutionProvider,
+  CompositeAgentExecutionProvider,
   decideAfkPermission,
   FakeAgentExecutionProvider,
   isCommandAllowed,
@@ -133,7 +135,7 @@ test('opencode pull-request invocation does not use the yolo build agent', async
 
   assert.equal(capturedAgent, undefined);
   assert.equal(capturedPermissionMode, 'ask');
-  assert.equal(capturedTitle, 'afk pull request: feat/01');
+  assert.equal(capturedTitle, 'afk pr: feat/01');
 });
 
 test('opencode execution resumes existing session when provided', async () => {
@@ -178,6 +180,42 @@ test('opencode reviewer does not resume implementation session', async () => {
   });
 
   assert.equal(capturedSessionId, null);
+});
+
+test('opencode pull-request invocation uses PR-specific session title and progress labels', async () => {
+  let capturedAgent: string | undefined = 'unset';
+  let capturedPermissionMode: string | undefined;
+  let capturedTitle = '';
+  let capturedSessionId: string | null | undefined = 'unset';
+  const progress: string[] = [];
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedAgent = input.agent;
+      capturedPermissionMode = input.permissionMode;
+      capturedTitle = input.title;
+      capturedSessionId = input.sessionId;
+      return { sessionId: 'session-pr', output: ['created pr'] };
+    },
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'create pr',
+    invocationMode: 'pull-request',
+    sessionId: 'session-existing',
+    onProgress: (event) => progress.push(`${event.ticketLabel}: ${event.message}`),
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(capturedAgent, undefined);
+  assert.equal(capturedPermissionMode, 'ask');
+  assert.equal(capturedTitle, 'afk pr: feat/01');
+  assert.equal(capturedSessionId, null);
+  assert.deepEqual(progress, [
+    'feat/01: starting opencode pull-request session',
+    'feat/01: opencode pull-request session completed',
+  ]);
 });
 
 test('opencode provider maps executor failures to failed status', async () => {
@@ -577,6 +615,19 @@ test('pull-request permission policy rejects source edits and scratch writes', a
     await decideAfkPermission(
       {
         sessionId: 'session-42',
+        permissionId: 'per_bash_edit',
+        type: 'bash',
+        title: 'bash',
+        patterns: ["apply_patch <<'PATCH'"],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
         permissionId: 'per_bash_test',
         type: 'bash',
         title: 'bash',
@@ -685,7 +736,7 @@ test('pull-request permission policy rejects source edits and scratch writes', a
     ['per_bash_mkdir_scratch', 'mkdir .scratch/feature'],
     ['per_bash_git_commit', 'git commit -m "update"'],
     ['per_bash_unknown', 'custom-mutator src/index.ts'],
-  ] as const) {
+  ]) {
     assert.equal(
       await decideAfkPermission(
         {
@@ -926,25 +977,24 @@ test('reviewer policy allows scratch-write and git-commit', () => {
 test('pull-request policy blocks workspace and scratch mutation', () => {
   const pullRequestPolicy = resolveAgentInvocationPolicy('pull-request');
 
-  assert.deepEqual(pullRequestPolicy.allowedCommandKinds, [
-    'read',
-    'diagnostic',
-    'git-commit',
-    'git-push',
-    'github-pr',
-  ]);
+  assert.deepEqual(pullRequestPolicy.allowedCommandKinds, ['read', 'diagnostic', 'git-push', 'github-pr']);
   assert.equal(pullRequestPolicy.canMutateWorkspace, false);
   assert.equal(pullRequestPolicy.canMutateGitState, true);
   assert.equal(pullRequestPolicy.canMutateScratch, false);
 
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'read' }), true);
-  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'git-commit' }), true);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'diagnostic' }), true);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'git-push' }), true);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'github-pr' }), true);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'write' }), false);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'edit' }), false);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'delete' }), false);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'scratch-write' }), false);
+  assert.doesNotThrow(() => assertCommandAllowed(pullRequestPolicy, { kind: 'github-pr', target: 'gh pr create' }));
+  assert.throws(
+    () => assertCommandAllowed(pullRequestPolicy, { kind: 'write', target: 'src/app.ts' }),
+    /Pull-request mode/,
+  );
 });
 
 test('pull-request permission allows required push and PR creation bash commands', async () => {
@@ -973,6 +1023,30 @@ test('pull-request permission allows required push and PR creation bash commands
 
   assert.equal(pushDecision, 'always');
   assert.equal(createPrDecision, 'always');
+});
+
+test('composite provider routes pull-request invocations to implementation provider', async () => {
+  const calls: string[] = [];
+  const provider = new CompositeAgentExecutionProvider(
+    new FakeAgentExecutionProvider((request) => {
+      calls.push(`implementation:${request.invocationMode ?? 'execution'}`);
+      return { status: 'completed', sessionId: 'implementation-session', removable: true };
+    }),
+    new FakeAgentExecutionProvider((request) => {
+      calls.push(`reviewer:${request.invocationMode ?? 'execution'}`);
+      return { status: 'completed', sessionId: 'reviewer-session', removable: true };
+    }),
+  );
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'create pr',
+    invocationMode: 'pull-request',
+  });
+
+  assert.equal(result.sessionId, 'implementation-session');
+  assert.deepEqual(calls, ['implementation:pull-request']);
 });
 
 async function waitFor(condition: () => boolean): Promise<void> {

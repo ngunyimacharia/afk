@@ -20,6 +20,7 @@ import {
   validateSelectedTicketDependencies,
 } from '../src/cli.js';
 import {
+  featureCompletionActionChoices,
   formatFeatureSelectionTitle,
   formatModelSelectionTitle,
   prioritizeModelChoices,
@@ -298,6 +299,19 @@ test('ignores stale preferred model choice', () => {
   assert.deepEqual(
     choices.map((choice) => choice.value),
     ['provider/first', 'provider/last'],
+  );
+});
+
+test('feature completion action choices replace manual branch inspection', () => {
+  assert.deepEqual(featureCompletionActionChoices, [
+    { title: 'Merge back to base branch on completion', value: 'merge-to-base' },
+    { title: 'Create a GitHub PR for completed feature branches', value: 'create-pr' },
+  ]);
+  assert.equal(
+    featureCompletionActionChoices.some((choice) =>
+      choice.title.includes('Leave feature branches for manual inspection'),
+    ),
+    false,
   );
 });
 

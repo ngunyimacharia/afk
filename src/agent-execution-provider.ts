@@ -50,13 +50,7 @@ const REVIEWER_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = [
   'git-commit',
 ];
 
-const PULL_REQUEST_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = [
-  'read',
-  'diagnostic',
-  'git-commit',
-  'git-push',
-  'github-pr',
-];
+const PULL_REQUEST_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = ['read', 'diagnostic', 'git-push', 'github-pr'];
 
 export interface AgentExecutionRequest {
   plan: LaunchPlan;
@@ -110,9 +104,10 @@ export function isCommandAllowed(policy: AgentInvocationPolicy, command: AgentCo
 export function assertCommandAllowed(policy: AgentInvocationPolicy, command: AgentCommandRequest): void {
   if (isCommandAllowed(policy, command)) return;
 
-  if (policy.mode === 'reviewer') {
+  if (policy.mode === 'reviewer' || policy.mode === 'pull-request') {
     const target = command.target ? `: ${command.target}` : '';
-    throw new Error(`Reviewer mode blocks ${command.kind} commands${target}`);
+    const label = policy.mode === 'reviewer' ? 'Reviewer' : 'Pull-request';
+    throw new Error(`${label} mode blocks ${command.kind} commands${target}`);
   }
 
   throw new Error(`Command not allowed: ${command.kind}`);
@@ -158,24 +153,15 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
       const model =
         invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
       const providerName = this.config.providerName;
+      const sessionLabel = formatInvocationSessionLabel(invocationMode);
       request.onProgress?.({
         ticketLabel: ticket.label,
-        message:
-          invocationMode === 'reviewer'
-            ? `starting ${providerName} reviewer session`
-            : invocationMode === 'pull-request'
-              ? `starting ${providerName} pull-request session`
-              : `starting ${providerName} session`,
+        message: `starting ${providerName} ${sessionLabel}`,
       });
       const result = await this.executor.run({
         model,
         prompt: request.prompt,
-        title:
-          invocationMode === 'reviewer'
-            ? `afk review: ${ticket.label}`
-            : invocationMode === 'pull-request'
-              ? `afk pull request: ${ticket.label}`
-              : `afk: ${ticket.label}`,
+        title: formatInvocationSessionTitle(invocationMode, ticket.label),
         agent: invocationMode === 'execution' ? this.config.agentName : undefined,
         sessionId: invocationMode === 'execution' ? request.sessionId : null,
         workDir: request.plan.checkout?.worktreePath,
@@ -214,16 +200,8 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
       request.onProgress?.({
         ticketLabel: ticket.label,
         message: outputFailure
-          ? invocationMode === 'reviewer'
-            ? `${providerName} reviewer session failed: ${outputFailure}`
-            : invocationMode === 'pull-request'
-              ? `${providerName} pull-request session failed: ${outputFailure}`
-              : `${providerName} session failed: ${outputFailure}`
-          : invocationMode === 'reviewer'
-            ? `${providerName} reviewer session completed`
-            : invocationMode === 'pull-request'
-              ? `${providerName} pull-request session completed`
-              : `${providerName} session completed`,
+          ? `${providerName} ${sessionLabel} failed: ${outputFailure}`
+          : `${providerName} ${sessionLabel} completed`,
         sessionId: result.sessionId ?? null,
       });
       return {
@@ -256,6 +234,18 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
       };
     }
   }
+}
+
+function formatInvocationSessionLabel(mode: AgentInvocationMode): string {
+  if (mode === 'reviewer') return 'reviewer session';
+  if (mode === 'pull-request') return 'pull-request session';
+  return 'session';
+}
+
+function formatInvocationSessionTitle(mode: AgentInvocationMode, ticketLabel: string): string {
+  if (mode === 'reviewer') return `afk review: ${ticketLabel}`;
+  if (mode === 'pull-request') return `afk pr: ${ticketLabel}`;
+  return `afk: ${ticketLabel}`;
 }
 
 export class OpenCodeAgentExecutionProvider implements AgentExecutionProvider {
@@ -333,8 +323,8 @@ export class CompositeAgentExecutionProvider implements AgentExecutionProvider {
 }
 
 export async function decideAfkPermission(
-  _request: OpenCodePermissionRequest,
-  _options: {
+  request: OpenCodePermissionRequest,
+  options: {
     ticketLabel?: string;
     coordinator?: PermissionCoordinator;
     repoRoot?: string;
@@ -343,8 +333,8 @@ export async function decideAfkPermission(
     otherWorktreePaths?: string[];
   } = {},
 ): Promise<OpenCodePermissionDecision | null> {
-  const policy = _options.policy ?? resolveAgentInvocationPolicy('execution');
-  if (!isPermissionAllowedByPolicy(_request, policy)) return 'reject';
+  const policy = options.policy ?? resolveAgentInvocationPolicy('execution');
+  if (!isPermissionAllowedByPolicy(request, policy)) return 'reject';
   return 'always';
 }
 

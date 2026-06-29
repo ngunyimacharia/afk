@@ -3,6 +3,7 @@ import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
 import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
 import { featuresWithAllTicketsCompleted, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
+import { createPullRequestsForCompletedFeatures } from './feature-pr-creation.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import {
   createHarnessAgentExecutionProvider,
@@ -18,7 +19,7 @@ import { RuntimeStore } from './runtime-store.js';
 import { Scheduler } from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
-import type { AgentExecutionProgressEvent, BudgetPolicy, LaunchPlan } from './types.js';
+import type { AgentExecutionProgressEvent, BudgetPolicy, FeatureCompletionAction, LaunchPlan } from './types.js';
 
 export interface DaemonLaunchContext {
   repoRoot: string;
@@ -29,12 +30,25 @@ export interface DaemonLaunchContext {
   concurrency: number;
   budgets?: Partial<BudgetPolicy>;
   mergeBackToBase?: boolean;
+  featureCompletionAction?: FeatureCompletionAction;
   baseBranch?: string;
 }
 
 export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
-  const { repoRoot, runId, plan, harness, reviewerHarness, concurrency, budgets, mergeBackToBase, baseBranch } =
-    context;
+  const {
+    repoRoot,
+    runId,
+    plan,
+    harness,
+    reviewerHarness,
+    concurrency,
+    budgets,
+    mergeBackToBase,
+    featureCompletionAction,
+    baseBranch,
+  } = context;
+  const resolvedCompletionAction: FeatureCompletionAction =
+    featureCompletionAction ?? (mergeBackToBase === false ? 'create-pr' : 'merge-to-base');
 
   const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
   activeRunControlPlane.transition(runId, 'running');
@@ -239,7 +253,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
       return;
     }
 
-    if (mergeBackToBase && baseBranch) {
+    if (baseBranch && resolvedCompletionAction === 'merge-to-base') {
       const eligibleFeatures = featuresWithAllTicketsCompleted(
         schedulerResult.ticketResults,
         Object.keys(checkoutsByFeature),
@@ -256,6 +270,33 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
           reviewerPrompt: plan.reviewerPrompt,
           onProgress,
         });
+      }
+    } else if (resolvedCompletionAction === 'create-pr') {
+      const eligibleFeatures = featuresWithAllTicketsCompleted(
+        schedulerResult.ticketResults,
+        Object.keys(checkoutsByFeature),
+      );
+      if (eligibleFeatures.length > 0) {
+        const prResults = await createPullRequestsForCompletedFeatures({
+          repoRoot,
+          baseBranch: baseBranch ?? plan.checkout.defaultBranchName,
+          features: eligibleFeatures,
+          checkoutsByFeature,
+          agentExecutionProvider: new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
+          model: plan.model,
+          ticketResults: schedulerResult.ticketResults,
+          onProgress,
+        });
+        for (const result of prResults) {
+          onProgress({
+            ticketLabel: '__run__',
+            message:
+              result.success && result.prUrl
+                ? `pull request created for ${result.feature}: ${result.prUrl}`
+                : `pull request creation failed for ${result.feature}: ${result.reason ?? 'unknown error'}`,
+            kind: result.success ? 'message' : 'failure',
+          });
+        }
       }
     }
 

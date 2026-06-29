@@ -162,6 +162,9 @@ Launch behavior notes:
 - global concurrency defaults to `3` and is persisted as a launch preference.
 - selected features run through dependency-aware ticket waves; independent tickets may run in parallel.
 - dependent feature branches use a linear stack from `afk/<upstream-feature>`; fan-in branch automation is deferred.
+- the launch wizard asks how completed features should be handled: merge each completed feature branch into the base branch, or create a GitHub pull request for each completed feature branch. There is no "leave branches for manual inspection" path; PR creation replaces it.
+- the feature completion action is persisted as a launch preference. Legacy `mergeBackToBase: true` resolves to merge-to-base and `mergeBackToBase: false` resolves to PR creation.
+- completed features (every selected ticket completed successfully) are eligible for the chosen completion action. For `create-pr`, AFK pushes the feature branch and opens a GitHub PR with `gh pr create`, using a discovered PR template when one exists, and reports the PR URL (or a per-feature failure reason) in run progress and final output.
 
 ## Codex Configuration
 
