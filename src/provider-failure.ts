@@ -104,7 +104,7 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
 
 export function formatProviderFailureMessage(input: {
   modelId: string;
-  mode: 'execution' | 'reviewer';
+  mode: 'execution' | 'reviewer' | 'pull-request';
   reason: string;
 }): string {
   const classification = classifyProviderFailure(input.reason);

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  assertCommandAllowed,
   ClaudeAgentExecutionProvider,
   CodexAgentExecutionProvider,
+  CompositeAgentExecutionProvider,
   decideAfkPermission,
   FakeAgentExecutionProvider,
   isCommandAllowed,
@@ -152,6 +154,36 @@ test('opencode reviewer does not resume implementation session', async () => {
   });
 
   assert.equal(capturedSessionId, null);
+});
+
+test('opencode pull-request invocation uses PR-specific session title and progress labels', async () => {
+  let capturedTitle = '';
+  let capturedSessionId: string | null | undefined = 'unset';
+  const progress: string[] = [];
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      capturedTitle = input.title;
+      capturedSessionId = input.sessionId;
+      return { sessionId: 'session-pr', output: ['created pr'] };
+    },
+  });
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'create pr',
+    invocationMode: 'pull-request',
+    sessionId: 'session-existing',
+    onProgress: (event) => progress.push(`${event.ticketLabel}: ${event.message}`),
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(capturedTitle, 'afk pr: feat/01');
+  assert.equal(capturedSessionId, null);
+  assert.deepEqual(progress, [
+    'feat/01: starting opencode pull-request session',
+    'feat/01: opencode pull-request session completed',
+  ]);
 });
 
 test('opencode provider maps executor failures to failed status', async () => {
@@ -624,6 +656,50 @@ test('reviewer policy allows scratch-write and git-commit', () => {
   assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'git-commit' }), true);
   assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'write' }), false);
   assert.equal(isCommandAllowed(reviewerPolicy, { kind: 'git-push' }), false);
+});
+
+test('pull-request policy allows PR creation commands without source or scratch mutation', () => {
+  const prPolicy = resolveAgentInvocationPolicy('pull-request');
+
+  assert.deepEqual(prPolicy.allowedCommandKinds, ['read', 'diagnostic', 'git-push', 'github-pr']);
+  assert.equal(prPolicy.canMutateWorkspace, false);
+  assert.equal(prPolicy.canMutateGitState, true);
+  assert.equal(prPolicy.canMutateScratch, false);
+
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'read' }), true);
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'diagnostic' }), true);
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'git-push' }), true);
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'github-pr' }), true);
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'write' }), false);
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'edit' }), false);
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'delete' }), false);
+  assert.equal(isCommandAllowed(prPolicy, { kind: 'scratch-write' }), false);
+  assert.doesNotThrow(() => assertCommandAllowed(prPolicy, { kind: 'github-pr', target: 'gh pr create' }));
+  assert.throws(() => assertCommandAllowed(prPolicy, { kind: 'write', target: 'src/app.ts' }), /Pull-request mode/);
+});
+
+test('composite provider routes pull-request invocations to implementation provider', async () => {
+  const calls: string[] = [];
+  const provider = new CompositeAgentExecutionProvider(
+    new FakeAgentExecutionProvider((request) => {
+      calls.push(`implementation:${request.invocationMode ?? 'execution'}`);
+      return { status: 'completed', sessionId: 'implementation-session', removable: true };
+    }),
+    new FakeAgentExecutionProvider((request) => {
+      calls.push(`reviewer:${request.invocationMode ?? 'execution'}`);
+      return { status: 'completed', sessionId: 'reviewer-session', removable: true };
+    }),
+  );
+
+  const result = await provider.execute({
+    plan: { model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'create pr',
+    invocationMode: 'pull-request',
+  });
+
+  assert.equal(result.sessionId, 'implementation-session');
+  assert.deepEqual(calls, ['implementation:pull-request']);
 });
 
 async function waitFor(condition: () => boolean): Promise<void> {
