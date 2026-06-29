@@ -29,6 +29,9 @@ const YOLO_AGENT_PERMISSION = {
   webfetch: 'allow',
   websearch: 'allow',
 } as const;
+const ASK_AGENT_PERMISSION = Object.fromEntries(
+  Object.keys(YOLO_AGENT_PERMISSION).map((permissionName) => [permissionName, 'ask']),
+) as Record<keyof typeof YOLO_AGENT_PERMISSION, 'ask'>;
 
 type OpenCodeActivityKind = 'assistant' | 'tool' | 'permission' | 'session' | 'diff' | 'other';
 
@@ -65,6 +68,7 @@ export interface OpenCodeSessionExecutor {
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
+    permissionMode?: 'allow' | 'ask';
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
     signal?: AbortSignal;
@@ -144,6 +148,7 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
+    permissionMode?: 'allow' | 'ask';
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;
     signal?: AbortSignal;
@@ -162,7 +167,10 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
         finalMessageText: null,
       };
     }
-    const sdk = await createAfkOpencodeWith(this.factory, { repoRoot: input.repoRoot });
+    const sdk = await createAfkOpencodeWith(this.factory, {
+      repoRoot: input.repoRoot,
+      permissionMode: input.permissionMode,
+    });
     const abortController = new AbortController();
     let eventTask: Promise<void> | undefined;
     const terminalErrors: string[] = [];
@@ -427,10 +435,14 @@ async function createAfkOpencode(): ReturnType<typeof createOpencode> {
 
 export function createAfkOpencodeWith(
   factory: (options: { port: number }) => ReturnType<typeof createOpencode>,
-  options: { repoRoot?: string } = {},
+  options: { repoRoot?: string; permissionMode?: 'allow' | 'ask' } = {},
 ): ReturnType<typeof createOpencode> {
   process.env.OPENCODE_PURE = 'true';
-  const configContent = buildAfkOpencodeConfigContent(options.repoRoot, process.env.OPENCODE_CONFIG_CONTENT);
+  const configContent = buildAfkOpencodeConfigContent(
+    options.repoRoot,
+    process.env.OPENCODE_CONFIG_CONTENT,
+    options.permissionMode,
+  );
   if (configContent) {
     process.env.OPENCODE_CONFIG_CONTENT = configContent;
     process.env.OPENCODE_CONFIG = writeAfkOpencodeConfigFile(configContent);
@@ -438,20 +450,25 @@ export function createAfkOpencodeWith(
   return factory({ port: OPENCODE_EPHEMERAL_PORT });
 }
 
-export function buildAfkOpencodeConfigContent(repoRoot?: string, existingContent?: string): string | null {
+export function buildAfkOpencodeConfigContent(
+  repoRoot?: string,
+  existingContent?: string,
+  permissionMode: 'allow' | 'ask' = 'allow',
+): string | null {
   void repoRoot;
   const existing = parseConfigContent(existingContent);
   const existingAgent = readConfigObject(existing.agent);
+  const agentPermission = permissionMode === 'ask' ? ASK_AGENT_PERMISSION : YOLO_AGENT_PERMISSION;
   const yoloAgents = Object.fromEntries(
     YOLO_OPENCODE_AGENTS.map((agentName) => {
       const agentConfig = readConfigObject(existingAgent[agentName]);
-      return [agentName, { ...agentConfig, permission: YOLO_AGENT_PERMISSION }];
+      return [agentName, { ...agentConfig, permission: agentPermission }];
     }),
   );
 
   return JSON.stringify({
     ...existing,
-    permission: 'allow',
+    permission: permissionMode,
     agent: {
       ...existingAgent,
       ...yoloAgents,

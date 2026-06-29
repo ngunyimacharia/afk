@@ -154,6 +154,7 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
       return { status: 'failed', sessionId: null, removable: false, unsafeReason: 'ticket missing in launch request' };
     try {
       const invocationMode = request.invocationMode ?? 'execution';
+      const invocationPolicy = resolveAgentInvocationPolicy(invocationMode);
       const model =
         invocationMode === 'reviewer' && request.plan.reviewerModel ? request.plan.reviewerModel : request.plan.model;
       const providerName = this.config.providerName;
@@ -166,10 +167,11 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
         model,
         prompt: request.prompt,
         title: formatInvocationSessionTitle(invocationMode, ticket.label),
-        agent: invocationMode === 'reviewer' ? undefined : this.config.agentName,
+        agent: invocationMode === 'execution' ? this.config.agentName : undefined,
         sessionId: invocationMode === 'execution' ? request.sessionId : null,
         workDir: request.plan.checkout?.worktreePath,
         repoRoot: request.plan.repoRoot,
+        permissionMode: invocationMode === 'pull-request' ? 'ask' : 'allow',
         onProgress: (event) => request.onProgress?.({ ticketLabel: ticket.label, ...event }),
         decidePermission: (permissionRequest) =>
           decideAfkPermission(permissionRequest, {
@@ -177,6 +179,7 @@ export class BaseSDKAgentExecutionProvider implements AgentExecutionProvider {
             coordinator: this.permissionCoordinator,
             repoRoot: request.plan.repoRoot,
             worktreePath: request.plan.checkout?.worktreePath,
+            policy: invocationPolicy,
             otherWorktreePaths: [
               ...Object.values(request.plan.checkouts ?? {}),
               ...Object.values(request.plan.ticketCheckouts ?? {}),
@@ -325,16 +328,35 @@ export class CompositeAgentExecutionProvider implements AgentExecutionProvider {
 }
 
 export async function decideAfkPermission(
-  _request: OpenCodePermissionRequest,
-  _options: {
+  request: OpenCodePermissionRequest,
+  options: {
     ticketLabel?: string;
     coordinator?: PermissionCoordinator;
     repoRoot?: string;
     worktreePath?: string;
+    policy?: AgentInvocationPolicy;
     otherWorktreePaths?: string[];
   } = {},
 ): Promise<OpenCodePermissionDecision | null> {
+  const policy = options.policy ?? resolveAgentInvocationPolicy('execution');
+  if (!isPermissionAllowedByPolicy(request, policy)) return 'reject';
   return 'always';
+}
+
+function isPermissionAllowedByPolicy(request: OpenCodePermissionRequest, policy: AgentInvocationPolicy): boolean {
+  if (policy.canMutateWorkspace && policy.canMutateScratch) return true;
+
+  const commandKind = commandKindFromPermissionRequest(request);
+  if (!commandKind) return true;
+  return isCommandAllowed(policy, { kind: commandKind, target: request.patterns.join(', ') || request.title });
+}
+
+function commandKindFromPermissionRequest(request: OpenCodePermissionRequest): AgentCommandKind | null {
+  const value = `${request.type} ${request.title}`.toLowerCase();
+  if (value.includes('scratch')) return 'scratch-write';
+  if (value.includes('delete') || value.includes('remove')) return 'delete';
+  if (value.includes('edit') || value.includes('write') || value.includes('patch')) return 'edit';
+  return null;
 }
 
 export function detectOpenCodeFailure(output: string[]): string | null {

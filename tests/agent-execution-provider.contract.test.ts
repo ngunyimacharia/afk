@@ -157,11 +157,15 @@ test('opencode reviewer does not resume implementation session', async () => {
 });
 
 test('opencode pull-request invocation uses PR-specific session title and progress labels', async () => {
+  let capturedAgent: string | undefined = 'unset';
+  let capturedPermissionMode: string | undefined;
   let capturedTitle = '';
   let capturedSessionId: string | null | undefined = 'unset';
   const progress: string[] = [];
   const provider = new OpenCodeAgentExecutionProvider({
     run: async (input) => {
+      capturedAgent = input.agent;
+      capturedPermissionMode = input.permissionMode;
       capturedTitle = input.title;
       capturedSessionId = input.sessionId;
       return { sessionId: 'session-pr', output: ['created pr'] };
@@ -178,6 +182,8 @@ test('opencode pull-request invocation uses PR-specific session title and progre
   });
 
   assert.equal(result.status, 'completed');
+  assert.equal(capturedAgent, undefined);
+  assert.equal(capturedPermissionMode, 'ask');
   assert.equal(capturedTitle, 'afk pr: feat/01');
   assert.equal(capturedSessionId, null);
   assert.deepEqual(progress, [
@@ -509,6 +515,76 @@ test('AFK permission policy auto-approves all requests including bash', async ()
     }),
     'always',
   );
+});
+
+test('pull-request permission policy rejects source edits and scratch writes', async () => {
+  const policy = resolveAgentInvocationPolicy('pull-request');
+
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_edit',
+        type: 'edit',
+        title: 'edit src/index.ts',
+        patterns: ['src/index.ts'],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_scratch',
+        type: 'write',
+        title: 'write .scratch ticket',
+        patterns: ['.scratch/feature/001.md'],
+      },
+      { policy },
+    ),
+    'reject',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_read',
+        type: 'read',
+        title: 'read file',
+        patterns: ['src/index.ts'],
+      },
+      { policy },
+    ),
+    'always',
+  );
+});
+
+test('opencode provider supplies pull-request permission policy to executor', async () => {
+  let editDecision = '';
+  const provider = new OpenCodeAgentExecutionProvider({
+    run: async (input) => {
+      editDecision =
+        (await input.decidePermission?.({
+          sessionId: 'session-42',
+          permissionId: 'per_1',
+          type: 'edit',
+          title: 'edit src/index.ts',
+          patterns: ['src/index.ts'],
+        })) ?? '';
+      return { sessionId: 'session-42', output: ['ok'] };
+    },
+  });
+
+  await provider.execute({
+    plan: { repoRoot: '/repo', model: { id: 'openai/gpt-5.5' }, tickets: [{ label: 'feat/01' }] } as never,
+    ticketIndex: 0,
+    prompt: 'open pr',
+    invocationMode: 'pull-request',
+  });
+
+  assert.equal(editDecision, 'reject');
 });
 
 test('opencode provider aborts when signal is triggered', async () => {
