@@ -359,7 +359,7 @@ function isPermissionAllowedByPolicy(request: OpenCodePermissionRequest, policy:
 
 function commandKindFromPermissionRequest(request: OpenCodePermissionRequest): AgentCommandKind | null {
   const value = `${request.type} ${request.title}`.toLowerCase();
-  if (isBashPermissionRequest(request)) return commandKindFromBashPermission(request.patterns);
+  if (isBashPermissionRequest(request)) return commandKindFromBashPermission(request.title, request.patterns);
   if (value.includes('scratch')) return 'scratch-write';
   if (value.includes('delete') || value.includes('remove')) return 'delete';
   if (value.includes('edit') || value.includes('write') || value.includes('patch')) return 'edit';
@@ -372,8 +372,8 @@ function isBashPermissionRequest(request: OpenCodePermissionRequest): boolean {
   return type === 'bash' || title === 'bash' || /\bbash\b/.test(title);
 }
 
-function commandKindFromBashPermission(patterns: string[]): AgentCommandKind | null {
-  const command = patterns.join('\n').toLowerCase();
+function commandKindFromBashPermission(title: string, patterns: string[]): AgentCommandKind | null {
+  const command = [title, ...patterns].join('\n').toLowerCase();
   if (!command) return null;
   if (/\b(rm|unlink|rmdir)\b/.test(command)) return 'delete';
   if (/\b(mkdir|touch|cp|mv|install)\b[^\n]*\b\.scratch\b/.test(command)) return 'scratch-write';
