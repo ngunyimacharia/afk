@@ -101,6 +101,25 @@ Current scheduler behavior:
 
 First-pass feature stacks are linear. A dependent feature branch is created from `afk/<upstream-feature>` once the upstream AFK tickets are complete; multiple feature parents fail automatic branch preparation with a clear fan-in deferred message.
 
+## Feature Completion Handling
+
+After all selected tickets for a feature complete successfully, AFK runs the operator-selected feature completion action against that feature branch. This applies to both inline and background daemon runs.
+
+Supported actions:
+
+- `merge-to-base` merges the completed feature branch into the base branch captured at launch and runs the existing post-merge cleanup.
+- `create-pr` pushes the feature branch and opens a GitHub pull request into the base branch via a dedicated pull-request agent mode (push and PR permissions only, no source edits). The repository's PR template is used when one is discovered.
+
+There is no longer a "leave completed feature branches for manual inspection" path; PR creation is the non-merge completion option.
+
+Behavior notes:
+
+- Only features whose every selected ticket completed successfully are eligible.
+- A PR creation failure for one feature does not stop PR attempts for other completed features.
+- Created PR URLs (or per-feature failure reasons) appear in run progress and the final run output.
+- After a successful PR, AFK best-effort removes the local feature worktree and branch only when cleanup is proven safe and the remote branch exists. AFK never deletes the remote branch.
+
+
 ## Completion Gate
 
 Terminal completion promotion is guarded by `SummaryPresenceGate`.
