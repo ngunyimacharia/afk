@@ -14,6 +14,7 @@ export type AgentCommandKind =
   | 'delete'
   | 'git-commit'
   | 'git-push'
+  | 'github-pr'
   | 'scratch-write';
 
 export interface AgentCommandRequest {
@@ -38,6 +39,7 @@ const EXECUTION_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = [
   'delete',
   'git-commit',
   'git-push',
+  'github-pr',
   'scratch-write',
 ];
 
@@ -48,7 +50,13 @@ const REVIEWER_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = [
   'git-commit',
 ];
 
-const PULL_REQUEST_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = ['read', 'diagnostic', 'git-commit'];
+const PULL_REQUEST_ALLOWED_COMMAND_KINDS: readonly AgentCommandKind[] = [
+  'read',
+  'diagnostic',
+  'git-commit',
+  'git-push',
+  'github-pr',
+];
 
 export interface AgentExecutionRequest {
   plan: LaunchPlan;
@@ -373,6 +381,8 @@ function commandKindFromBashPermission(patterns: string[]): AgentCommandKind | n
   if (/\b(mkdir|touch|cp|mv|install)\b/.test(command)) return 'edit';
   if (/\b(git\s+apply|apply_patch|patch|sed\s+-i|perl\s+-i)\b/.test(command)) return 'edit';
   if (/(^|\s)(>|>>)\s*\S+/.test(command) || /\btee\b/.test(command)) return 'edit';
+  if (/\bgit\s+push\b/.test(command)) return 'git-push';
+  if (/\bgh\s+pr\s+create\b/.test(command)) return 'github-pr';
   if (/\b(bun|npm|pnpm|yarn)\s+(test|run|exec)\b/.test(command)) return 'diagnostic';
   if (/\b(git\s+(diff|status|log|show)|ls|find|rg|grep)\b/.test(command)) return 'read';
   return null;

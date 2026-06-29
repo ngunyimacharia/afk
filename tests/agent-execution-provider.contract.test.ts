@@ -586,6 +586,32 @@ test('pull-request permission policy rejects source edits and scratch writes', a
     ),
     'always',
   );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_bash_git_push',
+        type: 'bash',
+        title: 'bash',
+        patterns: ['git push origin HEAD'],
+      },
+      { policy },
+    ),
+    'always',
+  );
+  assert.equal(
+    await decideAfkPermission(
+      {
+        sessionId: 'session-42',
+        permissionId: 'per_bash_gh_pr_create',
+        type: 'bash',
+        title: 'bash',
+        patterns: ['gh pr create --fill'],
+      },
+      { policy },
+    ),
+    'always',
+  );
 
   for (const [permissionId, command] of [
     ['per_bash_touch', 'touch src/new.ts'],
@@ -815,13 +841,21 @@ test('reviewer policy allows scratch-write and git-commit', () => {
 test('pull-request policy blocks workspace and scratch mutation', () => {
   const pullRequestPolicy = resolveAgentInvocationPolicy('pull-request');
 
-  assert.deepEqual(pullRequestPolicy.allowedCommandKinds, ['read', 'diagnostic', 'git-commit']);
+  assert.deepEqual(pullRequestPolicy.allowedCommandKinds, [
+    'read',
+    'diagnostic',
+    'git-commit',
+    'git-push',
+    'github-pr',
+  ]);
   assert.equal(pullRequestPolicy.canMutateWorkspace, false);
   assert.equal(pullRequestPolicy.canMutateGitState, true);
   assert.equal(pullRequestPolicy.canMutateScratch, false);
 
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'read' }), true);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'git-commit' }), true);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'git-push' }), true);
+  assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'github-pr' }), true);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'write' }), false);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'edit' }), false);
   assert.equal(isCommandAllowed(pullRequestPolicy, { kind: 'delete' }), false);
