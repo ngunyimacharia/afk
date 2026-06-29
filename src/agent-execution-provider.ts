@@ -344,18 +344,22 @@ function isPermissionAllowedByPolicy(request: OpenCodePermissionRequest, policy:
   if (policy.canMutateWorkspace && policy.canMutateScratch) return true;
 
   const commandKind = commandKindFromPermissionRequest(request);
-  if (!commandKind && request.type.toLowerCase() === 'bash') return false;
+  if (!commandKind && isBashPermissionRequest(request)) return false;
   if (!commandKind) return true;
   return isCommandAllowed(policy, { kind: commandKind, target: request.patterns.join(', ') || request.title });
 }
 
 function commandKindFromPermissionRequest(request: OpenCodePermissionRequest): AgentCommandKind | null {
   const value = `${request.type} ${request.title}`.toLowerCase();
-  if (request.type.toLowerCase() === 'bash') return commandKindFromBashPermission(request.patterns);
+  if (isBashPermissionRequest(request)) return commandKindFromBashPermission(request.patterns);
   if (value.includes('scratch')) return 'scratch-write';
   if (value.includes('delete') || value.includes('remove')) return 'delete';
   if (value.includes('edit') || value.includes('write') || value.includes('patch')) return 'edit';
   return null;
+}
+
+function isBashPermissionRequest(request: OpenCodePermissionRequest): boolean {
+  return request.type.toLowerCase() === 'bash' || request.title.toLowerCase() === 'bash';
 }
 
 function commandKindFromBashPermission(patterns: string[]): AgentCommandKind | null {
