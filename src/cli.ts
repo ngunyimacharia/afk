@@ -70,6 +70,7 @@ import { PermissionCoordinator } from './permission-coordinator.js';
 import { inferTrackerProviderKind, loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
+import { resolveSandcastleSandboxMode, SandcastleImplementationCore } from './sandcastle-execution-core.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { createDefaultTrackerProvider } from './scratch-tracker-provider.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
@@ -560,6 +561,7 @@ export async function runAfk(
     let featureCompletionAction: FeatureCompletionAction = 'merge-to-base';
     let harness: SelectableHarnessId = 'OpenCode';
     let reviewerHarness: SelectableHarnessId = 'OpenCode';
+    const sandcastleSandboxMode = resolveSandcastleSandboxMode(process.env, launchPreferences.sandcastleSandboxMode);
 
     const { availableHarnesses, harnessModelCache } = await discoverAvailableHarnesses(undefined, repoRoot);
 
@@ -597,6 +599,7 @@ export async function runAfk(
         modelId: model?.id,
         reviewerHarness: wizard.reviewerHarness,
         reviewerModelId: reviewerModel?.id,
+        sandcastleSandboxMode,
         concurrency,
         featureCompletionAction: wizard.featureCompletionAction,
       });
@@ -715,6 +718,7 @@ export async function runAfk(
         budgets: launchPreferences.budgets,
         mergeBackToBase,
         featureCompletionAction,
+        sandcastleSandboxMode,
         baseBranch,
       };
       const spawnDaemon = runtime.spawnDaemon ?? defaultSpawnDaemon;
@@ -772,6 +776,8 @@ export async function runAfk(
             client: new LinearGraphqlClient(activeProjectConfig.linear?.apiKey ?? ''),
           }
         : undefined,
+      undefined,
+      new SandcastleImplementationCore(runtimeStore, sandcastleSandboxMode),
     );
     const renderer: OpenTUIRenderer = {
       capabilities: { notifications: io.stdout.isTTY ?? false },

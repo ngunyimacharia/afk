@@ -16,10 +16,17 @@ import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from '.
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { RuntimeStore } from './runtime-store.js';
+import { resolveSandcastleSandboxMode, SandcastleImplementationCore } from './sandcastle-execution-core.js';
 import { Scheduler } from './scheduler.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
-import type { AgentExecutionProgressEvent, BudgetPolicy, FeatureCompletionAction, LaunchPlan } from './types.js';
+import type {
+  AgentExecutionProgressEvent,
+  BudgetPolicy,
+  FeatureCompletionAction,
+  LaunchPlan,
+  SandcastleSandboxMode,
+} from './types.js';
 
 export interface DaemonLaunchContext {
   repoRoot: string;
@@ -31,6 +38,7 @@ export interface DaemonLaunchContext {
   budgets?: Partial<BudgetPolicy>;
   mergeBackToBase?: boolean;
   featureCompletionAction?: FeatureCompletionAction;
+  sandcastleSandboxMode?: SandcastleSandboxMode;
   baseBranch?: string;
 }
 
@@ -45,6 +53,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     budgets,
     mergeBackToBase,
     featureCompletionAction,
+    sandcastleSandboxMode,
     baseBranch,
   } = context;
   const resolvedCompletionAction: FeatureCompletionAction =
@@ -81,6 +90,8 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     budgets,
     linearSyncer,
+    undefined,
+    new SandcastleImplementationCore(runtimeStore, resolveSandcastleSandboxMode(process.env, sandcastleSandboxMode)),
   );
 
   const notificationPolicy = new NotificationPolicy();
