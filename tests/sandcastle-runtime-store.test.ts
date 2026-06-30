@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { buildLaunchPlan } from '../src/launch-context-builder.js';
 import { resolveSandcastleAgentProvider, validateSandcastleDockerAuth } from '../src/sandcastle-provider.js';
 import { type SandcastleRuntimeCreateInput, SandcastleRuntimeStore } from '../src/sandcastle-runtime-store.js';
 
@@ -69,6 +70,38 @@ test('maps AFK harness selections to Sandcastle agent providers', () => {
     'claudeCode',
   );
   assert.equal(resolveSandcastleAgentProvider('Codex', { id: 'codex/gpt-5.1-codex' }, { homeDir }).provider, 'codex');
+});
+
+test('launch plans carry Sandcastle provider selections for runtime orchestration', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-sandcastle-launch-plan-'));
+
+  const plan = buildLaunchPlan(
+    repoRoot,
+    { id: 'codex/default' },
+    [],
+    {
+      featureSlug: 'feature-a',
+      defaultWorktreeName: 'feature-a',
+      effectiveWorktreeName: 'feature-a',
+      defaultBranchName: 'feature-a',
+      effectiveBranchName: 'feature-a',
+      branchNameSource: 'fallback',
+      worktreePath: repoRoot,
+    },
+    {
+      harness: 'Claude',
+      model: { id: 'anthropic/claude-sonnet-4' },
+      prompt: { id: 'reviewer-default', label: 'Default reviewer', path: '/tmp/reviewer.md' },
+    },
+    undefined,
+    undefined,
+    'Codex',
+  );
+
+  assert.equal(plan.sandcastleProvider?.provider, 'codex');
+  assert.equal(plan.sandcastleProvider?.model, undefined);
+  assert.equal(plan.reviewerSandcastleProvider?.provider, 'claudeCode');
+  assert.equal(plan.reviewerSandcastleProvider?.model, 'anthropic/claude-sonnet-4');
 });
 
 test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
