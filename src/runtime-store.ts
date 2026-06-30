@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { isSelectableHarnessId, migrateLegacyHarnessId } from './harness-registry.js';
+import { isSelectableHarnessId } from './harness-registry.js';
 import { assertPathWithinRoot } from './path-validation.js';
 import type {
   BudgetExceededEvent,
@@ -52,12 +52,6 @@ function isFeatureCompletionAction(value: unknown): value is FeatureCompletionAc
   return value === 'merge-to-base' || value === 'create-pr';
 }
 
-function resolveFeatureCompletionAction(value: Record<string, unknown>): FeatureCompletionAction | undefined {
-  if (isFeatureCompletionAction(value.featureCompletionAction)) return value.featureCompletionAction;
-  if (typeof value.mergeBackToBase === 'boolean') return value.mergeBackToBase ? 'merge-to-base' : 'create-pr';
-  return undefined;
-}
-
 export class RuntimeStore {
   private readonly logRoot: string;
   private readonly metadataRoot: string;
@@ -81,9 +75,8 @@ export class RuntimeStore {
     try {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-      const harnessValue = typeof value.harness === 'string' ? migrateLegacyHarnessId(value.harness) : undefined;
-      const reviewerHarnessValue =
-        typeof value.reviewerHarness === 'string' ? migrateLegacyHarnessId(value.reviewerHarness) : undefined;
+      const harnessValue = typeof value.harness === 'string' ? value.harness : undefined;
+      const reviewerHarnessValue = typeof value.reviewerHarness === 'string' ? value.reviewerHarness : undefined;
       const preferences: LaunchPreferences = {
         harness: harnessValue && isSelectableHarnessId(harnessValue) ? harnessValue : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
@@ -95,8 +88,9 @@ export class RuntimeStore {
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)
         preferences.concurrency = value.concurrency;
-      const featureCompletionAction = resolveFeatureCompletionAction(value);
-      if (featureCompletionAction) preferences.featureCompletionAction = featureCompletionAction;
+      if (isFeatureCompletionAction(value.featureCompletionAction)) {
+        preferences.featureCompletionAction = value.featureCompletionAction;
+      }
       const budgets = value.budgets;
       if (budgets && typeof budgets === 'object' && !Array.isArray(budgets)) {
         const budgetRecord = budgets as Record<string, unknown>;
@@ -133,13 +127,6 @@ export class RuntimeStore {
   writeLaunchPreferences(preferences: LaunchPreferences): void {
     this.assertManagedPath(this.launchPreferencesPath, 'launch preferences');
     mkdirSync(path.dirname(this.launchPreferencesPath), { recursive: true });
-    const featureCompletionAction =
-      preferences.featureCompletionAction ??
-      (typeof preferences.mergeBackToBase === 'boolean'
-        ? preferences.mergeBackToBase
-          ? 'merge-to-base'
-          : 'create-pr'
-        : undefined);
     const normalized: LaunchPreferences = {
       harness: preferences.harness,
       modelId: preferences.modelId,
@@ -147,7 +134,7 @@ export class RuntimeStore {
       reviewerModelId: preferences.reviewerModelId,
       concurrency: preferences.concurrency,
       budgets: preferences.budgets,
-      featureCompletionAction,
+      featureCompletionAction: preferences.featureCompletionAction,
       sandboxMode: preferences.sandboxMode,
     };
     writeFileSync(this.launchPreferencesPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');

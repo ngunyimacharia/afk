@@ -270,7 +270,10 @@ describe('CodexSessionExecutor', () => {
     assert.equal(client.startedOptions.length, 1);
     assert.equal(client.resumed.length, 0);
     assert.equal(thread.signals[0]?.aborted, true);
-    assert.deepEqual(thread.runInputs, ['run', 'Continue (stale recovery attempt 1/1).']);
+    assert.deepEqual(thread.runInputs, [
+      'run',
+      'Continue (stale recovery attempt 1/1). Verify whether the active tool is still making progress, or report a blocker and stop.',
+    ]);
     assert.equal(result.sessionId, 'thread-stale');
     assert.equal(result.terminalError, null);
     assert.equal(result.finalMessageText, 'recovered');
@@ -292,7 +295,10 @@ describe('CodexSessionExecutor', () => {
       maxStaleRecoveries: 1,
     });
 
-    assert.deepEqual(thread.runInputs, ['run', 'Continue (stale recovery attempt 1/1).']);
+    assert.deepEqual(thread.runInputs, [
+      'run',
+      'Continue (stale recovery attempt 1/1). Verify whether the active tool is still making progress, or report a blocker and stop.',
+    ]);
     assert.equal(result.terminalError, 'codex session stale after 1 recovery attempts');
   });
 
