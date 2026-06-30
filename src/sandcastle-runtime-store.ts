@@ -5,7 +5,7 @@ import type { SandcastleProviderFailure } from './sandcastle-provider.js';
 
 export type SandcastleTrackerSource = 'scratch' | 'linear' | 'github' | 'manual';
 export type SandcastleSandboxMode = 'docker' | 'none';
-export type SandcastlePhaseName = 'implementation' | 'review' | 'fixup';
+export type SandcastlePhaseName = 'implementation' | 'review' | 'reviewer-repair' | 'fixup';
 export type SandcastlePhaseStatus = 'running' | 'passed' | 'failed' | 'blocked' | 'skipped';
 export type SandcastleTerminalStatus = 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted';
 export type SandcastleCleanupResourceType =

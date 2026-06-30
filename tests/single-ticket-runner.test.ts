@@ -9,6 +9,7 @@ import { resolveExecutable } from '../src/executable-resolution.js';
 import { resolveReviewerPromptTemplate } from '../src/reviewer-prompt-catalog.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { resolveSandcastleAgentProvider } from '../src/sandcastle-provider.js';
+import { SandcastleRuntimeStore } from '../src/sandcastle-runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
 import { SingleTicketRunner } from '../src/single-ticket-runner.js';
 
@@ -617,6 +618,105 @@ test('uses bundled reviewer prompt when launched from a repo without AFK prompt 
     true,
   );
   assert.match(readFileSync(metadataPath, 'utf8'), /"FINAL_REVIEW_CLASSIFICATION": "clean-approval"/);
+});
+
+test('runs implementation, reviewer repair, and fixup in one warm Sandcastle sandbox', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-warm-sandcastle-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'warm.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nWarm run\n');
+  const modes: Array<string | undefined> = [];
+  let reviewerCalls = 0;
+  let executionCalls = 0;
+  let sandboxCreateCount = 0;
+  const sandboxHandle = {
+    run: async ({ invocationMode, prompt }: { invocationMode?: string; prompt: string }) => {
+      modes.push(invocationMode);
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        if (reviewerCalls === 1) return { status: 'completed' as const, sessionId: 'review-1', output: ['not json'] };
+        if (reviewerCalls === 2) {
+          assert.match(prompt, /previous reviewer response was malformed/);
+          return {
+            status: 'completed' as const,
+            sessionId: 'review-2',
+            output: [
+              JSON.stringify({
+                done: false,
+                summary: 'Needs fixup',
+                findings: [{ severity: 'major', title: 'Bug', detail: 'Patch it' }],
+              }),
+            ],
+          };
+        }
+        return {
+          status: 'completed' as const,
+          sessionId: 'review-3',
+          output: [JSON.stringify({ done: true, summary: 'Clean pass', findings: [] })],
+        };
+      }
+      executionCalls += 1;
+      if (executionCalls === 2) {
+        assert.match(prompt, /Start a fresh implementation session for this fixup/);
+        writeFileSync(ticketPath, '---\nstatus: done\n---\n\n## Title\n\nWarm run\n\n## AFK Summary\n\nDone\n');
+      }
+      return { status: 'completed' as const, sessionId: `exec-${executionCalls}`, output: ['done'] };
+    },
+  };
+  const runner = new SingleTicketRunner(
+    store,
+    { execute: async () => ({ status: 'failed', unsafeReason: 'direct provider should not run' }) },
+    {},
+    undefined,
+    undefined,
+    {
+      create: async () => {
+        sandboxCreateCount += 1;
+        return sandboxHandle;
+      },
+    },
+  );
+  const plan = {
+    repoRoot,
+    harness: 'Codex',
+    model: { id: 'model-1' },
+    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
+    reviewerHarness: 'Claude',
+    reviewerModel: { id: 'review-model' },
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    sandboxMode: 'no-sandbox',
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'warm', label: 'feat/warm', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'afk/feat/warm',
+      branchNameSource: 'fallback',
+      worktreePath: repoRoot,
+    },
+  };
+
+  const result = await runner.launch(plan as never, { runId: 'run-warm' });
+
+  assert.equal(result.outcome, 'completed');
+  assert.equal(sandboxCreateCount, 1);
+  assert.deepEqual(modes, ['execution', 'reviewer', 'reviewer', 'execution', 'reviewer']);
+  const sandcastleRecord = new SandcastleRuntimeStore({ repoRoot }).readRun(
+    path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', 'run-warm', 'record.json'),
+  );
+  assert.deepEqual(
+    sandcastleRecord.phases.map((phase) => phase.phase),
+    ['implementation', 'review', 'reviewer-repair', 'fixup', 'review'],
+  );
+  assert.deepEqual(
+    sandcastleRecord.phases.map((phase) => phase.status),
+    ['passed', 'passed', 'passed', 'passed', 'passed'],
+  );
+  assert.equal(sandcastleRecord.terminal.status, 'completed');
 });
 
 test('blocks before provider execution when launch context mismatches', async () => {
