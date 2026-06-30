@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { resolveSandcastleAgentProvider, validateSandcastleDockerAuth } from '../src/sandcastle-provider.js';
 import { type SandcastleRuntimeCreateInput, SandcastleRuntimeStore } from '../src/sandcastle-runtime-store.js';
 
 function createInput(overrides: Partial<SandcastleRuntimeCreateInput> = {}): SandcastleRuntimeCreateInput {
@@ -54,8 +55,60 @@ test('creates a Sandcastle runtime record in the new runtime directory', () => {
   assert.equal(record.branch, 'afk/feature-a/001');
   assert.equal(record.worktreePath, '/tmp/worktree');
   assert.equal(record.terminal.status, 'running');
+  assert.deepEqual(record.providerFailures, []);
   assert.deepEqual(record.phases, []);
   assert.deepEqual(record.cleanupResources, []);
+});
+
+test('maps AFK harness selections to Sandcastle agent providers', () => {
+  const homeDir = '/home/runner';
+
+  assert.equal(resolveSandcastleAgentProvider('OpenCode', { id: 'openai/gpt-5.5' }, { homeDir }).provider, 'opencode');
+  assert.equal(
+    resolveSandcastleAgentProvider('Claude', { id: 'anthropic/claude-sonnet-4' }, { homeDir }).provider,
+    'claudeCode',
+  );
+  assert.equal(resolveSandcastleAgentProvider('Codex', { id: 'codex/gpt-5.1-codex' }, { homeDir }).provider, 'codex');
+});
+
+test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
+  const opencode = resolveSandcastleAgentProvider('OpenCode', { id: 'openai/gpt-5.5' }, { homeDir: '/home/runner' });
+  const claudeDefault = resolveSandcastleAgentProvider('Claude', { id: 'default-model' }, { homeDir: '/home/runner' });
+  const codexDefault = resolveSandcastleAgentProvider('Codex', { id: 'codex/default' }, { homeDir: '/home/runner' });
+
+  assert.equal(opencode.model, 'openai/gpt-5.5');
+  assert.equal(claudeDefault.model, undefined);
+  assert.equal(codexDefault.model, undefined);
+  assert.deepEqual(opencode.docker.env, ['OPENCODE_AUTH']);
+  assert.deepEqual(resolveSandcastleAgentProvider('Claude', undefined, { homeDir: '/home/runner' }).docker.env, [
+    'ANTHROPIC_API_KEY',
+  ]);
+  assert.deepEqual(resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.env, [
+    'OPENAI_API_KEY',
+  ]);
+  assert.equal(opencode.noSandbox.enabled, true);
+});
+
+test('reports missing provider Docker auth clearly', () => {
+  const selection = resolveSandcastleAgentProvider(
+    'Claude',
+    { id: 'anthropic/claude-sonnet-4' },
+    { homeDir: '/home/runner' },
+  );
+
+  const failure = validateSandcastleDockerAuth(selection, {
+    env: {},
+    pathExists: () => false,
+  });
+
+  assert.equal(failure?.provider, 'claudeCode');
+  assert.equal(failure?.kind, 'missing-auth');
+  assert.deepEqual(failure?.missingEnv, ['ANTHROPIC_API_KEY']);
+  assert.deepEqual(
+    failure?.missingMounts?.map((mount) => mount.source),
+    ['/home/runner/.claude'],
+  );
+  assert.match(failure?.message ?? '', /Sandcastle claudeCode Docker auth is unavailable/);
 });
 
 test('represents no-sandbox runs', () => {
@@ -137,6 +190,24 @@ test('records cleanup resources', () => {
       cleanupCommand: 'docker rm -f afk-run-1',
     },
   ]);
+});
+
+test('records provider-specific failures in the runtime schema', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-sandcastle-runtime-provider-failure-'));
+  const store = new SandcastleRuntimeStore({ repoRoot, now: () => 0 });
+  const handle = store.createRun(createInput());
+  const failure = validateSandcastleDockerAuth(
+    resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }),
+    { env: {}, pathExists: () => false },
+  );
+
+  assert.ok(failure);
+  const record = store.recordProviderFailure(handle.recordPath, failure, 'implementation');
+
+  assert.equal(record.providerFailures.length, 1);
+  assert.equal(record.providerFailures[0]?.provider, 'codex');
+  assert.equal(record.providerFailures[0]?.phase, 'implementation');
+  assert.equal(record.providerFailures[0]?.occurredAt, '1970-01-01T00:00:00.000Z');
 });
 
 test('does not read or migrate old opencode runtime artifacts', () => {
