@@ -138,7 +138,23 @@ export class SingleTicketRunner {
     this.runtimeStore.updateMetadata(record.metadataPath, {
       EXECUTION_PROVIDER: plan.harness ? providerNameForHarness(plan.harness) : 'opencode',
       EXECUTION_MODEL_ID: plan.model.id,
+      ...(plan.sandcastleProvider
+        ? {
+            SANDCASTLE_EXECUTION_PROVIDER: plan.sandcastleProvider.provider,
+            SANDCASTLE_EXECUTION_MODEL_ID: plan.sandcastleProvider.model ?? null,
+            SANDCASTLE_EXECUTION_DOCKER_AUTH: plan.sandcastleProvider.docker,
+            SANDCASTLE_EXECUTION_NO_SANDBOX: plan.sandcastleProvider.noSandbox,
+          }
+        : {}),
       REVIEWER_MODEL_ID: plan.reviewerModel.id,
+      ...(plan.reviewerSandcastleProvider
+        ? {
+            SANDCASTLE_REVIEWER_PROVIDER: plan.reviewerSandcastleProvider.provider,
+            SANDCASTLE_REVIEWER_MODEL_ID: plan.reviewerSandcastleProvider.model ?? null,
+            SANDCASTLE_REVIEWER_DOCKER_AUTH: plan.reviewerSandcastleProvider.docker,
+            SANDCASTLE_REVIEWER_NO_SANDBOX: plan.reviewerSandcastleProvider.noSandbox,
+          }
+        : {}),
       REVIEWER_PROMPT_ID: plan.reviewerPrompt.id,
       REVIEWER_PROMPT_PATH: plan.reviewerPrompt.path,
     });

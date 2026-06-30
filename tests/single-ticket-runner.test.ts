@@ -8,6 +8,7 @@ import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 import { resolveExecutable } from '../src/executable-resolution.js';
 import { resolveReviewerPromptTemplate } from '../src/reviewer-prompt-catalog.js';
 import { RuntimeStore } from '../src/runtime-store.js';
+import { resolveSandcastleAgentProvider } from '../src/sandcastle-provider.js';
 import { Scheduler } from '../src/scheduler.js';
 import { SingleTicketRunner } from '../src/single-ticket-runner.js';
 
@@ -31,8 +32,12 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   );
   const plan = {
     repoRoot,
+    harness: 'Codex',
     model: { id: 'model-1' },
+    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
+    reviewerHarness: 'Claude',
     reviewerModel: { id: 'review-model' },
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }],
     gitContext: { commits: [] },
@@ -51,7 +56,13 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   assert.match(result.message, /Scheduled feat\/001/);
   const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-001.json');
   const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-001.log');
-  assert.match(readFileSync(metadataPath, 'utf8'), /session-1/);
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+  assert.equal(metadata.PROVIDER_SESSION_ID, 'session-1');
+  assert.equal(metadata.SANDCASTLE_EXECUTION_PROVIDER, 'codex');
+  assert.equal(metadata.SANDCASTLE_EXECUTION_MODEL_ID, 'model-1');
+  assert.deepEqual(metadata.SANDCASTLE_EXECUTION_DOCKER_AUTH.env, ['OPENAI_API_KEY']);
+  assert.equal(metadata.SANDCASTLE_REVIEWER_PROVIDER, 'claudeCode');
+  assert.equal(metadata.SANDCASTLE_REVIEWER_MODEL_ID, 'review-model');
   assert.match(readFileSync(logPath, 'utf8'), /ticket start: feat\/001/);
   assert.match(readFileSync(logPath, 'utf8'), /worker started/);
   assert.match(readFileSync(logPath, 'utf8'), /reviewer model: review-model/);
