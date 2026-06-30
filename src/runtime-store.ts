@@ -12,6 +12,7 @@ import type {
   ReviewCycleHistoryEntry,
   ReviewTerminalOutcomeRecord,
   RuntimeMetadataRecord,
+  SandboxMode,
 } from './types.js';
 
 export interface RuntimeStoreInput {
@@ -25,6 +26,7 @@ export interface RuntimeTicketContext {
   ticketPath: string;
   runId?: string;
   providerIdentity?: LinearProviderIdentity;
+  sandboxMode?: SandboxMode;
 }
 
 export interface RuntimeRecordHandle {
@@ -88,6 +90,8 @@ export class RuntimeStore {
         reviewerHarness:
           reviewerHarnessValue && isSelectableHarnessId(reviewerHarnessValue) ? reviewerHarnessValue : undefined,
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
+        sandboxMode:
+          value.sandboxMode === 'docker' || value.sandboxMode === 'no-sandbox' ? value.sandboxMode : undefined,
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)
         preferences.concurrency = value.concurrency;
@@ -144,6 +148,7 @@ export class RuntimeStore {
       concurrency: preferences.concurrency,
       budgets: preferences.budgets,
       featureCompletionAction,
+      sandboxMode: preferences.sandboxMode,
     };
     writeFileSync(this.launchPreferencesPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
   }
@@ -185,6 +190,7 @@ export class RuntimeStore {
         : {}),
       STATUS: 'running',
       EXECUTION_PROVIDER: 'opencode',
+      SANDBOX_MODE: context.sandboxMode,
       PROVIDER_SESSION_ID: null,
       PROVIDER_SESSION_REMOVABLE: false,
       INSPECTION_PROVIDER: null,

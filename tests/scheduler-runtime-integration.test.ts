@@ -31,6 +31,7 @@ test('starts ready tickets concurrently across and within features', async () =>
       launch: async (plan: LaunchPlan) => {
         const ticket = plan.tickets[0];
         assert.ok(ticket);
+        assert.equal(plan.sandboxMode, 'docker');
         started.push(ticket.label);
         return { scheduled: true, message: ticket.label };
       },
@@ -42,6 +43,7 @@ test('starts ready tickets concurrently across and within features', async () =>
   const plan = {
     repoRoot,
     model: { id: 'model-1' },
+    sandboxMode: 'docker',
     reviewerModel: { id: 'reviewer-model-1' },
     reviewerPrompt: { id: 'reviewer-default', path: '/tmp/reviewer-default.md' },
     tickets: [
