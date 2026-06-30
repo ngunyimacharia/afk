@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { resolveExecutable } from '../src/executable-resolution.js';
+import { SandcastleWorktreeService } from '../src/sandcastle-worktree-service.js';
 import { ScratchWorktreeService } from '../src/scratch-worktree-service.js';
 import { mkRepoLocalTempDir } from './helpers/temp-repo.js';
 
@@ -121,6 +122,27 @@ test('prefers safe Linear branch names for ticket checkouts', () => {
   assert.equal(result.branchNameSource, 'linear');
   assert.equal(result.effectiveWorktreeName, 'raven-eng-101-child-work');
   assert.match(git(repoRoot, ['branch', '--list', 'raven/eng-101-child-work']), /raven\/eng-101-child-work/);
+});
+
+test('Sandcastle ticket worktrees ignore Linear branch names for deterministic ticket branches', () => {
+  const repoRoot = createRepo('afk-sandcastle-ticket-branch-');
+  git(repoRoot, ['branch', 'feature-base']);
+
+  const result = new SandcastleWorktreeService().createTicketWorktree({
+    repoRoot,
+    featureSlug: 'eng-100',
+    issueName: 'eng-101',
+    linearIssueKey: 'ENG-101',
+    linearIssueBranchName: 'raven/eng-101-child-work',
+    baseRef: 'feature-base',
+  });
+
+  assert.equal(result.defaultBranchName, 'afk/eng-100/eng-101');
+  assert.equal(result.effectiveBranchName, 'afk/eng-100/eng-101');
+  assert.equal(result.branchNameSource, 'fallback');
+  assert.equal(result.effectiveWorktreeName, 'eng-100-eng-101');
+  assert.match(git(repoRoot, ['branch', '--list', 'afk/eng-100/eng-101']), /afk\/eng-100\/eng-101/);
+  assert.equal(git(repoRoot, ['branch', '--list', 'raven/eng-101-child-work']), '');
 });
 
 test('fallback Linear ticket branches remain unique for duplicate titles', () => {

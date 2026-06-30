@@ -50,6 +50,8 @@ export type SandcastleSandbox =
 
 export interface SandcastleRunLocation {
   branch: string;
+  branchNameSource?: 'linear' | 'override' | 'fallback';
+  worktreeName?: string;
   worktreePath: string;
 }
 
@@ -131,6 +133,8 @@ export interface SandcastleRuntimeRecord {
   provider: SandcastleProviderIdentity;
   sandbox: SandcastleSandbox;
   branch: string;
+  branchNameSource?: 'linear' | 'override' | 'fallback';
+  worktreeName?: string;
   worktreePath: string;
   phases: SandcastlePhaseAttempt[];
   commits: SandcastleCommitRecord[];
@@ -187,6 +191,8 @@ export class SandcastleRuntimeStore {
       provider: input.provider,
       sandbox: input.sandbox,
       branch: input.location.branch,
+      branchNameSource: input.location.branchNameSource,
+      worktreeName: input.location.worktreeName,
       worktreePath: input.location.worktreePath,
       phases: [],
       commits: [],

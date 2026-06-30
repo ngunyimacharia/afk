@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { resolveExecutable } from '../src/executable-resolution.js';
+import { SandcastleWorktreeService } from '../src/sandcastle-worktree-service.js';
 import { type FeatureLockProvider, type FeatureMergeBackProvider, Scheduler } from '../src/scheduler.js';
 import { ScratchWorktreeService } from '../src/scratch-worktree-service.js';
 import type { LaunchPlan, TicketRecord } from '../src/types.js';
@@ -1012,7 +1013,7 @@ test('isPaused reflects current pause state', () => {
   assert.equal(scheduler.isPaused(), false);
 });
 
-test('sweeps failed and aborted scratch worktrees after run', async () => {
+test('preserves failed Sandcastle worktrees after run', async () => {
   const repoRoot = createRepo('scheduler-sweeper-');
   const scheduler = new Scheduler({
     runner: {
@@ -1025,7 +1026,7 @@ test('sweeps failed and aborted scratch worktrees after run', async () => {
         return { scheduled: true, message: ticket.label, outcome: 'completed' };
       },
     } as never,
-    scratchWorktreeService: new ScratchWorktreeService(),
+    sandcastleWorktreeService: new SandcastleWorktreeService(),
     featureMergeBackProvider: { isWaveMerged: () => false },
     concurrencyLimit: 3,
   });
@@ -1051,8 +1052,8 @@ test('sweeps failed and aborted scratch worktrees after run', async () => {
 
   const failedWorktree = path.join(repoRoot, '.worktree', 'feat-a-001');
   const failedBranch = 'afk/feat-a/001';
-  assert.equal(existsSync(failedWorktree), false);
-  assert.throws(() => git(repoRoot, ['rev-parse', '--verify', failedBranch]));
+  assert.equal(existsSync(failedWorktree), true);
+  assert.equal(git(repoRoot, ['rev-parse', '--verify', failedBranch]).length > 0, true);
 
   assert.equal(existsSync(path.join(repoRoot, '.worktree', 'feat-a-002')), true);
   assert.equal(existsSync(path.join(repoRoot, '.worktree', 'feat-b-001')), true);
