@@ -6,6 +6,7 @@ import type {
   LaunchModel,
   LaunchPreferences,
   ReviewerPromptTemplate,
+  SandboxMode,
   TicketRecord,
 } from './types.js';
 
@@ -25,7 +26,18 @@ export interface LaunchWizardResult {
   concurrency?: number;
   featureCompletionAction?: FeatureCompletionAction;
   mergeBackToBase?: boolean;
+  sandboxMode?: SandboxMode;
 }
+
+export const dockerSandboxChoices: Array<{ title: string; value: SandboxMode }> = [
+  { title: 'Docker isolation (recommended)', value: 'docker' },
+  { title: 'No sandbox (explicitly accept host execution risk)', value: 'no-sandbox' },
+];
+
+export const noDockerSandboxChoices: Array<{ title: string; value: SandboxMode | 'abort' }> = [
+  { title: 'Continue without sandbox (host execution)', value: 'no-sandbox' },
+  { title: 'Abort launch', value: 'abort' },
+];
 
 export const featureCompletionActionChoices: Array<{ title: string; value: FeatureCompletionAction }> = [
   { title: 'Merge back to base branch on completion', value: 'merge-to-base' },
@@ -50,6 +62,7 @@ export async function runInteractiveLaunchWizard(input: {
   discoverModels: (harness: SelectableHarnessId) => Promise<LaunchModel[]>;
   tickets: TicketRecord[];
   preferences?: LaunchPreferences;
+  dockerAvailable: boolean;
 }): Promise<LaunchWizardResult> {
   const harnessChoices = input.availableHarnesses;
   if (harnessChoices.length === 0) {
@@ -66,6 +79,9 @@ export async function runInteractiveLaunchWizard(input: {
   );
   if (!selectedHarness || !isSelectableHarnessId(selectedHarness)) return { cancelled: true };
   const harness = selectedHarness;
+
+  const sandboxMode = await promptSandboxMode(input.io, input.dockerAvailable, input.preferences);
+  if (!sandboxMode) return { cancelled: true };
 
   const models = await input.discoverModels(harness);
   if (!models.length) {
@@ -131,6 +147,7 @@ export async function runInteractiveLaunchWizard(input: {
     concurrency,
     featureCompletionAction,
     mergeBackToBase,
+    sandboxMode,
   };
 }
 
@@ -301,5 +318,38 @@ async function promptFeatureCompletionAction(
     { onCancel: () => true },
   );
   if (result.value === 'merge-to-base' || result.value === 'create-pr') return result.value;
+  return null;
+}
+
+async function promptSandboxMode(
+  _io: PromptIO,
+  dockerAvailable: boolean,
+  preferences?: LaunchPreferences,
+): Promise<SandboxMode | null> {
+  const choices = dockerAvailable ? dockerSandboxChoices : noDockerSandboxChoices;
+  const preferred = dockerAvailable ? preferences?.sandboxMode : undefined;
+  const initial = preferred ? choices.findIndex((choice) => choice.value === preferred) : 0;
+  const result = await prompts(
+    {
+      type: 'autocomplete',
+      name: 'value',
+      message: dockerAvailable
+        ? 'Select sandbox mode for this run'
+        : 'Docker is unavailable. Continue without sandboxing?',
+      choices,
+      initial: initial >= 0 ? initial : 0,
+      suggest: async (input: string, promptChoices: PromptSuggestChoice[]) => {
+        const query = input.trim().toLowerCase();
+        if (!query) return promptChoices;
+        return promptChoices.filter((choice) =>
+          String(choice?.title ?? '')
+            .toLowerCase()
+            .includes(query),
+        );
+      },
+    },
+    { onCancel: () => true },
+  );
+  if (result.value === 'docker' || result.value === 'no-sandbox') return result.value;
   return null;
 }

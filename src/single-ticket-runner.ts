@@ -108,6 +108,7 @@ export class SingleTicketRunner {
       ticketPath: ticket.path,
       runId: options.runId,
       providerIdentity: ticket.providerIdentity,
+      sandboxMode: plan.sandboxMode,
     });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
     await this.syncLinearStarted(ticket, record);
