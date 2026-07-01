@@ -1,5 +1,6 @@
 import type { SelectableHarnessId } from './harness-registry.js';
 import type { ReadinessCheckMetadata } from './readiness-service.js';
+import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 
 export interface TicketRecord {
   path: string;
@@ -181,8 +182,10 @@ export interface AfkStateSnapshot {
 export interface LaunchPlan {
   harness?: SelectableHarnessId;
   model: LaunchModel;
+  sandcastleProvider?: SandcastleAgentProviderSelection;
   reviewerHarness?: SelectableHarnessId;
   reviewerModel?: LaunchModel;
+  reviewerSandcastleProvider?: SandcastleAgentProviderSelection;
   reviewerPrompt?: ReviewerPromptTemplate;
   sandboxMode?: SandboxMode;
   tickets: TicketRecord[];

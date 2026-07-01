@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import type { AgentExecutionProvider } from './agent-execution-provider.js';
+import type { AgentExecutionProvider, AgentExecutionRequest } from './agent-execution-provider.js';
 import { providerNameForHarness } from './harness-registry.js';
 import type { LinearRunSyncClient, ResolvedLinearConfig } from './linear.js';
 import { syncLinearRunStarted, syncLinearRunTerminal } from './linear.js';
@@ -13,6 +13,7 @@ import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
 import type { SandcastleImplementationCore } from './sandcastle-execution-core.js';
+import { type SandcastlePhaseName, SandcastleRuntimeStore } from './sandcastle-runtime-store.js';
 import type {
   AfkStateSnapshot,
   AgentExecutionProgressCallback,
@@ -86,8 +87,26 @@ interface ImplementationExecutionInput {
   signal?: AbortSignal;
 }
 
+export interface WarmSandcastleSandboxHandle {
+  run(request: AgentExecutionRequest): Promise<AgentExecutionResult>;
+}
+
+export interface WarmSandcastleSandboxFactory {
+  create(plan: LaunchPlan): Promise<WarmSandcastleSandboxHandle>;
+}
+
+class ProviderBackedWarmSandcastleSandbox implements WarmSandcastleSandboxHandle {
+  constructor(private readonly provider: AgentExecutionProvider) {}
+
+  run(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    return this.provider.execute(request);
+  }
+}
+
 export class SingleTicketRunner {
   private readonly linearSyncer?: LinearRunSyncer;
+  private readonly sandcastleImplementationCore?: SandcastleImplementationCore;
+  private readonly sandcastleSandboxFactory?: WarmSandcastleSandboxFactory;
 
   constructor(
     private readonly runtimeStore: RuntimeStore,
@@ -95,11 +114,18 @@ export class SingleTicketRunner {
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
     linearSyncerOrCommandExecutor?: LinearRunSyncer | ReadinessCommandExecutor,
     _commandExecutor: ReadinessCommandExecutor = new SyncReadinessCommandExecutor(),
-    private readonly sandcastleImplementationCore?: SandcastleImplementationCore,
+    sandcastleExecution?: SandcastleImplementationCore | WarmSandcastleSandboxFactory,
+    sandcastleSandboxFactory?: WarmSandcastleSandboxFactory,
   ) {
     if (linearSyncerOrCommandExecutor && 'resolvedConfig' in linearSyncerOrCommandExecutor) {
       this.linearSyncer = linearSyncerOrCommandExecutor;
     }
+    if (sandcastleExecution && 'execute' in sandcastleExecution) {
+      this.sandcastleImplementationCore = sandcastleExecution;
+    } else {
+      this.sandcastleSandboxFactory = sandcastleExecution;
+    }
+    if (sandcastleSandboxFactory) this.sandcastleSandboxFactory = sandcastleSandboxFactory;
   }
 
   async launch(plan: LaunchPlan, options: SingleTicketLaunchOptions = {}): Promise<SingleTicketRunResult> {
@@ -123,6 +149,81 @@ export class SingleTicketRunner {
       sandboxMode: plan.sandboxMode,
     });
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
+    const sandcastleProvider = plan.sandcastleProvider;
+    const sandcastleRuntimeStore = sandcastleProvider ? new SandcastleRuntimeStore({ repoRoot: plan.repoRoot }) : null;
+    const sandcastleRuntime =
+      sandcastleRuntimeStore && sandcastleProvider
+        ? sandcastleRuntimeStore.createRun({
+            runId: options.runId ?? `${ticket.feature}-${ticket.issueName}-${Date.now()}`,
+            ticket: {
+              featureSlug: ticket.feature,
+              issueName: ticket.issueName,
+              label: ticket.label,
+              ticketPath: ticket.path,
+              trackerIssueId: ticket.providerIdentity?.issueId,
+              trackerIssueKey: ticket.providerIdentity?.issueKey,
+              trackerIssueUrl: ticket.providerIdentity?.issueUrl,
+            },
+            trackerSource: ticket.provider?.kind === 'linear' || ticket.source === 'linear' ? 'linear' : 'scratch',
+            provider: {
+              provider: sandcastleProvider.provider,
+              model: sandcastleProvider.model ?? plan.model.id,
+              reviewerProvider: plan.reviewerSandcastleProvider?.provider,
+              reviewerModel: plan.reviewerSandcastleProvider?.model ?? plan.reviewerModel?.id,
+            },
+            sandbox: plan.sandboxMode === 'docker' ? { mode: 'docker' } : { mode: 'none' },
+            location: {
+              branch: plan.checkout.effectiveBranchName,
+              worktreePath: plan.checkout.worktreePath,
+            },
+            logs: { run: record.logPath },
+          })
+        : null;
+    const warmSandbox = sandcastleRuntime
+      ? await (
+          this.sandcastleSandboxFactory ?? {
+            create: async () => new ProviderBackedWarmSandcastleSandbox(this.provider),
+          }
+        ).create(plan)
+      : null;
+    const runAgentPhase = async (
+      phase: SandcastlePhaseName,
+      attempt: number,
+      request: AgentExecutionRequest,
+    ): Promise<AgentExecutionResult> => {
+      if (!warmSandbox || !sandcastleRuntimeStore || !sandcastleRuntime) return this.provider.execute(request);
+      const startedAt = new Date().toISOString();
+      const startedEpoch = Date.now();
+      try {
+        const result = await warmSandbox.run(request);
+        sandcastleRuntimeStore.recordPhase(sandcastleRuntime.recordPath, {
+          phase,
+          attempt,
+          status: result.status === 'completed' ? 'passed' : result.status === 'blocked' ? 'blocked' : 'failed',
+          startedAt,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedEpoch,
+          outcome: result.unsafeReason ?? result.status,
+        });
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Sandcastle phase failed';
+        sandcastleRuntimeStore.recordPhase(sandcastleRuntime.recordPath, {
+          phase,
+          attempt,
+          status: 'failed',
+          startedAt,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedEpoch,
+          outcome: message,
+        });
+        throw error;
+      }
+    };
+    const completeSandcastleRun = (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => {
+      if (!sandcastleRuntimeStore || !sandcastleRuntime) return;
+      sandcastleRuntimeStore.updateTerminal(sandcastleRuntime.recordPath, { status, handoffReason });
+    };
     await this.syncLinearStarted(ticket, record);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);
     if (!plan.reviewerModel || !plan.reviewerPrompt) {
@@ -150,7 +251,23 @@ export class SingleTicketRunner {
     this.runtimeStore.updateMetadata(record.metadataPath, {
       EXECUTION_PROVIDER: plan.harness ? providerNameForHarness(plan.harness) : 'opencode',
       EXECUTION_MODEL_ID: plan.model.id,
+      ...(plan.sandcastleProvider
+        ? {
+            SANDCASTLE_EXECUTION_PROVIDER: plan.sandcastleProvider.provider,
+            SANDCASTLE_EXECUTION_MODEL_ID: plan.sandcastleProvider.model ?? null,
+            SANDCASTLE_EXECUTION_DOCKER_AUTH: plan.sandcastleProvider.docker,
+            SANDCASTLE_EXECUTION_NO_SANDBOX: plan.sandcastleProvider.noSandbox,
+          }
+        : {}),
       REVIEWER_MODEL_ID: plan.reviewerModel.id,
+      ...(plan.reviewerSandcastleProvider
+        ? {
+            SANDCASTLE_REVIEWER_PROVIDER: plan.reviewerSandcastleProvider.provider,
+            SANDCASTLE_REVIEWER_MODEL_ID: plan.reviewerSandcastleProvider.model ?? null,
+            SANDCASTLE_REVIEWER_DOCKER_AUTH: plan.reviewerSandcastleProvider.docker,
+            SANDCASTLE_REVIEWER_NO_SANDBOX: plan.reviewerSandcastleProvider.noSandbox,
+          }
+        : {}),
       REVIEWER_PROMPT_ID: plan.reviewerPrompt.id,
       REVIEWER_PROMPT_PATH: plan.reviewerPrompt.path,
     });
@@ -192,6 +309,7 @@ export class SingleTicketRunner {
     let malformedAttempts = 0;
     let latestExecutionResult: AgentExecutionResult | null = null;
     let executeBeforeReview = true;
+    let nextImplementationPhase: SandcastlePhaseName = 'implementation';
     let useReviewerRepairPrompt = false;
     const ticketStartEpoch = Date.now();
 
@@ -207,7 +325,8 @@ export class SingleTicketRunner {
           return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
         }
         const ticketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
-        if (ticketBudget) return this.handoffForBudget(ticket, record, options, ticketBudget, sessionId);
+        if (ticketBudget)
+          return this.handoffForBudget(ticket, record, options, ticketBudget, sessionId, completeSandcastleRun);
         if (executeBeforeReview && fixupCycles >= budgets.fixupCycleLimit && reviewCycle > 0) {
           return this.handoffForBudget(
             ticket,
@@ -222,6 +341,7 @@ export class SingleTicketRunner {
               evidence: 'Real implementation fixup cycle cap reached',
             },
             sessionId,
+            completeSandcastleRun,
           );
         }
         if (executeBeforeReview) {
@@ -231,22 +351,33 @@ export class SingleTicketRunner {
               record.logPath,
               'execution',
               () =>
-                this.executeImplementationWithConfiguredCore({
-                  plan,
-                  ticket,
-                  prompt,
-                  record,
-                  sessionId,
-                  onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
-                  signal: options.signal,
-                }),
+                this.sandcastleImplementationCore
+                  ? this.executeImplementationWithConfiguredCore({
+                      plan,
+                      ticket,
+                      prompt,
+                      record,
+                      sessionId,
+                      onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+                      signal: options.signal,
+                    })
+                  : runAgentPhase(nextImplementationPhase, reviewCycle + 1, {
+                      plan,
+                      ticketIndex: 0,
+                      prompt,
+                      invocationMode: 'execution',
+                      sessionId,
+                      onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+                      signal: options.signal,
+                    }),
               reviewCycle + 1,
             );
             sessionId = executionResult.sessionId ?? sessionId;
             latestExecutionResult = executionResult;
             this.recordExecutionResult(record.metadataPath, record.logPath, executionResult, sessionId);
             const executionBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'execution', reviewCycle + 1);
-            if (executionBudget) return this.handoffForBudget(ticket, record, options, executionBudget, sessionId);
+            if (executionBudget)
+              return this.handoffForBudget(ticket, record, options, executionBudget, sessionId, completeSandcastleRun);
             if (executionResult.status !== 'completed') {
               return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
                 this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -279,6 +410,7 @@ export class SingleTicketRunner {
               });
             }
             // Execution completed successfully
+            nextImplementationPhase = 'implementation';
             this.runtimeStore.updateMetadata(record.metadataPath, {
               IMPLEMENTATION_STATUS: 'completed',
             });
@@ -390,7 +522,7 @@ export class SingleTicketRunner {
           record.logPath,
           'review',
           () =>
-            this.provider.execute({
+            runAgentPhase(useReviewerRepairPrompt ? 'reviewer-repair' : 'review', reviewCycle + 1, {
               plan,
               ticketIndex: 0,
               prompt: useReviewerRepairPrompt
@@ -419,10 +551,18 @@ export class SingleTicketRunner {
         );
         useReviewerRepairPrompt = false;
         const reviewBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'review', reviewCycle + 1);
-        if (reviewBudget) return this.handoffForBudget(ticket, record, options, reviewBudget, sessionId);
+        if (reviewBudget)
+          return this.handoffForBudget(ticket, record, options, reviewBudget, sessionId, completeSandcastleRun);
         const afterReviewTicketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
         if (afterReviewTicketBudget)
-          return this.handoffForBudget(ticket, record, options, afterReviewTicketBudget, sessionId);
+          return this.handoffForBudget(
+            ticket,
+            record,
+            options,
+            afterReviewTicketBudget,
+            sessionId,
+            completeSandcastleRun,
+          );
         this.runtimeStore.appendLog(record.logPath, `reviewer session: ${reviewResult.sessionId ?? 'unknown'}`);
         if (reviewResult.status !== 'completed') {
           providerFailureCount += 1;
@@ -472,6 +612,7 @@ export class SingleTicketRunner {
               }),
             );
             return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+              completeSandcastleRun('handoff', message);
               this.runtimeStore.markHandoff(record, `reviewer provider failure: ${classification?.kind ?? 'unknown'}`);
               this.runtimeStore.appendLog(
                 record.logPath,
@@ -503,6 +644,7 @@ export class SingleTicketRunner {
             continue;
           }
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+            completeSandcastleRun('handoff', message);
             this.runtimeStore.updateMetadata(record.metadataPath, {
               STATUS: 'blocked',
               REVIEW_STATUS: 'failed',
@@ -557,8 +699,16 @@ export class SingleTicketRunner {
             continue;
           }
           return rawReviewOutput.trim()
-            ? this.handoffForMalformedReview(ticket, record, options, review.raw, reviewCycle + 1, sessionId)
-            : this.handoffForEmptyReview(ticket, record, options, reviewCycle + 1, sessionId);
+            ? this.handoffForMalformedReview(
+                ticket,
+                record,
+                options,
+                review.raw,
+                reviewCycle + 1,
+                sessionId,
+                completeSandcastleRun,
+              )
+            : this.handoffForEmptyReview(ticket, record, options, reviewCycle + 1, sessionId, completeSandcastleRun);
         }
 
         malformedAttempts = 0;
@@ -578,6 +728,7 @@ export class SingleTicketRunner {
 
         if (decision.decision === 'approve') {
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+            completeSandcastleRun('completed');
             const classification: ReviewOutcomeClassification = 'clean-approval';
             this.runtimeStore.recordFinalReviewOutcome(
               record.metadataPath,
@@ -669,6 +820,7 @@ export class SingleTicketRunner {
             }),
           );
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+            completeSandcastleRun('handoff', decision.reason);
             this.runtimeStore.markFailed(record, 'needs-human handoff required');
             this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
             this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -700,8 +852,10 @@ export class SingleTicketRunner {
           `starting fresh implementation session for fixup; prior session: ${priorImplementationSessionId ?? 'unknown'}`,
         );
         sessionId = null;
+        nextImplementationPhase = 'fixup';
         const fixupBudget = this.checkPhaseBudget(record.metadataPath, budgets, 'fixup', reviewCycle);
-        if (fixupBudget) return this.handoffForBudget(ticket, record, options, fixupBudget, sessionId);
+        if (fixupBudget)
+          return this.handoffForBudget(ticket, record, options, fixupBudget, sessionId, completeSandcastleRun);
         executeBeforeReview = true;
       }
     } catch (error) {
@@ -816,6 +970,7 @@ export class SingleTicketRunner {
     options: { onProgress?: AgentExecutionProgressCallback },
     event: BudgetExceededEvent,
     sessionId: string | null,
+    completeSandcastleRun?: (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void,
   ): Promise<SingleTicketRunResult> {
     this.runtimeStore.recordBudgetExceeded(record.metadataPath, record.logPath, event);
     const reason = `budget exceeded: ${event.budgetName} (limit=${event.limit}, observed=${event.observed}, phase=${event.phase}, cycle=${event.cycle})`;
@@ -839,6 +994,7 @@ export class SingleTicketRunner {
       }),
     );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+      completeSandcastleRun?.(implementationCompleted ? 'handoff' : 'blocked', reason);
       if (implementationCompleted) {
         this.runtimeStore.markHandoff(record, reason);
       } else {
@@ -870,6 +1026,7 @@ export class SingleTicketRunner {
     raw: string,
     cycle: number,
     sessionId: string | null,
+    completeSandcastleRun?: (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void,
   ): Promise<SingleTicketRunResult> {
     const malformedHandoffReason = 'Malformed reviewer output repeated after format-repair retry';
     const malformedOutputSnippet = this.boundSnippet(raw);
@@ -903,6 +1060,7 @@ export class SingleTicketRunner {
       }),
     );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+      completeSandcastleRun?.('handoff', malformedHandoffReason);
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -925,6 +1083,7 @@ export class SingleTicketRunner {
     options: { onProgress?: AgentExecutionProgressCallback },
     cycle: number,
     sessionId: string | null,
+    completeSandcastleRun?: (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void,
   ): Promise<SingleTicketRunResult> {
     const reason = 'Reviewer returned empty output after format-repair retry';
     this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -957,6 +1116,7 @@ export class SingleTicketRunner {
       }),
     );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+      completeSandcastleRun?.('handoff', reason);
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'empty reviewer output handoff: reviewer-empty-output');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');

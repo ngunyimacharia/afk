@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { SelectableHarnessId } from './harness-registry.js';
+import { resolveSandcastleAgentProvider } from './sandcastle-provider.js';
 import type {
   AfkStateSnapshot,
   DependencySnapshot,
@@ -188,8 +189,12 @@ export function buildLaunchPlan(
     harness,
     sandboxMode,
     model,
+    ...(harness ? { sandcastleProvider: resolveSandcastleAgentProvider(harness, model) } : {}),
     reviewerHarness: reviewer?.harness,
     reviewerModel: reviewer?.model,
+    ...(reviewer?.harness
+      ? { reviewerSandcastleProvider: resolveSandcastleAgentProvider(reviewer.harness, reviewer.model) }
+      : {}),
     reviewerPrompt: reviewer?.prompt,
     tickets,
     checkout,

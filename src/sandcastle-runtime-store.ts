@@ -1,10 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { assertPathWithinRoot } from './path-validation.js';
+import type { SandcastleProviderFailure } from './sandcastle-provider.js';
 
 export type SandcastleTrackerSource = 'scratch' | 'linear' | 'github' | 'manual';
 export type SandcastleSandboxMode = 'docker' | 'none';
-export type SandcastlePhaseName = 'implementation' | 'review' | 'fixup';
+export type SandcastlePhaseName = 'implementation' | 'review' | 'reviewer-repair' | 'fixup';
 export type SandcastlePhaseStatus = 'running' | 'passed' | 'failed' | 'blocked' | 'skipped';
 export type SandcastleTerminalStatus = 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted';
 export type SandcastleCleanupResourceType =
@@ -115,6 +116,11 @@ export interface SandcastleCleanupResource {
   cleanupCommand?: string;
 }
 
+export interface SandcastleProviderFailureRecord extends SandcastleProviderFailure {
+  phase?: SandcastlePhaseName;
+  occurredAt: string;
+}
+
 export interface SandcastleRuntimeRecord {
   schemaVersion: 1;
   runId: string;
@@ -134,6 +140,7 @@ export interface SandcastleRuntimeRecord {
     completedAt?: string;
     handoffReason?: string;
   };
+  providerFailures: SandcastleProviderFailureRecord[];
   cleanupResources: SandcastleCleanupResource[];
 }
 
@@ -188,6 +195,7 @@ export class SandcastleRuntimeStore {
         phases: input.logs?.phases ?? [],
       },
       terminal: { status: 'running' },
+      providerFailures: [],
       cleanupResources: [],
     };
     this.writeRecord(recordPath, record);
@@ -246,6 +254,20 @@ export class SandcastleRuntimeStore {
       ...current,
       updatedAt: isoFromEpoch(this.now()),
       cleanupResources: [...current.cleanupResources, resource],
+    });
+  }
+
+  recordProviderFailure(
+    recordPath: string,
+    failure: SandcastleProviderFailure,
+    phase?: SandcastlePhaseName,
+  ): SandcastleRuntimeRecord {
+    const current = this.readRun(recordPath);
+    const updatedAt = isoFromEpoch(this.now());
+    return this.writeRecordAndReturn(recordPath, {
+      ...current,
+      updatedAt,
+      providerFailures: [...current.providerFailures, { ...failure, phase, occurredAt: updatedAt }],
     });
   }
 
