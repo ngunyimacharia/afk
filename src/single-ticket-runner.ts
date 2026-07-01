@@ -12,6 +12,7 @@ import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
+import type { SandcastleImplementationCore } from './sandcastle-execution-core.js';
 import type {
   AfkStateSnapshot,
   AgentExecutionProgressCallback,
@@ -75,6 +76,16 @@ export interface LinearRunSyncer {
   client: LinearRunSyncClient;
 }
 
+interface ImplementationExecutionInput {
+  plan: LaunchPlan;
+  ticket: TicketRecord;
+  prompt: string;
+  record: RuntimeRecordHandle;
+  sessionId: string | null;
+  onProgress: AgentExecutionProgressCallback;
+  signal?: AbortSignal;
+}
+
 export class SingleTicketRunner {
   private readonly linearSyncer?: LinearRunSyncer;
 
@@ -84,6 +95,7 @@ export class SingleTicketRunner {
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
     linearSyncerOrCommandExecutor?: LinearRunSyncer | ReadinessCommandExecutor,
     _commandExecutor: ReadinessCommandExecutor = new SyncReadinessCommandExecutor(),
+    private readonly sandcastleImplementationCore?: SandcastleImplementationCore,
   ) {
     if (linearSyncerOrCommandExecutor && 'resolvedConfig' in linearSyncerOrCommandExecutor) {
       this.linearSyncer = linearSyncerOrCommandExecutor;
@@ -219,11 +231,11 @@ export class SingleTicketRunner {
               record.logPath,
               'execution',
               () =>
-                this.provider.execute({
+                this.executeImplementationWithConfiguredCore({
                   plan,
-                  ticketIndex: 0,
+                  ticket,
                   prompt,
-                  invocationMode: 'execution',
+                  record,
                   sessionId,
                   onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
                   signal: options.signal,
@@ -732,6 +744,28 @@ export class SingleTicketRunner {
       ...DEFAULT_BUDGET_POLICY,
       ...this.configuredBudgets,
     };
+  }
+
+  private executeImplementationWithConfiguredCore(input: ImplementationExecutionInput): Promise<AgentExecutionResult> {
+    if (this.sandcastleImplementationCore) {
+      return this.sandcastleImplementationCore.execute({
+        plan: input.plan,
+        ticket: input.ticket,
+        prompt: input.prompt,
+        record: input.record,
+        onProgress: input.onProgress,
+        signal: input.signal,
+      });
+    }
+    return this.provider.execute({
+      plan: input.plan,
+      ticketIndex: 0,
+      prompt: input.prompt,
+      invocationMode: 'execution',
+      sessionId: input.sessionId,
+      onProgress: input.onProgress,
+      signal: input.signal,
+    });
   }
 
   private checkTicketBudget(

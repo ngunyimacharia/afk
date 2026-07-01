@@ -58,6 +58,10 @@ function resolveFeatureCompletionAction(value: Record<string, unknown>): Feature
   return undefined;
 }
 
+function parseSandcastleSandboxMode(value: unknown): LaunchPreferences['sandcastleSandboxMode'] {
+  return value === 'docker' || value === 'no-sandbox' ? value : undefined;
+}
+
 export class RuntimeStore {
   private readonly logRoot: string;
   private readonly metadataRoot: string;
@@ -84,6 +88,7 @@ export class RuntimeStore {
       const harnessValue = typeof value.harness === 'string' ? migrateLegacyHarnessId(value.harness) : undefined;
       const reviewerHarnessValue =
         typeof value.reviewerHarness === 'string' ? migrateLegacyHarnessId(value.reviewerHarness) : undefined;
+      const sandcastleSandboxMode = parseSandcastleSandboxMode(value.sandcastleSandboxMode);
       const preferences: LaunchPreferences = {
         harness: harnessValue && isSelectableHarnessId(harnessValue) ? harnessValue : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
@@ -92,6 +97,7 @@ export class RuntimeStore {
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
         sandboxMode:
           value.sandboxMode === 'docker' || value.sandboxMode === 'no-sandbox' ? value.sandboxMode : undefined,
+        ...(sandcastleSandboxMode ? { sandcastleSandboxMode } : {}),
       };
       if (typeof value.concurrency === 'number' && Number.isInteger(value.concurrency) && value.concurrency > 0)
         preferences.concurrency = value.concurrency;
@@ -145,6 +151,7 @@ export class RuntimeStore {
       modelId: preferences.modelId,
       reviewerHarness: preferences.reviewerHarness,
       reviewerModelId: preferences.reviewerModelId,
+      sandcastleSandboxMode: preferences.sandcastleSandboxMode,
       concurrency: preferences.concurrency,
       budgets: preferences.budgets,
       featureCompletionAction,
@@ -191,6 +198,13 @@ export class RuntimeStore {
       STATUS: 'running',
       EXECUTION_PROVIDER: 'opencode',
       SANDBOX_MODE: context.sandboxMode,
+      SANDCASTLE_SANDBOX_MODE: context.sandboxMode,
+      SANDCASTLE_BRANCH: undefined,
+      SANDCASTLE_WORKTREE_PATH: undefined,
+      SANDCASTLE_PROVIDER: undefined,
+      SANDCASTLE_LOG_PATH: undefined,
+      SANDCASTLE_PHASE_RESULT: undefined,
+      SANDCASTLE_COMMITS: [],
       PROVIDER_SESSION_ID: null,
       PROVIDER_SESSION_REMOVABLE: false,
       INSPECTION_PROVIDER: null,
