@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { SandcastleTicketWorktreeService } from './sandcastle-worktree-service.js';
 import type { ScratchWorktreeService } from './scratch-worktree-service.js';
 import type { SingleTicketRunner, SingleTicketRunResult } from './single-ticket-runner.js';
 import type { AgentExecutionProgressCallback, LaunchBlockEvidence, LaunchPlan, TicketRecord } from './types.js';
@@ -37,7 +38,8 @@ export interface SchedulerRunResult {
 
 export interface SchedulerDependencies {
   runner: SingleTicketRunner;
-  scratchWorktreeService: ScratchWorktreeService;
+  sandcastleWorktreeService?: SandcastleTicketWorktreeService;
+  scratchWorktreeService?: ScratchWorktreeService;
   featureLockProvider?: FeatureLockProvider;
   featureMergeBackProvider?: FeatureMergeBackProvider;
   onWaveComplete?: (
@@ -192,7 +194,8 @@ export class Scheduler {
         if (!ticket) return;
         runningTickets.add(ticketKey(ticket));
 
-        const scratchCheckout = this.deps.scratchWorktreeService.createScratchWorktree({
+        const lifecycleService = this.resolveWorktreeService();
+        const scratchCheckout = lifecycleService.createTicketWorktree({
           repoRoot: plan.repoRoot,
           featureSlug: ticket.feature,
           issueName: ticket.issueName,
@@ -362,6 +365,10 @@ export class Scheduler {
       if (!sweepableOutcomes.has(result.outcome)) continue;
       const checkout = scratchWorktrees.get(ticketKey(result.ticket));
       if (!checkout) continue;
+      const preservation = this.resolveWorktreeService().preserveFailedWorktree(
+        checkout,
+        `ticket outcome=${result.outcome}`,
+      );
       const safety = isWorktreeSafeToRemove(checkout.worktreePath);
       if (!safety.ok) {
         onProgress?.({
@@ -372,24 +379,28 @@ export class Scheduler {
         results.push({ ticket: result.ticket, success: false, reason: safety.reason });
         continue;
       }
-      const repoRoot = path.resolve(checkout.worktreePath, '..', '..');
-      const removal = removeIssueWorktree(repoRoot, checkout);
-      if (!removal.success) {
-        onProgress?.({
-          ticketLabel: result.ticket.label,
-          message: `sweeper failed: ${removal.error ?? 'unknown error'}`,
-          kind: 'failure',
-        });
-      } else {
-        onProgress?.({
-          ticketLabel: result.ticket.label,
-          message: 'sweeper removed failed/aborted worktree and branch',
-          kind: 'message',
-        });
-      }
-      results.push({ ticket: result.ticket, success: removal.success, reason: removal.error });
+      onProgress?.({
+        ticketLabel: result.ticket.label,
+        message: `sweeper preserved Sandcastle worktree: branch=${preservation.branch} worktree=${preservation.worktreePath}`,
+        kind: 'message',
+      });
+      results.push({ ticket: result.ticket, success: true, reason: preservation.reason });
     }
     return results;
+  }
+
+  private resolveWorktreeService(): SandcastleTicketWorktreeService {
+    if (this.deps.sandcastleWorktreeService) return this.deps.sandcastleWorktreeService;
+    const fallback = this.deps.scratchWorktreeService;
+    if (!fallback) throw new Error('No ticket worktree lifecycle service configured');
+    return {
+      createTicketWorktree: (input) => fallback.createScratchWorktree(input),
+      preserveFailedWorktree: (context, reason) => ({
+        branch: context.effectiveBranchName,
+        worktreePath: context.worktreePath,
+        reason,
+      }),
+    };
   }
 }
 
@@ -410,33 +421,6 @@ function isWorktreeSafeToRemove(worktreePath: string): { ok: true } | { ok: fals
     return { ok: false, reason: `worktree is unavailable: ${worktreePath}` };
   }
   return { ok: true };
-}
-
-function removeIssueWorktree(
-  repoRoot: string,
-  checkout: PreparedCheckoutContext,
-): { success: boolean; deletedBranch: boolean; deletedWorktree: boolean; error?: string } {
-  let deletedWorktree = false;
-  let deletedBranch = false;
-  const errors: string[] = [];
-  try {
-    runGit(repoRoot, ['worktree', 'remove', '-f', checkout.worktreePath]);
-    deletedWorktree = true;
-  } catch (error) {
-    errors.push(`worktree delete failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  try {
-    runGit(repoRoot, ['branch', '-D', checkout.effectiveBranchName]);
-    deletedBranch = true;
-  } catch (error) {
-    errors.push(`branch delete failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  return {
-    success: deletedWorktree && deletedBranch,
-    deletedBranch,
-    deletedWorktree,
-    error: errors.length > 0 ? errors.join(' | ') : undefined,
-  };
 }
 
 function resolveGitDir(worktreePath: string): string {

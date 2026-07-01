@@ -17,8 +17,8 @@ import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { RuntimeStore } from './runtime-store.js';
 import { resolveSandcastleSandboxMode, SandcastleImplementationCore } from './sandcastle-execution-core.js';
+import { SandcastleWorktreeService } from './sandcastle-worktree-service.js';
 import { Scheduler } from './scheduler.js';
-import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import type {
   AgentExecutionProgressEvent,
@@ -174,7 +174,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
 
   const scheduler = new Scheduler({
     runner,
-    scratchWorktreeService: new ScratchWorktreeService(),
+    sandcastleWorktreeService: new SandcastleWorktreeService(),
     concurrencyLimit: concurrency,
     featureMergeBackProvider: {
       isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>

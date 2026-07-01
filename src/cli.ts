@@ -72,9 +72,10 @@ import { classifyProviderFailure, classifyProviderFailureFromSource } from './pr
 import { RuntimeStore } from './runtime-store.js';
 import { detectDockerAvailable } from './sandbox-selection.js';
 import { resolveSandcastleSandboxMode, SandcastleImplementationCore } from './sandcastle-execution-core.js';
+import { SandcastleWorktreeService } from './sandcastle-worktree-service.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { createDefaultTrackerProvider } from './scratch-tracker-provider.js';
-import { ScratchWorktreeService } from './scratch-worktree-service.js';
+import type { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
@@ -890,7 +891,7 @@ export async function runAfk(
 
     const scheduler = new Scheduler({
       runner,
-      scratchWorktreeService: new ScratchWorktreeService(),
+      sandcastleWorktreeService: new SandcastleWorktreeService(),
       concurrencyLimit: concurrency,
       featureMergeBackProvider: {
         isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>

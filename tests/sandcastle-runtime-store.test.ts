@@ -26,6 +26,8 @@ function createInput(overrides: Partial<SandcastleRuntimeCreateInput> = {}): San
     sandbox: { mode: 'docker', image: 'afk-runtime:latest', containerName: 'afk-run-1' },
     location: {
       branch: 'afk/feature-a/001',
+      branchNameSource: 'fallback',
+      worktreeName: 'feature-a-001',
       worktreePath: '/tmp/worktree',
     },
     ...overrides,
@@ -54,6 +56,8 @@ test('creates a Sandcastle runtime record in the new runtime directory', () => {
   });
   assert.equal(record.sandbox.mode, 'docker');
   assert.equal(record.branch, 'afk/feature-a/001');
+  assert.equal(record.branchNameSource, 'fallback');
+  assert.equal(record.worktreeName, 'feature-a-001');
   assert.equal(record.worktreePath, '/tmp/worktree');
   assert.equal(record.terminal.status, 'running');
   assert.deepEqual(record.providerFailures, []);
