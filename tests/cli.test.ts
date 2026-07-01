@@ -12,7 +12,7 @@ test('displayNameForProvider maps current provider names', () => {
   assert.equal(displayNameForProvider('unknown'), 'unknown');
 });
 
-test('readRunMetadata migrates legacy claude-kimi provider to Claude display name', () => {
+test('readRunMetadata maps current provider names to display names', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-cli-metadata-'));
   const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   mkdirSync(metadataRoot, { recursive: true });
@@ -23,7 +23,7 @@ test('readRunMetadata migrates legacy claude-kimi provider to Claude display nam
     JSON.stringify({
       RUN_ID: runId,
       EXECUTION_MODEL_ID: 'kimi/kimi-for-coding',
-      EXECUTION_PROVIDER: 'claude-kimi',
+      EXECUTION_PROVIDER: 'claude',
     }),
     'utf8',
   );

@@ -288,7 +288,6 @@ async function promptConcurrency(io: PromptIO, initial: number): Promise<number 
 
 function preferredFeatureCompletionAction(preferences?: LaunchPreferences): FeatureCompletionAction {
   if (preferences?.featureCompletionAction) return preferences.featureCompletionAction;
-  if (preferences?.mergeBackToBase === false) return 'create-pr';
   return 'merge-to-base';
 }
 

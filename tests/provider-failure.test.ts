@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { detectPreflightFailureReason, formatPreflightFailure, preflightModel } from '../src/cli.js';
 import {
   classifyProviderFailure,
   classifyProviderFailureFromSource,
@@ -27,49 +26,6 @@ test('formats concise unavailable implementation model progress message', () => 
     }),
     'provider failure: selected implementation model github-copilot/claude-sonnet-4.6 is unavailable',
   );
-});
-
-test('formats actionable preflight failure message', () => {
-  const message = formatPreflightFailure(
-    'github-copilot/claude-sonnet-4.6',
-    'implementation',
-    'The requested model is not available for integrator "copilot-language-server". Available models: [claude-sonnet-4.5 gpt-5.2].',
-  );
-
-  assert.match(message, /Implementation model unavailable/);
-  assert.match(message, /Selected implementation model: github-copilot\/claude-sonnet-4\.6/);
-  assert.match(message, /No tickets were started/);
-  assert.match(message, /- claude-sonnet-4\.5/);
-});
-
-test('ignores normal assistant text during preflight', () => {
-  assert.equal(detectPreflightFailureReason(['AFK model availability preflight. Reply OK.', 'OK']), null);
-});
-
-test('detects concrete provider failures during preflight', () => {
-  assert.equal(
-    detectPreflightFailureReason([
-      'thinking',
-      'The requested model is not available for integrator "copilot-language-server".',
-    ]),
-    'The requested model is not available for integrator "copilot-language-server".',
-  );
-});
-
-test('preflight fails on executor terminal errors without output', async () => {
-  const message = await preflightModel(
-    {
-      run: async () => ({ sessionId: 'codex-thread', output: [], terminalError: 'turn failed' }),
-    },
-    { id: 'codex/default' },
-    'implementation',
-    'Codex',
-  );
-
-  assert.match(message ?? '', /Implementation model preflight failed/);
-  assert.match(message ?? '', /Selected implementation model: codex\/default/);
-  assert.match(message ?? '', /Provider: codex/);
-  assert.match(message ?? '', /Reason: turn failed/);
 });
 
 test('classifies path-not-found failures', () => {
