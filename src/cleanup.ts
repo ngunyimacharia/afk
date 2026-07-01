@@ -10,6 +10,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import type {
+  SandcastleCleanupResource,
+  SandcastleCleanupResult,
+  SandcastleRuntimeRecord,
+} from './sandcastle-runtime-store.js';
 import type { RuntimeMetadataRecord } from './types.js';
 import { runGit } from './worktree-preparation-service.js';
 
@@ -48,6 +53,14 @@ export interface RuntimeArtifactCleanupTarget {
   handoffSentinelPath?: string;
 }
 
+export interface SandcastleCleanupResourceTarget {
+  runId: string;
+  recordPath: string;
+  feature: string;
+  issueName: string;
+  resource: SandcastleCleanupResource;
+}
+
 export interface OrphanedWorktreeCleanupTarget {
   feature: string;
   issueName: string;
@@ -81,6 +94,7 @@ export interface CleanupPlan {
   terminalTargets: CleanupTarget[];
   issueDeletionTargets: CleanupIssueDeletionTarget[];
   runtimeArtifactTargets: RuntimeArtifactCleanupTarget[];
+  sandcastleResourceTargets?: SandcastleCleanupResourceTarget[];
   orphanedWorktreeTargets: OrphanedWorktreeCleanupTarget[];
   pendingPostMergeCleanupTargets: PendingPostMergeCleanupItem[];
   preservedIssues: string[];
@@ -130,6 +144,32 @@ function fileExists(target: string): boolean {
   } catch {
     return false;
   }
+}
+
+function sandcastleRunsRoot(repoRoot: string): string {
+  return path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs');
+}
+
+function readSandcastleRuntimeRecords(
+  repoRoot: string,
+): Array<{ record: SandcastleRuntimeRecord; recordPath: string }> {
+  const runsRoot = sandcastleRunsRoot(repoRoot);
+  if (!exists(runsRoot)) return [];
+  return readdirSync(runsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(runsRoot, entry.name, 'record.json'))
+    .filter(fileExists)
+    .flatMap((recordPath) => {
+      try {
+        return [{ record: JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord, recordPath }];
+      } catch {
+        return [];
+      }
+    });
+}
+
+function writeSandcastleRuntimeRecord(recordPath: string, record: SandcastleRuntimeRecord): void {
+  writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
 }
 
 function parseFrontmatter(content: string): Record<string, unknown> {
@@ -424,6 +464,7 @@ function parseNgunyimachariaIssueBranch(branchName: string): { feature: string; 
 }
 
 export function countLeftoverBranches(repoRoot: string, activeTickets: Set<string>): number {
+  if (!existsSync(path.join(repoRoot, '.git'))) return 0;
   let output: string;
   try {
     output = runGit(repoRoot, ['branch', '--format', '%(refname:short)']);
@@ -494,7 +535,7 @@ function buildTerminalRuntimeWorktreeMap(repoRoot: string): Map<string, { featur
   return result;
 }
 
-function buildOrphanedWorktreeTargets(repoRoot: string, terminalKeys: Set<string>): OrphanedWorktreeCleanupTarget[] {
+function _buildOrphanedWorktreeTargets(repoRoot: string, terminalKeys: Set<string>): OrphanedWorktreeCleanupTarget[] {
   const pending = readPendingPostMergeCleanupItems(repoRoot);
   const pendingWorktreePaths = new Set(pending.map((item) => safeRealpath(item.worktreePath)));
   const pendingBranchNames = new Set(pending.map((item) => item.branchName));
@@ -559,7 +600,11 @@ function ticketSentinelPath(
   return resolvePathWithinRoot(sentinelRoot, `${feature}-${issueName}.${kind}`);
 }
 
-function readRuntimeMetadataRecord(repoRoot: string, feature: string, issueName: string): RuntimeMetadataRecord | null {
+function _readRuntimeMetadataRecord(
+  repoRoot: string,
+  feature: string,
+  issueName: string,
+): RuntimeMetadataRecord | null {
   const metadataPath = existingFilePath(ticketMetadataPath(repoRoot, feature, issueName));
   if (!metadataPath) return null;
   try {
@@ -569,7 +614,7 @@ function readRuntimeMetadataRecord(repoRoot: string, feature: string, issueName:
   }
 }
 
-function runtimeArtifactTarget(repoRoot: string, feature: string, issueName: string): RuntimeArtifactCleanupTarget {
+function _runtimeArtifactTarget(repoRoot: string, feature: string, issueName: string): RuntimeArtifactCleanupTarget {
   return {
     feature,
     issueName,
@@ -608,7 +653,7 @@ export class ScratchCleanupIssueSource implements CleanupIssueSource {
   }
 }
 
-function isTerminalTicketStatus(status: string | undefined, runtime: RuntimeMetadataRecord | null): boolean {
+function _isTerminalTicketStatus(status: string | undefined, runtime: RuntimeMetadataRecord | null): boolean {
   const normalized = normalize(status);
   const isFrontmatterTerminal = TERMINAL_STATUSES.has(normalized);
   // Preserve handoff/manual-review work even if frontmatter looks terminal
@@ -625,7 +670,7 @@ function linearMirrorRoot(repoRoot: string): string {
   return path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
 }
 
-function linearMirrorPath(repoRoot: string, runtime: RuntimeMetadataRecord | null): string | undefined {
+function _linearMirrorPath(repoRoot: string, runtime: RuntimeMetadataRecord | null): string | undefined {
   const mirrorRoot = linearMirrorRoot(repoRoot);
   for (const candidate of [runtime?.LINEAR_MIRROR_PATH, runtime?.TICKET_PATH]) {
     if (!candidate) continue;
@@ -639,127 +684,52 @@ export class CleanupPlanner {
   constructor(private readonly input: CleanupPlannerInput) {}
 
   buildPlan(): CleanupPlan {
-    const scratchRoot = path.join(this.input.repoRoot, '.scratch');
-    if (!exists(scratchRoot)) {
+    const sandcastleRuns = readSandcastleRuntimeRecords(this.input.repoRoot);
+    const sandcastleResourceTargets = sandcastleRuns
+      .filter(({ record }) => record.terminal.status !== 'running')
+      .flatMap(({ record, recordPath }) =>
+        record.cleanupResources.map((resource) => ({
+          runId: record.runId,
+          recordPath,
+          feature: record.ticket.featureSlug,
+          issueName: record.ticket.issueName,
+          resource,
+        })),
+      );
+
+    if (sandcastleRuns.length === 0) {
       return {
         terminalTargets: [],
         issueDeletionTargets: [],
         runtimeArtifactTargets: [],
+        sandcastleResourceTargets: [],
         orphanedWorktreeTargets: [],
-        pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
+        pendingPostMergeCleanupTargets: [],
         preservedIssues: [],
         preservedArtifacts: [],
         featureDirectoriesToDelete: [],
       };
     }
-    const source = this.input.issueSource ?? new ScratchCleanupIssueSource(this.input.repoRoot);
-    const issues = source.listCleanupIssues();
-    const terminalTargets: CleanupTarget[] = [];
-    const issueDeletionTargets: CleanupIssueDeletionTarget[] = [];
-    const runtimeArtifactTargets: RuntimeArtifactCleanupTarget[] = [];
-    const preservedIssues: string[] = [];
-    const preservedArtifacts: string[] = [];
-    const featureDirectoriesToDelete: string[] = [];
 
-    const byFeature = new Map<string, CleanupIssueRecord[]>();
-    for (const issue of issues) {
-      const featureIssues = byFeature.get(issue.feature) ?? [];
-      featureIssues.push(issue);
-      byFeature.set(issue.feature, featureIssues);
-    }
-
-    for (const [feature, featureIssues] of byFeature) {
-      let hasPending = false;
-      for (const issue of featureIssues) {
-        const runtime = readRuntimeMetadataRecord(this.input.repoRoot, issue.feature, issue.issueName);
-        const isTerminal = isTerminalTicketStatus(issue.status, runtime);
-        if (isTerminal) {
-          const artifacts = runtimeArtifactTarget(this.input.repoRoot, issue.feature, issue.issueName);
-          if (issue.issuePath) {
-            issueDeletionTargets.push({
-              feature: issue.feature,
-              issueName: issue.issueName,
-              issuePath: issue.issuePath,
-              reason: `terminal status: ${issue.status}`,
-            });
-          }
-          runtimeArtifactTargets.push(artifacts);
-          terminalTargets.push({
-            ...artifacts,
-            feature: issue.feature,
-            issueName: issue.issueName,
-            issuePath: issue.issuePath,
-            linearMirrorPath: linearMirrorPath(this.input.repoRoot, runtime),
-            reason: `terminal status: ${issue.status}`,
-          });
-        } else {
-          hasPending = true;
-          if (issue.issuePath) preservedIssues.push(issue.issuePath);
-        }
-      }
-      if (!hasPending && featureIssues.length > 0 && featureIssues.every((issue) => issue.issuePath)) {
-        featureDirectoriesToDelete.push(path.join(scratchRoot, feature));
-      }
-    }
-
-    const plannedKeys = new Set(terminalTargets.map((target) => `${target.feature}/${target.issueName}`));
-    const orphanedWorktreeTargets = buildOrphanedWorktreeTargets(this.input.repoRoot, plannedKeys);
-    const metadataRoot = path.join(scratchRoot, '.opencode-afk-logs', 'runtime-metadata');
-    if (exists(metadataRoot)) {
-      for (const file of readdirSync(metadataRoot).filter((entry) => entry.endsWith('.json'))) {
-        const metadataPath = path.join(metadataRoot, file);
-        let runtime: RuntimeMetadataRecord;
-        try {
-          runtime = JSON.parse(readFileSync(metadataPath, 'utf8')) as RuntimeMetadataRecord;
-        } catch {
-          continue;
-        }
-        const key = `${runtime.FEATURE_SLUG}/${runtime.ISSUE_NAME}`;
-        if (!runtime.LINEAR_ISSUE_KEY || plannedKeys.has(key) || !isTerminalRuntimeStatus(runtime)) continue;
-        const mirrorPath = linearMirrorPath(this.input.repoRoot, runtime);
-        terminalTargets.push({
-          feature: runtime.FEATURE_SLUG,
-          issueName: runtime.ISSUE_NAME,
-          issuePath: mirrorPath,
-          logPath: existingFilePath(ticketLogPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME)),
-          metadataPath,
-          linearMirrorPath: mirrorPath,
-          doneSentinelPath: existingFilePath(
-            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'done'),
-          ),
-          failedSentinelPath: existingFilePath(
-            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'failed'),
-          ),
-          handoffSentinelPath: existingFilePath(
-            ticketSentinelPath(this.input.repoRoot, runtime.FEATURE_SLUG, runtime.ISSUE_NAME, 'handoff'),
-          ),
-          reason: `terminal Linear run: ${runtime.RUN_STATUS ?? runtime.STATUS}`,
-        });
-      }
-    }
-
-    for (const target of terminalTargets) {
-      if (target.logPath) preservedArtifacts.push(target.logPath);
-      if (target.metadataPath) preservedArtifacts.push(target.metadataPath);
-      if (target.linearMirrorPath) preservedArtifacts.push(target.linearMirrorPath);
-      if (target.doneSentinelPath) preservedArtifacts.push(target.doneSentinelPath);
-      if (target.failedSentinelPath) preservedArtifacts.push(target.failedSentinelPath);
-      if (target.handoffSentinelPath) preservedArtifacts.push(target.handoffSentinelPath);
-    }
-
-    const workspaceExecutionPath = fileExists(path.join(scratchRoot, 'execution.json'))
-      ? path.join(scratchRoot, 'execution.json')
-      : undefined;
     return {
-      terminalTargets,
-      issueDeletionTargets,
-      runtimeArtifactTargets,
-      orphanedWorktreeTargets,
-      pendingPostMergeCleanupTargets: readPendingPostMergeCleanupItems(this.input.repoRoot),
-      preservedIssues,
-      preservedArtifacts,
-      featureDirectoriesToDelete,
-      workspaceExecutionPath,
+      terminalTargets: sandcastleRuns
+        .filter(({ record }) => record.terminal.status !== 'running')
+        .map(({ record }) => ({
+          feature: record.ticket.featureSlug,
+          issueName: record.ticket.issueName,
+          issuePath: record.ticket.ticketPath,
+          reason: `terminal Sandcastle run: ${record.terminal.status}`,
+        })),
+      issueDeletionTargets: [],
+      runtimeArtifactTargets: [],
+      sandcastleResourceTargets,
+      orphanedWorktreeTargets: [],
+      pendingPostMergeCleanupTargets: [],
+      preservedIssues: sandcastleRuns
+        .filter(({ record }) => record.terminal.status === 'running')
+        .map(({ record }) => record.ticket.ticketPath),
+      preservedArtifacts: [],
+      featureDirectoriesToDelete: [],
     };
   }
 }
@@ -813,6 +783,83 @@ function removeOrphanedWorktree(
   };
 }
 
+function isPathWithinSandcastleRuntime(repoRoot: string, candidatePath: string): boolean {
+  return isPathWithinRoot(path.resolve(candidatePath), path.resolve(repoRoot, '.scratch', 'sandcastle-runtime'));
+}
+
+function cleanupSandcastleResource(
+  repoRoot: string,
+  target: SandcastleCleanupResourceTarget,
+): { deleted?: string; result: SandcastleCleanupResult } {
+  const updatedAt = new Date().toISOString();
+  const base = {
+    resourceId: target.resource.id,
+    resourceType: target.resource.type,
+    updatedAt,
+  };
+
+  try {
+    if (target.resource.type === 'log') {
+      const logPath = target.resource.path;
+      if (!logPath || !isPathWithinSandcastleRuntime(repoRoot, logPath)) {
+        return { result: { ...base, status: 'skipped', message: 'log path is not under Sandcastle runtime root' } };
+      }
+      rmSync(logPath, { force: true, recursive: false });
+      return { deleted: logPath, result: { ...base, status: 'succeeded' } };
+    }
+
+    if (target.resource.type === 'worktree') {
+      const worktreePath = target.resource.path;
+      if (!worktreePath || !isWithinRepoLocalWorktree(worktreePath, repoRoot)) {
+        return { result: { ...base, status: 'skipped', message: 'worktree path is not a repo-local AFK worktree' } };
+      }
+      const locked = checkWorktreeLocked(worktreePath);
+      if (!locked.ok) return { result: { ...base, status: 'skipped', message: locked.reason } };
+      const clean = checkWorktreeClean(repoRoot, worktreePath);
+      if (!clean.ok) return { result: { ...base, status: 'skipped', message: clean.reason } };
+      runGit(repoRoot, ['worktree', 'remove', '-f', worktreePath]);
+      return { deleted: worktreePath, result: { ...base, status: 'succeeded' } };
+    }
+
+    if (target.resource.type === 'branch') {
+      const branchName = target.resource.id;
+      if (!branchName.startsWith('afk/')) {
+        return { result: { ...base, status: 'skipped', message: 'branch is not an AFK branch' } };
+      }
+      const clean = checkBranchWorktreesClean(repoRoot, branchName);
+      if (!clean.ok) return { result: { ...base, status: 'skipped', message: clean.reason } };
+      runGit(repoRoot, ['branch', '-D', branchName]);
+      return { deleted: `branch ${branchName}`, result: { ...base, status: 'succeeded' } };
+    }
+
+    return {
+      result: { ...base, status: 'skipped', message: `${target.resource.type} cleanup is not implemented locally` },
+    };
+  } catch (error) {
+    return {
+      result: {
+        ...base,
+        status: 'failed',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
+function persistSandcastleCleanupResult(
+  target: SandcastleCleanupResourceTarget,
+  result: SandcastleCleanupResult,
+): void {
+  const record = JSON.parse(readFileSync(target.recordPath, 'utf8')) as SandcastleRuntimeRecord;
+  const cleanupResults = [
+    ...(record.cleanupResults ?? []).filter(
+      (existing) => existing.resourceId !== result.resourceId || existing.resourceType !== result.resourceType,
+    ),
+    result,
+  ];
+  writeSandcastleRuntimeRecord(target.recordPath, { ...record, updatedAt: result.updatedAt, cleanupResults });
+}
+
 export class CleanupExecutor {
   execute(
     plan: CleanupPlan,
@@ -826,6 +873,12 @@ export class CleanupExecutor {
     const postMergeCleanupResults: PendingPostMergeCleanupResult[] = [];
     const orphanedWorktreeResults: OrphanedWorktreeCleanupResult[] = [];
     const remainingPending: PendingPostMergeCleanupItem[] = [];
+
+    for (const target of plan.sandcastleResourceTargets ?? []) {
+      const { deleted: deletedResource, result } = cleanupSandcastleResource(repoRoot, target);
+      persistSandcastleCleanupResult(target, result);
+      if (deletedResource) deleted.push(deletedResource);
+    }
 
     for (const pending of plan.pendingPostMergeCleanupTargets) {
       const retry = retryPostMergeCleanup(repoRoot, pending);
