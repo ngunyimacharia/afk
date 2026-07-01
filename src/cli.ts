@@ -321,6 +321,10 @@ export async function runAfk(
       ])
       .filter(Boolean) as string[];
     if (plan.workspaceExecutionPath) logTargets.push(plan.workspaceExecutionPath);
+    const sandcastleTargets = (plan.sandcastleResourceTargets ?? []).map(
+      (target) =>
+        `- ${target.feature}/${target.issueName} ${target.resource.type} id=${target.resource.id}${target.resource.path ? ` path=${target.resource.path}` : ''}${target.resource.cleanupCommand ? ` command=${target.resource.cleanupCommand}` : ''}`,
+    );
     const dryRun = [
       'AFK Cleanup Plan',
       '',
@@ -333,6 +337,9 @@ export async function runAfk(
       '',
       'Matching logs / metadata to delete',
       ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
+      '',
+      'Sandcastle cleanup resources',
+      ...(sandcastleTargets.length ? sandcastleTargets : ['- none']),
       '',
       'Pending failed post-merge cleanup retries',
       ...(plan.pendingPostMergeCleanupTargets.length
@@ -385,9 +392,22 @@ export async function runAfk(
           )
         : ['- none']),
     ].join('\n');
+    const sandcastleResults = [
+      'Sandcastle cleanup results',
+      ...(plan.sandcastleResourceTargets?.length
+        ? plan.sandcastleResourceTargets.map((target) => {
+            const record = JSON.parse(readFileSync(target.recordPath, 'utf8'));
+            const result = record.cleanupResults?.find(
+              (item: { resourceId: string; resourceType: string }) =>
+                item.resourceId === target.resource.id && item.resourceType === target.resource.type,
+            );
+            return `- ${target.feature}/${target.issueName} ${target.resource.type}:${target.resource.id}: ${result?.status ?? 'unknown'}${result?.message ? ` (${result.message})` : ''}`;
+          })
+        : ['- none']),
+    ].join('\n');
     return {
       code: 0,
-      message: `${dryRun}\n\n${retryResults}\n\n${orphanedWorktreeResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
+      message: `${dryRun}\n\n${sandcastleResults}\n\n${retryResults}\n\n${orphanedWorktreeResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
     };
   }
   if (command === 'sync') return runSync();

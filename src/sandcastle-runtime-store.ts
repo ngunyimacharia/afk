@@ -115,6 +115,16 @@ export interface SandcastleCleanupResource {
   cleanupCommand?: string;
 }
 
+export type SandcastleCleanupStatus = 'pending' | 'succeeded' | 'skipped' | 'failed';
+
+export interface SandcastleCleanupResult {
+  resourceId: string;
+  resourceType: SandcastleCleanupResourceType;
+  status: SandcastleCleanupStatus;
+  message?: string;
+  updatedAt: string;
+}
+
 export interface SandcastleRuntimeRecord {
   schemaVersion: 1;
   runId: string;
@@ -135,6 +145,7 @@ export interface SandcastleRuntimeRecord {
     handoffReason?: string;
   };
   cleanupResources: SandcastleCleanupResource[];
+  cleanupResults?: SandcastleCleanupResult[];
 }
 
 function isoFromEpoch(epochMs: number): string {
@@ -189,6 +200,7 @@ export class SandcastleRuntimeStore {
       },
       terminal: { status: 'running' },
       cleanupResources: [],
+      cleanupResults: [],
     };
     this.writeRecord(recordPath, record);
     return { runId: input.runId, recordPath, runDirectory };
