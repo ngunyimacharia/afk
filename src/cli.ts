@@ -70,6 +70,7 @@ import { PermissionCoordinator } from './permission-coordinator.js';
 import { inferTrackerProviderKind, loadAfkProjectConfig } from './project-config.js';
 import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
+import { detectDockerAvailable } from './sandbox-selection.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { createDefaultTrackerProvider } from './scratch-tracker-provider.js';
 import { ScratchWorktreeService } from './scratch-worktree-service.js';
@@ -78,7 +79,7 @@ import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
 import type { TrackerProvider } from './tracker-contract.js';
 import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
-import type { FeatureCompletionAction, LaunchModel, TicketRecord } from './types.js';
+import type { FeatureCompletionAction, LaunchModel, SandboxMode, TicketRecord } from './types.js';
 import {
   orderSelectedFeaturesByWaves,
   refreshWorkspaceExecutionGraph,
@@ -560,6 +561,7 @@ export async function runAfk(
     let featureCompletionAction: FeatureCompletionAction = 'merge-to-base';
     let harness: SelectableHarnessId = 'OpenCode';
     let reviewerHarness: SelectableHarnessId = 'OpenCode';
+    let sandboxMode: SandboxMode = 'no-sandbox';
 
     const { availableHarnesses, harnessModelCache } = await discoverAvailableHarnesses(undefined, repoRoot);
 
@@ -571,6 +573,7 @@ export async function runAfk(
     }
 
     try {
+      const dockerAvailable = detectDockerAvailable();
       const wizard = await runInteractiveLaunchWizard({
         io,
         repoRoot,
@@ -581,6 +584,7 @@ export async function runAfk(
         },
         tickets,
         preferences: launchPreferences,
+        dockerAvailable,
       });
       if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
       harness = wizard.harness ?? 'OpenCode';
@@ -592,6 +596,7 @@ export async function runAfk(
       concurrency = wizard.concurrency ?? concurrency;
       mergeBackToBase = wizard.mergeBackToBase ?? false;
       featureCompletionAction = wizard.featureCompletionAction ?? (mergeBackToBase ? 'merge-to-base' : 'create-pr');
+      sandboxMode = wizard.sandboxMode ?? 'no-sandbox';
       runtimeStore.writeLaunchPreferences({
         harness: wizard.harness,
         modelId: model?.id,
@@ -599,6 +604,7 @@ export async function runAfk(
         reviewerModelId: reviewerModel?.id,
         concurrency,
         featureCompletionAction: wizard.featureCompletionAction,
+        sandboxMode,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown model discovery error';
@@ -701,6 +707,7 @@ export async function runAfk(
       checkoutsByFeature,
       featureDependencies,
       harness,
+      sandboxMode,
     );
     writeRunPlan(repoRoot, runId, plan.tickets);
 
@@ -734,6 +741,7 @@ export async function runAfk(
           `Selected harness: ${harness}`,
           `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
           `Selected reviewer harness: ${reviewerHarness}`,
+          `Selected sandbox: ${plan.sandboxMode ?? 'no-sandbox'}`,
           `Reviewer prompt: ${plan.reviewerPrompt?.id ?? 'unknown'}`,
           `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
           `Selected features (${selectedFeatures.length}): ${selectedFeatures.join(', ')}`,

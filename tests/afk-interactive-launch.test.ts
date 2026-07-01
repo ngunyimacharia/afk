@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import prompts from 'prompts';
 import {
   discoverLaunchTickets,
   expandSelectedFeaturesToAllTickets,
@@ -20,12 +21,16 @@ import {
   validateSelectedTicketDependencies,
 } from '../src/cli.js';
 import {
+  dockerSandboxChoices,
   featureCompletionActionChoices,
   formatFeatureSelectionTitle,
   formatModelSelectionTitle,
+  noDockerSandboxChoices,
   prioritizeModelChoices,
+  runInteractiveLaunchWizard,
 } from '../src/interactive-launch.js';
 import { RuntimeStore } from '../src/runtime-store.js';
+import { detectDockerAvailable } from '../src/sandbox-selection.js';
 import { TicketRepository } from '../src/ticket-repository.js';
 import type { TrackerProvider, TrackerWorkItem } from '../src/tracker-contract.js';
 
@@ -313,6 +318,100 @@ test('feature completion action choices replace manual branch inspection', () =>
     ),
     false,
   );
+});
+
+test('Docker-present launch choices recommend Docker and still offer no-sandbox', () => {
+  assert.deepEqual(dockerSandboxChoices, [
+    { title: 'Docker isolation (recommended)', value: 'docker' },
+    { title: 'No sandbox (explicitly accept host execution risk)', value: 'no-sandbox' },
+  ]);
+});
+
+test('Docker-missing launch choices require explicit no-sandbox or abort', () => {
+  assert.deepEqual(noDockerSandboxChoices, [
+    { title: 'Continue without sandbox (host execution)', value: 'no-sandbox' },
+    { title: 'Abort launch', value: 'abort' },
+  ]);
+});
+
+test('Docker detection succeeds only when docker info exits successfully', () => {
+  const present = detectDockerAvailable((command, args, options) => {
+    assert.equal(command, 'docker');
+    assert.deepEqual(args, ['info']);
+    assert.deepEqual(options, { stdio: 'ignore', timeout: 5000 });
+    return { status: 0 } as never;
+  });
+  const missing = detectDockerAvailable(() => ({ status: 1 }) as never);
+
+  assert.equal(present, true);
+  assert.equal(missing, false);
+});
+
+test('interactive wizard records Docker sandbox choice', async () => {
+  injectPromptAnswers([
+    'OpenCode',
+    'docker',
+    'provider/model',
+    'OpenCode (same as implementation)',
+    'provider/model',
+    ['feat'],
+    1,
+    'merge-to-base',
+  ]);
+
+  const result = await runInteractiveLaunchWizard({
+    io: promptIo(),
+    repoRoot: '/tmp/repo',
+    availableHarnesses: ['OpenCode'],
+    discoverModels: async () => [{ id: 'provider/model' }],
+    tickets: [launchTicket()],
+    dockerAvailable: true,
+  });
+
+  assert.equal(result.cancelled, false);
+  assert.equal(result.sandboxMode, 'docker');
+});
+
+test('interactive wizard records explicit no-sandbox choice when Docker is missing', async () => {
+  injectPromptAnswers([
+    'OpenCode',
+    'no-sandbox',
+    'provider/model',
+    'OpenCode (same as implementation)',
+    'provider/model',
+    ['feat'],
+    1,
+    'merge-to-base',
+  ]);
+
+  const result = await runInteractiveLaunchWizard({
+    io: promptIo(),
+    repoRoot: '/tmp/repo',
+    availableHarnesses: ['OpenCode'],
+    discoverModels: async () => [{ id: 'provider/model' }],
+    tickets: [launchTicket()],
+    dockerAvailable: false,
+  });
+
+  assert.equal(result.cancelled, false);
+  assert.equal(result.sandboxMode, 'no-sandbox');
+});
+
+test('interactive wizard aborts when Docker is missing and abort is selected', async () => {
+  injectPromptAnswers(['OpenCode', 'abort']);
+
+  const result = await runInteractiveLaunchWizard({
+    io: promptIo(),
+    repoRoot: '/tmp/repo',
+    availableHarnesses: ['OpenCode'],
+    discoverModels: async () => {
+      throw new Error('model discovery should not run after abort');
+    },
+    tickets: [launchTicket()],
+    dockerAvailable: false,
+  });
+
+  assert.equal(result.cancelled, true);
 });
 
 test('manual permission summary renders deterministic detailed rows', () => {
@@ -763,6 +862,25 @@ test('does not attach to stale active run with expired heartbeat', async () => {
   assert.doesNotMatch(result.message, /Attached to active run/);
   assert.match(result.message, /No pending AFK tickets found/);
 });
+
+function injectPromptAnswers(answers: unknown[]): void {
+  (prompts as unknown as { inject(values: unknown[]): void }).inject(answers);
+}
+
+function promptIo() {
+  return { stdin: { isTTY: true } as never, stdout: { isTTY: true, write: () => {} } as never };
+}
+
+function launchTicket() {
+  return {
+    path: '/tmp/ticket.md',
+    feature: 'feat',
+    issueName: '01',
+    label: 'feat/01',
+    status: 'ready-for-agent',
+    executorAfk: true,
+  };
+}
 
 function linearFeature(input: {
   featureSlug: string;

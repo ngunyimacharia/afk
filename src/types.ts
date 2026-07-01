@@ -63,6 +63,7 @@ export interface LaunchModel {
 }
 
 export type FeatureCompletionAction = 'merge-to-base' | 'create-pr';
+export type SandboxMode = 'docker' | 'no-sandbox';
 
 export interface LaunchPreferences {
   harness?: SelectableHarnessId;
@@ -73,6 +74,7 @@ export interface LaunchPreferences {
   budgets?: Partial<BudgetPolicy>;
   featureCompletionAction?: FeatureCompletionAction;
   mergeBackToBase?: boolean;
+  sandboxMode?: SandboxMode;
 }
 
 export interface BudgetPolicy {
@@ -180,6 +182,7 @@ export interface LaunchPlan {
   reviewerHarness?: SelectableHarnessId;
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
+  sandboxMode?: SandboxMode;
   tickets: TicketRecord[];
   repoRoot: string;
   gitContext: GitContext;
@@ -265,6 +268,7 @@ export interface RuntimeMetadataRecord {
   PROVIDER_IDENTITY?: LinearProviderIdentity;
   STATUS: string;
   EXECUTION_PROVIDER: string;
+  SANDBOX_MODE?: SandboxMode;
   EXECUTION_MODEL_ID?: string;
   REVIEWER_MODEL_ID?: string;
   REVIEWER_PROMPT_ID?: string;
