@@ -15,6 +15,15 @@ import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
 import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
 import { CleanupExecutor, CleanupPlanner, readPendingPostMergeCleanupItems } from './cleanup.js';
+import { isValidCommand, type ParsedCliArgs, parseCliArgs } from './cli-flags.js';
+import {
+  type CliResult,
+  formatJsonError,
+  formatJsonSuccess,
+  formatJsonSuccessWithData,
+  formatNotImplemented,
+  formatUnknownCommand,
+} from './cli-response.js';
 import { type DaemonLaunchContext, runDaemon } from './daemon.js';
 import {
   logResolvedExecutables,
@@ -225,44 +234,6 @@ function buildLinearWorkspaceGraph(
   };
 }
 
-function commandArg(): string | undefined {
-  const knownCommands = new Set([
-    'summary',
-    'cleanup',
-    'afk-summary',
-    'afk-cleanup',
-    'sync',
-    'linear-plan',
-    'tui',
-    'stop',
-    'status',
-    '__daemon',
-  ]);
-  const arg1 = process.argv[1];
-  const arg2 = process.argv[2];
-  if (arg1 && knownCommands.has(arg1)) {
-    if (arg1 === 'summary' || arg1 === 'afk-summary') return 'afk-summary';
-    if (arg1 === 'cleanup' || arg1 === 'afk-cleanup') return 'afk-cleanup';
-    return arg1;
-  }
-  if (arg2 === 'summary' || arg2 === 'afk-summary') return 'afk-summary';
-  if (arg2 === 'cleanup' || arg2 === 'afk-cleanup') return 'afk-cleanup';
-  return arg2;
-}
-
-function hasFlag(flag: string): boolean {
-  return process.argv.includes(flag);
-}
-
-function linearPlanManifestPath(): string | undefined {
-  const manifestFlagIndex = process.argv.indexOf('--manifest');
-  if (manifestFlagIndex >= 0) return process.argv[manifestFlagIndex + 1];
-  const commandIndex = process.argv.indexOf('linear-plan');
-  if (commandIndex < 0) return undefined;
-  const next = process.argv[commandIndex + 1];
-  return next && !next.startsWith('-') ? next : undefined;
-}
-
 export interface SpawnDaemonHandle {
   pid: number | undefined;
   unref: () => void;
@@ -272,6 +243,7 @@ export interface SpawnDaemonHandle {
 export async function runAfk(
   repoRoot = process.cwd(),
   runtime: {
+    argv?: string[];
     io?: PromptIO;
     env?: NodeJS.ProcessEnv;
     spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
@@ -282,14 +254,65 @@ export async function runAfk(
     linearProvider?: LinearProvider;
     linearManifest?: LinearPlanManifest;
   } = {},
-): Promise<{ code: number; message: string }> {
+): Promise<CliResult> {
+  const argv = runtime.argv ?? process.argv;
+  const parsed = parseCliArgs(argv);
+  const command = parsed.command;
+  const isJson = parsed.flags.json;
+
+  const incompleteCommands = new Set(['run', 'pause', 'resume', 'plan', 'events']);
+  if (command && incompleteCommands.has(command)) {
+    return formatNotImplemented(command, isJson);
+  }
+
+  if (command && !isValidCommand(command)) {
+    return formatUnknownCommand(command, isJson);
+  }
+
+  try {
+    const result = await runAfkInternal(repoRoot, runtime, parsed);
+    if (!isJson) return result;
+    if (result.code !== 0) {
+      return formatJsonError(command, 'command-failed', result.message);
+    }
+    if (command === 'linear-plan') {
+      try {
+        const data = JSON.parse(result.message) as object;
+        return formatJsonSuccessWithData(command, data);
+      } catch {
+        return formatJsonSuccess(command, result.message);
+      }
+    }
+    return formatJsonSuccess(command, result.message);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isJson) return { code: 1, message };
+    return formatJsonError(command, 'command-failed', message);
+  }
+}
+
+async function runAfkInternal(
+  repoRoot: string,
+  runtime: {
+    io?: PromptIO;
+    env?: NodeJS.ProcessEnv;
+    spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
+    trackerProvider?: TrackerProvider;
+    inlineLaunch?: boolean;
+    stopTimeoutMs?: number;
+    stopPollIntervalMs?: number;
+    linearProvider?: LinearProvider;
+    linearManifest?: LinearPlanManifest;
+  },
+  parsed: ParsedCliArgs,
+): Promise<CliResult> {
   const io = runtime.io ?? { stdin: process.stdin, stdout: process.stdout };
   const env = runtime.env ?? process.env;
-  const command = commandArg();
+  const command = parsed.command;
 
   try {
     const resolvedExecutables = resolveExecutables(['git', 'which']);
-    if (hasFlag('--verbose') || hasFlag('-v') || env.AFK_DEBUG) {
+    if (parsed.flags.verbose || env.AFK_DEBUG) {
       logResolvedExecutables(resolvedExecutables);
     }
   } catch (error) {
@@ -305,7 +328,7 @@ export async function runAfk(
     return { code: 0, message: report.message };
   }
   if (command === 'afk-cleanup') {
-    const isDryRun = hasFlag('--dry-run');
+    const isDryRun = parsed.flags.dryRun;
     const planner = new CleanupPlanner({ repoRoot });
     const plan = planner.buildPlan();
     const logTargets = plan.terminalTargets
@@ -412,7 +435,7 @@ export async function runAfk(
     const providerConfig = createLinearProviderFromConfig(repoRoot);
     if (!providerConfig.provider || !providerConfig.teamId || !providerConfig.setup)
       return { code: 1, message: providerConfig.errors.join('\n') };
-    const manifestPath = linearPlanManifestPath();
+    const manifestPath = parsed.flags.manifest ?? parsed.positionals[0];
     if (!runtime.linearManifest && !manifestPath) return { code: 1, message: 'Manifest path required.' };
     const manifestResult = runtime.linearManifest
       ? { manifest: runtime.linearManifest, errors: [] }
@@ -487,7 +510,7 @@ export async function runAfk(
     return { code: 0, message: lines.join('\n') };
   }
   if (command === '__daemon') {
-    const contextPath = process.argv[1] === '__daemon' ? process.argv[2] : process.argv[3];
+    const contextPath = parsed.positionals[0];
     if (!contextPath) return { code: 1, message: 'Daemon context path required' };
     const context = JSON.parse(readFileSync(contextPath, 'utf8')) as DaemonLaunchContext;
     try {
