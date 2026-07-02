@@ -1,5 +1,6 @@
 import type { SelectableHarnessId } from './harness-registry.js';
 import type { ReadinessCheckMetadata } from './readiness-service.js';
+import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 
 export interface TicketRecord {
   path: string;
@@ -63,16 +64,20 @@ export interface LaunchModel {
 }
 
 export type FeatureCompletionAction = 'merge-to-base' | 'create-pr';
+export type SandboxMode = 'docker' | 'no-sandbox';
+export type SandcastleSandboxMode = SandboxMode;
 
 export interface LaunchPreferences {
   harness?: SelectableHarnessId;
   modelId?: string;
   reviewerHarness?: SelectableHarnessId;
   reviewerModelId?: string;
+  sandcastleSandboxMode?: SandcastleSandboxMode;
   concurrency?: number;
   budgets?: Partial<BudgetPolicy>;
   featureCompletionAction?: FeatureCompletionAction;
   mergeBackToBase?: boolean;
+  sandboxMode?: SandboxMode;
 }
 
 export interface BudgetPolicy {
@@ -177,9 +182,12 @@ export interface AfkStateSnapshot {
 export interface LaunchPlan {
   harness?: SelectableHarnessId;
   model: LaunchModel;
+  sandcastleProvider?: SandcastleAgentProviderSelection;
   reviewerHarness?: SelectableHarnessId;
   reviewerModel?: LaunchModel;
+  reviewerSandcastleProvider?: SandcastleAgentProviderSelection;
   reviewerPrompt?: ReviewerPromptTemplate;
+  sandboxMode?: SandboxMode;
   tickets: TicketRecord[];
   repoRoot: string;
   gitContext: GitContext;
@@ -265,7 +273,20 @@ export interface RuntimeMetadataRecord {
   PROVIDER_IDENTITY?: LinearProviderIdentity;
   STATUS: string;
   EXECUTION_PROVIDER: string;
+  SANDBOX_MODE?: SandboxMode;
   EXECUTION_MODEL_ID?: string;
+  SANDCASTLE_SANDBOX_MODE?: SandcastleSandboxMode;
+  SANDCASTLE_BRANCH?: string;
+  SANDCASTLE_WORKTREE_PATH?: string;
+  SANDCASTLE_PROVIDER?: string;
+  SANDCASTLE_LOG_PATH?: string;
+  SANDCASTLE_PHASE_RESULT?: {
+    phase: 'implementation';
+    status: ImplementationStatus;
+    stdout?: string;
+    error?: string;
+  };
+  SANDCASTLE_COMMITS?: string[];
   REVIEWER_MODEL_ID?: string;
   REVIEWER_PROMPT_ID?: string;
   REVIEWER_PROMPT_PATH?: string;

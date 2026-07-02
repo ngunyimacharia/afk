@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { SelectableHarnessId } from './harness-registry.js';
+import { resolveSandcastleAgentProvider } from './sandcastle-provider.js';
 import type {
   AfkStateSnapshot,
   DependencySnapshot,
@@ -8,6 +9,7 @@ import type {
   LaunchPlan,
   ReadinessSnapshot,
   ReviewerPromptTemplate,
+  SandboxMode,
   TicketRecord,
 } from './types.js';
 import type { PreparedCheckoutContext } from './worktree-preparation-service.js';
@@ -174,6 +176,7 @@ export function buildLaunchPlan(
   checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
   featureDependencies?: Record<string, string[]>,
   harness?: SelectableHarnessId,
+  sandboxMode?: SandboxMode,
 ): LaunchPlan {
   const snapshots = Object.fromEntries(
     tickets.map((ticket) => [
@@ -184,9 +187,14 @@ export function buildLaunchPlan(
   return {
     repoRoot,
     harness,
+    sandboxMode,
     model,
+    ...(harness ? { sandcastleProvider: resolveSandcastleAgentProvider(harness, model) } : {}),
     reviewerHarness: reviewer?.harness,
     reviewerModel: reviewer?.model,
+    ...(reviewer?.harness
+      ? { reviewerSandcastleProvider: resolveSandcastleAgentProvider(reviewer.harness, reviewer.model) }
+      : {}),
     reviewerPrompt: reviewer?.prompt,
     tickets,
     checkout,
