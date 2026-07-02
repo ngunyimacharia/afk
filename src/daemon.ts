@@ -5,20 +5,15 @@ import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
 import { featuresWithAllTicketsCompleted, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
 import { createPullRequestsForCompletedFeatures } from './feature-pr-creation.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
-import {
-  createHarnessAgentExecutionProvider,
-  createHarnessExecutor,
-  type SelectableHarnessId,
-} from './harness-registry.js';
+import type { SelectableHarnessId } from './harness-registry.js';
 import { LinearGraphqlClient, resolveLinearConfig } from './linear.js';
 import { isMergeInProgress, MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
-import { PermissionCoordinator } from './permission-coordinator.js';
 import { loadAfkProjectConfig } from './project-config.js';
 import { RuntimeStore } from './runtime-store.js';
-import { resolveSandcastleSandboxMode, SandcastleImplementationCore } from './sandcastle-execution-core.js';
+import { SandcastleAgentExecutionProvider } from './sandcastle-agent-execution-provider.js';
+import { SandcastleWorktreeService } from './sandcastle-worktree-service.js';
 import { Scheduler } from './scheduler.js';
-import { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import type {
   AgentExecutionProgressEvent,
@@ -43,19 +38,7 @@ export interface DaemonLaunchContext {
 }
 
 export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
-  const {
-    repoRoot,
-    runId,
-    plan,
-    harness,
-    reviewerHarness,
-    concurrency,
-    budgets,
-    mergeBackToBase,
-    featureCompletionAction,
-    sandcastleSandboxMode,
-    baseBranch,
-  } = context;
+  const { repoRoot, runId, plan, concurrency, budgets, mergeBackToBase, featureCompletionAction, baseBranch } = context;
   const resolvedCompletionAction: FeatureCompletionAction =
     featureCompletionAction ?? (mergeBackToBase === false ? 'create-pr' : 'merge-to-base');
 
@@ -69,20 +52,8 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
   const eventStream = new ActiveRunEventStream(repoRoot, runId);
   const runtimeStore = new RuntimeStore({ repoRoot });
 
-  const permissionCoordinator = new PermissionCoordinator({
-    ticketLabel: plan.tickets[0]?.label,
-    autoApprove: true,
-  });
-
-  const implementationExecutor = createHarnessExecutor(harness, repoRoot);
-  const reviewerExecutor = createHarnessExecutor(reviewerHarness, repoRoot);
-
-  const executionProvider = createHarnessAgentExecutionProvider(harness, implementationExecutor, permissionCoordinator);
-  const reviewerProvider = createHarnessAgentExecutionProvider(
-    reviewerHarness,
-    reviewerExecutor,
-    permissionCoordinator,
-  );
+  const executionProvider = new SandcastleAgentExecutionProvider();
+  const reviewerProvider = executionProvider;
   const linearSyncer = await resolveDaemonLinearSyncer(repoRoot);
 
   const runner = new SingleTicketRunner(
@@ -90,8 +61,6 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
     new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
     budgets,
     linearSyncer,
-    undefined,
-    new SandcastleImplementationCore(runtimeStore, resolveSandcastleSandboxMode(process.env, sandcastleSandboxMode)),
   );
 
   const notificationPolicy = new NotificationPolicy();
@@ -174,7 +143,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
 
   const scheduler = new Scheduler({
     runner,
-    scratchWorktreeService: new ScratchWorktreeService(),
+    sandcastleWorktreeService: new SandcastleWorktreeService(),
     concurrencyLimit: concurrency,
     featureMergeBackProvider: {
       isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>

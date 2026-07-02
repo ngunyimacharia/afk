@@ -1,14 +1,9 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import {
-  countLeftoverBranches,
-  countLeftoverWorktrees,
-  readPendingPostMergeCleanupItems,
-  safeRealpath,
-} from './cleanup.js';
+import { countLeftoverBranches, countLeftoverWorktrees, safeRealpath } from './cleanup.js';
+import type { SandcastleRuntimeRecord } from './sandcastle-runtime-store.js';
 import type { TrackerProvider } from './tracker-contract.js';
-import type { RuntimeMetadataRecord } from './types.js';
 
 export interface SummaryReporterInput {
   repoRoot: string;
@@ -51,7 +46,7 @@ export interface SummaryAttempt {
 interface SummaryGroupItem {
   issue: IssueFileRecord;
   attempt?: SummaryAttempt;
-  metadata?: RuntimeMetadataRecord;
+  runtime?: SandcastleRuntimeRecord;
 }
 
 interface SlowPhaseRecord {
@@ -160,22 +155,14 @@ function classify(
 }
 
 function classifyRuntime(
-  metadata: RuntimeMetadataRecord,
+  runtime: SandcastleRuntimeRecord,
 ): 'completed' | 'failed' | 'interrupted' | 'handoff' | 'other' {
-  const status = normalize(metadata.RUN_STATUS ?? metadata.STATUS);
+  const status = normalize(runtime.terminal.status);
   if (status === 'completed') return 'completed';
   if (status === 'handoff' || status === 'blocked') return 'handoff';
   if (status === 'failed') return 'failed';
   if (status === 'interrupted') return 'interrupted';
   return 'other';
-}
-
-function linearSummaryCommentStatus(metadata: RuntimeMetadataRecord): string | undefined {
-  if (!metadata.LINEAR_ISSUE_KEY && metadata.PROVIDER_IDENTITY?.provider !== 'linear') return undefined;
-  if (metadata.LINEAR_SYNC_STATUS === 'terminal-synced') return 'synced';
-  if (metadata.LINEAR_SYNC_STATUS === 'failed') return 'failed';
-  if (metadata.LINEAR_SYNC_STATUS === 'running-synced') return 'not synced (run-start workflow state synced)';
-  return 'not recorded';
 }
 
 function readIssueFiles(repoRoot: string): IssueFileRecord[] {
@@ -225,42 +212,47 @@ export class TrackerProviderSummaryIssueSource implements SummaryIssueSource {
   }
 }
 
-function readRuntimeMetadata(repoRoot: string): RuntimeMetadataRecord[] {
-  const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
-  if (!exists(metadataRoot)) return [];
-  return readdirSync(metadataRoot)
-    .filter((file) => file.endsWith('.json'))
-    .map((file) => JSON.parse(readFileSync(path.join(metadataRoot, file), 'utf8')) as RuntimeMetadataRecord);
+function sandcastleRuntimeRoot(repoRoot: string): string {
+  return path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs');
+}
+
+function readSandcastleRuntimeRecords(repoRoot: string): SandcastleRuntimeRecord[] {
+  const runsRoot = sandcastleRuntimeRoot(repoRoot);
+  if (!exists(runsRoot)) return [];
+  return readdirSync(runsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(runsRoot, entry.name, 'record.json'))
+    .filter((recordPath) => {
+      try {
+        return statSync(recordPath).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .map((recordPath) => JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord);
 }
 
 function formatAttempt(item: SummaryGroupItem): string {
-  const { issue, attempt, metadata } = item;
+  const { issue, attempt, runtime } = item;
   const session =
-    fieldValue(attempt?.fields ?? {}, 'session or run id', 'session/run id', 'session id') ??
-    metadata?.PROVIDER_SESSION_ID ??
-    undefined;
-  const malformedReviewerCount = (metadata?.REVIEW_CYCLE_HISTORY ?? []).filter((entry) => entry.malformed).length;
-  const reviewCycleCount = metadata?.REVIEW_CYCLE_HISTORY?.length;
-  const fixupCycleCount = (metadata?.PHASE_HISTORY ?? []).filter((entry) => entry.name === 'fixup').length;
-  const linearCommentStatus = metadata ? linearSummaryCommentStatus(metadata) : undefined;
-  const readinessBlocker =
-    metadata?.STATUS === 'blocked' || metadata?.RUN_STATUS === 'blocked'
-      ? (metadata.FAILURE_KIND ?? metadata.UNSAFE_REASON ?? undefined)
+    fieldValue(attempt?.fields ?? {}, 'session or run id', 'session/run id', 'session id') ?? runtime?.runId;
+  const cleanupStatus = runtime?.cleanupResults?.length
+    ? runtime.cleanupResults.map((result) => `${result.resourceType}:${result.resourceId}:${result.status}`).join(', ')
+    : runtime?.cleanupResources.length
+      ? 'pending'
       : undefined;
   const bits = [
     `- ${issue.feature}/${issue.issueName}`,
     issue.status ? `status: ${issue.status}` : null,
-    metadata?.RUN_STATUS ? `run: ${metadata.RUN_STATUS}` : metadata?.STATUS ? `runtime: ${metadata.STATUS}` : null,
-    metadata?.IMPLEMENTATION_STATUS ? `implementation: ${metadata.IMPLEMENTATION_STATUS}` : null,
-    metadata?.REVIEW_STATUS ? `review: ${metadata.REVIEW_STATUS}` : null,
-    metadata?.LINEAR_ISSUE_KEY ? `linear issue: ${metadata.LINEAR_ISSUE_KEY}` : null,
-    metadata?.LINEAR_ISSUE_URL ? `linear url: ${metadata.LINEAR_ISSUE_URL}` : null,
-    metadata?.LINEAR_PARENT_KEY ? `linear parent: ${metadata.LINEAR_PARENT_KEY}` : null,
-    metadata?.LINEAR_SYNC_STATUS ? `linear workflow sync: ${metadata.LINEAR_SYNC_STATUS}` : null,
-    linearCommentStatus ? `linear summary comment: ${linearCommentStatus}` : null,
-    metadata?.LINEAR_MIRROR_PATH ? `linear mirror: ${metadata.LINEAR_MIRROR_PATH}` : null,
-    metadata?.LINEAR_SYNC_FAILURES?.length ? `linear sync errors: ${metadata.LINEAR_SYNC_FAILURES.join(' | ')}` : null,
-    metadata?.START_TIME ? `started: ${metadata.START_TIME}` : null,
+    runtime?.trackerSource ? `provider: ${runtime.trackerSource}` : null,
+    runtime?.provider.provider ? `execution provider: ${runtime.provider.provider}` : null,
+    runtime?.provider.model ? `model: ${runtime.provider.model}` : null,
+    runtime?.sandbox.mode ? `sandbox: ${runtime.sandbox.mode}` : null,
+    runtime?.branch ? `branch: ${runtime.branch}` : null,
+    runtime?.worktreePath ? `worktree: ${runtime.worktreePath}` : null,
+    runtime?.terminal.status ? `terminal: ${runtime.terminal.status}` : null,
+    cleanupStatus ? `cleanup: ${cleanupStatus}` : null,
+    runtime?.createdAt ? `started: ${runtime.createdAt}` : null,
     fieldValue(attempt?.fields ?? {}, 'timestamp')
       ? `timestamp: ${fieldValue(attempt?.fields ?? {}, 'timestamp')}`
       : null,
@@ -269,6 +261,9 @@ function formatAttempt(item: SummaryGroupItem): string {
       ? `outcome: ${fieldValue(attempt?.fields ?? {}, 'outcome', 'result')}`
       : null,
     fieldValue(attempt?.fields ?? {}, 'commits') ? `commits: ${fieldValue(attempt?.fields ?? {}, 'commits')}` : null,
+    !fieldValue(attempt?.fields ?? {}, 'commits') && runtime?.commits.length
+      ? `commits: ${runtime.commits.map((commit) => commit.sha).join(', ')}`
+      : null,
     fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes')
       ? `changes: ${fieldValue(attempt?.fields ?? {}, 'notable changes', 'changes')}`
       : null,
@@ -278,13 +273,10 @@ function formatAttempt(item: SummaryGroupItem): string {
     fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run')
       ? `verification: ${fieldValue(attempt?.fields ?? {}, 'tests or checks run', 'verification', 'tests run')}`
       : null,
-    typeof reviewCycleCount === 'number' ? `review cycles: ${reviewCycleCount}` : null,
-    metadata?.FAILURE_KIND ? `failure kind: ${metadata.FAILURE_KIND}` : null,
-    typeof malformedReviewerCount === 'number' && malformedReviewerCount > 0
-      ? `malformed reviewer outputs: ${malformedReviewerCount}`
+    runtime?.phases.length
+      ? `phases: ${runtime.phases.map((phase) => `${phase.phase}#${phase.attempt}:${phase.status}`).join(', ')}`
       : null,
-    typeof fixupCycleCount === 'number' && fixupCycleCount > 0 ? `fixup cycles: ${fixupCycleCount}` : null,
-    readinessBlocker ? `readiness blocker: ${readinessBlocker}` : null,
+    runtime?.terminal.handoffReason ? `handoff reason: ${runtime.terminal.handoffReason}` : null,
     fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors')
       ? `blockers: ${fieldValue(attempt?.fields ?? {}, 'blockers or errors', 'blockers', 'errors')}`
       : null,
@@ -296,16 +288,18 @@ function formatAttempt(item: SummaryGroupItem): string {
   return bits.join('\n');
 }
 
-function summarizeSlowPhases(metadata: RuntimeMetadataRecord[]): string[] {
-  const slowPhases: SlowPhaseRecord[] = metadata.flatMap((entry) => {
-    const ticket = `${entry.FEATURE_SLUG}/${entry.ISSUE_NAME}`;
-    return (entry.PHASE_HISTORY ?? []).map((phase) => ({
-      ticket,
-      phase: phase.name,
-      cycle: phase.cycle,
-      durationMs: phase.durationMs,
-    }));
-  });
+function summarizeSlowPhases(records: SandcastleRuntimeRecord[]): string[] {
+  const slowPhases: SlowPhaseRecord[] = records
+    .flatMap((entry) => {
+      const ticket = entry.ticket.label;
+      return entry.phases.map((phase) => ({
+        ticket,
+        phase: phase.phase,
+        cycle: phase.attempt,
+        durationMs: phase.durationMs ?? 0,
+      }));
+    })
+    .filter((phase) => phase.durationMs > 0);
   if (!slowPhases.length) return ['- none'];
 
   const byPhase = new Map<string, SlowPhaseRecord>();
@@ -338,12 +332,11 @@ function summarizeSlowPhases(metadata: RuntimeMetadataRecord[]): string[] {
   ];
 }
 
-function summarizeFailureKinds(metadata: RuntimeMetadataRecord[]): string[] {
+function summarizeTerminalStates(records: SandcastleRuntimeRecord[]): string[] {
   const groups = new Map<string, FailureKindGroup>();
-  for (const entry of metadata) {
-    const kind = entry.FAILURE_KIND?.trim();
-    if (!kind) continue;
-    const durationMs = (entry.PHASE_HISTORY ?? []).reduce((total, phase) => total + phase.durationMs, 0);
+  for (const entry of records) {
+    const kind = entry.terminal.status;
+    const durationMs = entry.phases.reduce((total, phase) => total + (phase.durationMs ?? 0), 0);
     const existing = groups.get(kind) ?? { kind, count: 0, durationMs: 0 };
     existing.count += 1;
     existing.durationMs += durationMs;
@@ -355,33 +348,6 @@ function summarizeFailureKinds(metadata: RuntimeMetadataRecord[]): string[] {
   return sorted.length
     ? sorted.map((group) => `- ${group.kind}: ${group.count} run${group.count === 1 ? '' : 's'}, ${group.durationMs}ms`)
     : ['- none'];
-}
-
-function summarizePendingPostMergeCleanup(repoRoot: string): string[] {
-  const items = readPendingPostMergeCleanupItems(repoRoot);
-  if (!items.length) return ['- none'];
-  return [
-    `count: ${items.length}`,
-    ...items.map(
-      (item) =>
-        `- ${item.feature}/${item.issueName} branch=${item.branchName} worktree=${item.worktreePath} reason=${item.warning ?? item.error ?? 'pending retry'}`,
-    ),
-  ];
-}
-
-function summarizeBudgetExceeded(metadata: RuntimeMetadataRecord[]): string[] {
-  const exceeded = metadata.filter((entry) => (entry.BUDGET_EXCEEDED_EVENTS ?? []).length > 0);
-  if (!exceeded.length) return ['- none'];
-  return exceeded.map((entry) => {
-    const ticket = `${entry.FEATURE_SLUG}/${entry.ISSUE_NAME}`;
-    const events = (entry.BUDGET_EXCEEDED_EVENTS ?? [])
-      .map(
-        (event) =>
-          `${event.budgetName} (${event.phase}${typeof event.cycle === 'number' ? `#${event.cycle}` : ''}, ${event.observed}ms > ${event.limit}ms)`,
-      )
-      .join('; ');
-    return `- ${ticket}: ${events}`;
-  });
 }
 
 function isActiveRuntimeStatus(status: string | undefined): boolean {
@@ -399,14 +365,13 @@ function isActiveRuntimeStatus(status: string | undefined): boolean {
   return !terminal.has(normalize(status));
 }
 
-function summarizeLeftoverCounts(repoRoot: string, metadata: RuntimeMetadataRecord[]): string[] {
+function summarizeLeftoverCounts(repoRoot: string, records: SandcastleRuntimeRecord[]): string[] {
   const activeTickets = new Set<string>();
   const activeWorktreePaths = new Set<string>();
-  for (const entry of metadata) {
-    if (!isActiveRuntimeStatus(entry.RUN_STATUS ?? entry.STATUS)) continue;
-    activeTickets.add(`${entry.FEATURE_SLUG}/${entry.ISSUE_NAME}`);
-    const worktreePath = entry.SNAPSHOT_SAFE_FIELDS?.worktreePath;
-    if (worktreePath) activeWorktreePaths.add(safeRealpath(worktreePath));
+  for (const entry of records) {
+    if (!isActiveRuntimeStatus(entry.terminal.status)) continue;
+    activeTickets.add(`${entry.ticket.featureSlug}/${entry.ticket.issueName}`);
+    activeWorktreePaths.add(safeRealpath(entry.worktreePath));
   }
   const branchCount = countLeftoverBranches(repoRoot, activeTickets);
   const worktreeCount = countLeftoverWorktrees(repoRoot, activeWorktreePaths);
@@ -417,10 +382,7 @@ export class SummaryReporter {
   constructor(private readonly input: SummaryReporterInput) {}
 
   async summarize(): Promise<SummaryReport> {
-    const source = this.input.source ?? new ScratchSummaryIssueSource(this.input.repoRoot);
-    const issues = await source.listIssueSummaries();
-    const metadata = readRuntimeMetadata(this.input.repoRoot);
-    const byTicket = new Map(metadata.map((entry) => [path.basename(entry.TICKET_PATH), entry]));
+    const records = readSandcastleRuntimeRecords(this.input.repoRoot);
     const completed: string[] = [];
     const handoff: string[] = [];
     const failed: string[] = [];
@@ -430,50 +392,46 @@ export class SummaryReporter {
     const legacy: string[] = [];
     const missing: string[] = [];
     const repeated: string[] = [];
-    const renderedTickets = new Set<string>();
 
-    for (const issue of issues) {
-      if (!issue.summaries.length) {
-        const bucket = getNoSummaryBucket(issue.status);
-        const line = `- ${issue.feature}/${issue.issueName} (${issue.filePath})`;
-        if (bucket === 'not-yet-started') notYetStarted.push(line);
-        else if (bucket === 'wontfix') wontFix.push(line);
-        else if (bucket === 'legacy') legacy.push(line);
-        else missing.push(line);
-        continue;
-      }
-      if (issue.summaries.length > 1)
-        repeated.push(`- ${issue.feature}/${issue.issueName}: ${issue.summaries.length} attempts`);
-      for (const attempt of issue.summaries) {
-        const runtime =
-          byTicket.get(`${issue.issueName}.md`) ??
-          metadata.find((entry) => entry.FEATURE_SLUG === issue.feature && entry.ISSUE_NAME === issue.issueName);
-        renderedTickets.add(`${issue.feature}/${issue.issueName}`);
-        const rendered = formatAttempt({ issue, attempt, metadata: runtime });
-        const bucket = classify(issue.status, attempt);
+    if (records.length > 0) {
+      for (const runtime of records) {
+        const issue = {
+          feature: runtime.ticket.featureSlug,
+          issueName: runtime.ticket.issueName,
+          filePath: runtime.ticket.ticketPath,
+          status: runtime.terminal.status,
+          summaries: [],
+        } satisfies IssueFileRecord;
+        const rendered = formatAttempt({ issue, runtime });
+        const bucket = classifyRuntime(runtime);
         if (bucket === 'completed') completed.push(rendered);
         else if (bucket === 'handoff') handoff.push(rendered);
         else if (bucket === 'failed') failed.push(rendered);
         else if (bucket === 'interrupted') interrupted.push(rendered);
       }
-    }
-
-    for (const runtime of metadata) {
-      const ticketKey = `${runtime.FEATURE_SLUG}/${runtime.ISSUE_NAME}`;
-      if (!runtime.LINEAR_ISSUE_KEY || renderedTickets.has(ticketKey)) continue;
-      const issue = {
-        feature: runtime.FEATURE_SLUG,
-        issueName: runtime.ISSUE_NAME,
-        filePath: runtime.LINEAR_MIRROR_PATH ?? runtime.TICKET_PATH,
-        status: runtime.RUN_STATUS ?? runtime.STATUS,
-        summaries: [],
-      } satisfies IssueFileRecord;
-      const rendered = formatAttempt({ issue, metadata: runtime });
-      const bucket = classifyRuntime(runtime);
-      if (bucket === 'completed') completed.push(rendered);
-      else if (bucket === 'handoff') handoff.push(rendered);
-      else if (bucket === 'failed') failed.push(rendered);
-      else if (bucket === 'interrupted') interrupted.push(rendered);
+    } else if (this.input.source) {
+      const issues = await this.input.source.listIssueSummaries();
+      for (const issue of issues) {
+        if (!issue.summaries.length) {
+          const bucket = getNoSummaryBucket(issue.status);
+          const line = `- ${issue.feature}/${issue.issueName} (${issue.filePath})`;
+          if (bucket === 'not-yet-started') notYetStarted.push(line);
+          else if (bucket === 'wontfix') wontFix.push(line);
+          else if (bucket === 'legacy') legacy.push(line);
+          else missing.push(line);
+          continue;
+        }
+        if (issue.summaries.length > 1)
+          repeated.push(`- ${issue.feature}/${issue.issueName}: ${issue.summaries.length} attempts`);
+        for (const attempt of issue.summaries) {
+          const rendered = formatAttempt({ issue, attempt });
+          const bucket = classify(issue.status, attempt);
+          if (bucket === 'completed') completed.push(rendered);
+          else if (bucket === 'handoff') handoff.push(rendered);
+          else if (bucket === 'failed') failed.push(rendered);
+          else if (bucket === 'interrupted') interrupted.push(rendered);
+        }
+      }
     }
 
     const lines = [
@@ -507,30 +465,24 @@ export class SummaryReporter {
       ...(repeated.length ? repeated : ['- none']),
       '',
       'Phase timing highlights',
-      ...summarizeSlowPhases(metadata),
+      ...summarizeSlowPhases(records),
       '',
-      'Budget exceeded tickets',
-      ...summarizeBudgetExceeded(metadata),
-      '',
-      'Failure kind totals',
-      ...summarizeFailureKinds(metadata),
-      '',
-      'Pending post-merge cleanup debt',
-      ...summarizePendingPostMergeCleanup(this.input.repoRoot),
+      'Terminal state totals',
+      ...summarizeTerminalStates(records),
       '',
       'Leftover cleanup counts',
-      ...summarizeLeftoverCounts(this.input.repoRoot, metadata),
+      ...summarizeLeftoverCounts(this.input.repoRoot, records),
     ];
 
     const permission = this.input.permission;
     if (!permission) {
-      lines.push('', 'Raw logs were not inspected because permission was not granted for this invocation.');
+      lines.push('', 'Legacy raw logs were not inspected; summary reads Sandcastle runtime records only.');
       return { message: lines.join('\n'), rawLogsInspected: false };
     }
 
     const granted = await permission.request({
-      scope: '.scratch/.opencode-afk-logs/',
-      reason: 'fill missing summaries and clarify incomplete or contradictory AFK results',
+      scope: '.scratch/sandcastle-runtime/',
+      reason: 'inspect Sandcastle runtime records for AFK summary reporting',
     });
     lines.push(
       '',

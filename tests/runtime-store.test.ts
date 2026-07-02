@@ -111,30 +111,6 @@ test('round-trips launch preferences', () => {
   });
 });
 
-test('reads legacy merge-back launch preferences as feature completion actions', () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
-  const store = new RuntimeStore({ repoRoot });
-  const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
-  mkdirSync(path.dirname(preferencesPath), { recursive: true });
-
-  writeFileSync(preferencesPath, JSON.stringify({ mergeBackToBase: true }), 'utf8');
-  assert.equal(store.readLaunchPreferences().featureCompletionAction, 'merge-to-base');
-
-  writeFileSync(preferencesPath, JSON.stringify({ mergeBackToBase: false }), 'utf8');
-  assert.equal(store.readLaunchPreferences().featureCompletionAction, 'create-pr');
-});
-
-test('writes feature completion action instead of legacy merge-back preference', () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
-  const store = new RuntimeStore({ repoRoot });
-  store.writeLaunchPreferences({ mergeBackToBase: true });
-
-  const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
-  const preferences = JSON.parse(readFileSync(preferencesPath, 'utf8')) as Record<string, unknown>;
-  assert.equal(preferences.featureCompletionAction, 'merge-to-base');
-  assert.equal('mergeBackToBase' in preferences, false);
-});
-
 test('reads optional budget preferences', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
   const store = new RuntimeStore({ repoRoot });
@@ -255,64 +231,6 @@ test('records review outcome metadata with additive classification fields', () =
   assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, 'clean-approval');
   assert.equal(metadata.FINAL_REVIEW_MALFORMED, false);
   assert.deepEqual(metadata.FINAL_REVIEW_FINDINGS, []);
-});
-
-test('keeps metadata readers compatible when new review fields are absent', () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-review-compat-'));
-  const store = new RuntimeStore({ repoRoot });
-  const record = store.createRecord({ featureSlug: 'feat', issueName: 'compat', ticketPath: '/tmp/ticket.md' });
-  const metadataPath = record.metadataPath;
-  const legacy = {
-    TICKET_PATH: '/tmp/ticket.md',
-    FEATURE_SLUG: 'feat',
-    ISSUE_NAME: 'compat',
-    LOG_PATH: record.logPath,
-    START_TIME: new Date().toISOString(),
-    START_EPOCH: Date.now(),
-    DONE_SENTINEL_PATH: record.doneSentinelPath,
-    FAILED_SENTINEL_PATH: record.failedSentinelPath,
-    STATUS: 'completed',
-    EXECUTION_PROVIDER: 'opencode',
-    PROVIDER_SESSION_ID: null,
-    PROVIDER_SESSION_REMOVABLE: false,
-    INSPECTION_PROVIDER: null,
-    INSPECTION_TARGET_IDENTIFIER: null,
-    FAILURE_KIND: null,
-    UNSAFE_REASON: null,
-  };
-  writeFileSync(metadataPath, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
-
-  const metadata = store.readMetadata(metadataPath);
-  assert.equal(metadata.STATUS, 'completed');
-  assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, undefined);
-  assert.equal(metadata.FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET, undefined);
-});
-
-test('rejects stale harness values Kimi and Claude-Anthropic and migrates Claude-Kimi to Claude', () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-stale-harness-'));
-  const store = new RuntimeStore({ repoRoot });
-  const preferencesPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json');
-  mkdirSync(path.dirname(preferencesPath), { recursive: true });
-
-  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Kimi', reviewerHarness: 'Claude-Anthropic' }), 'utf8');
-  const stale = store.readLaunchPreferences();
-  assert.equal(stale.harness, undefined);
-  assert.equal(stale.reviewerHarness, undefined);
-
-  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Claude-Anthropic', reviewerHarness: 'OpenCode' }), 'utf8');
-  const partial = store.readLaunchPreferences();
-  assert.equal(partial.harness, undefined);
-  assert.equal(partial.reviewerHarness, 'OpenCode');
-
-  writeFileSync(preferencesPath, JSON.stringify({ harness: 'OpenCode', reviewerHarness: 'Claude-Kimi' }), 'utf8');
-  const migrated = store.readLaunchPreferences();
-  assert.equal(migrated.harness, 'OpenCode');
-  assert.equal(migrated.reviewerHarness, 'Claude');
-
-  writeFileSync(preferencesPath, JSON.stringify({ harness: 'Claude', reviewerHarness: 'Codex' }), 'utf8');
-  const codex = store.readLaunchPreferences();
-  assert.equal(codex.harness, 'Claude');
-  assert.equal(codex.reviewerHarness, 'Codex');
 });
 
 test('initializes separate status fields on record creation', () => {

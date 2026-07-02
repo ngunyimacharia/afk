@@ -32,13 +32,10 @@ import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { createPullRequestsForCompletedFeatures, type FeaturePrCreationResult } from './feature-pr-creation.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import {
-  createHarnessAgentExecutionProvider,
-  createHarnessExecutor,
   discoverAvailableHarnesses,
   discoverHarnessModels,
   displayNameForHarness,
   isSelectableHarnessId,
-  migrateLegacyProviderName,
   providerNameForHarness,
   type SelectableHarnessId,
 } from './harness-registry.js';
@@ -61,20 +58,19 @@ import type { LinearProvider } from './linear-provider.js';
 import { createLiveRunView } from './live-run-view.js';
 import { MergeBackCoordinator } from './merge-back-coordinator.js';
 import { classifyProgressEvent, classifyRunOutcome, NotificationPolicy } from './notification-policy.js';
-import type { OpenCodeSessionExecutor } from './opencode.js';
 import { formatDuration } from './opentui-dashboard.js';
 import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-notification-adapter.js';
 import { assertPathWithinRoot } from './path-validation.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { inferTrackerProviderKind, loadAfkProjectConfig } from './project-config.js';
-import { classifyProviderFailure, classifyProviderFailureFromSource } from './provider-failure.js';
 import { RuntimeStore } from './runtime-store.js';
 import { detectDockerAvailable } from './sandbox-selection.js';
-import { resolveSandcastleSandboxMode, SandcastleImplementationCore } from './sandcastle-execution-core.js';
+import { SandcastleAgentExecutionProvider } from './sandcastle-agent-execution-provider.js';
+import { SandcastleWorktreeService } from './sandcastle-worktree-service.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { createDefaultTrackerProvider } from './scratch-tracker-provider.js';
-import { ScratchWorktreeService } from './scratch-worktree-service.js';
+import type { ScratchWorktreeService } from './scratch-worktree-service.js';
 import { SingleTicketRunner } from './single-ticket-runner.js';
 import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
@@ -322,6 +318,10 @@ export async function runAfk(
       ])
       .filter(Boolean) as string[];
     if (plan.workspaceExecutionPath) logTargets.push(plan.workspaceExecutionPath);
+    const sandcastleTargets = (plan.sandcastleResourceTargets ?? []).map(
+      (target) =>
+        `- ${target.feature}/${target.issueName} ${target.resource.type} id=${target.resource.id}${target.resource.path ? ` path=${target.resource.path}` : ''}${target.resource.cleanupCommand ? ` command=${target.resource.cleanupCommand}` : ''}`,
+    );
     const dryRun = [
       'AFK Cleanup Plan',
       '',
@@ -334,6 +334,9 @@ export async function runAfk(
       '',
       'Matching logs / metadata to delete',
       ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
+      '',
+      'Sandcastle cleanup resources',
+      ...(sandcastleTargets.length ? sandcastleTargets : ['- none']),
       '',
       'Pending failed post-merge cleanup retries',
       ...(plan.pendingPostMergeCleanupTargets.length
@@ -386,9 +389,22 @@ export async function runAfk(
           )
         : ['- none']),
     ].join('\n');
+    const sandcastleResults = [
+      'Sandcastle cleanup results',
+      ...(plan.sandcastleResourceTargets?.length
+        ? plan.sandcastleResourceTargets.map((target) => {
+            const record = JSON.parse(readFileSync(target.recordPath, 'utf8'));
+            const result = record.cleanupResults?.find(
+              (item: { resourceId: string; resourceType: string }) =>
+                item.resourceId === target.resource.id && item.resourceType === target.resource.type,
+            );
+            return `- ${target.feature}/${target.issueName} ${target.resource.type}:${target.resource.id}: ${result?.status ?? 'unknown'}${result?.message ? ` (${result.message})` : ''}`;
+          })
+        : ['- none']),
+    ].join('\n');
     return {
       code: 0,
-      message: `${dryRun}\n\n${retryResults}\n\n${orphanedWorktreeResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
+      message: `${dryRun}\n\n${sandcastleResults}\n\n${retryResults}\n\n${orphanedWorktreeResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
     };
   }
   if (command === 'sync') return runSync();
@@ -562,7 +578,8 @@ export async function runAfk(
     let featureCompletionAction: FeatureCompletionAction = 'merge-to-base';
     let harness: SelectableHarnessId = 'OpenCode';
     let reviewerHarness: SelectableHarnessId = 'OpenCode';
-    let sandboxMode: SandboxMode = resolveSandcastleSandboxMode(process.env, launchPreferences.sandcastleSandboxMode);
+    let sandboxMode: SandboxMode =
+      launchPreferences.sandboxMode ?? launchPreferences.sandcastleSandboxMode ?? 'no-sandbox';
 
     const { availableHarnesses, harnessModelCache } = await discoverAvailableHarnesses(undefined, repoRoot);
 
@@ -618,17 +635,6 @@ export async function runAfk(
     if (!model) return { code: 0, message: 'Launch cancelled' };
     if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
     if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
-    const implementationExecutor = createHarnessExecutor(harness, repoRoot);
-    const reviewerExecutor = createHarnessExecutor(reviewerHarness, repoRoot);
-    const preflight = await preflightSelectedModels(
-      implementationExecutor,
-      model,
-      reviewerExecutor,
-      reviewerModel,
-      harness,
-      reviewerHarness,
-    );
-    if (preflight) return { code: 1, message: preflight };
     const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
     selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, launchTickets);
     selectedTickets = materializeLinearTicketMirrors(repoRoot, selectedTickets);
@@ -763,16 +769,8 @@ export async function runAfk(
       ticketLabel: selectedTickets[0]?.label,
       autoApprove: true,
     });
-    const executionProvider = createHarnessAgentExecutionProvider(
-      harness,
-      implementationExecutor,
-      permissionCoordinator,
-    );
-    const reviewerProvider = createHarnessAgentExecutionProvider(
-      reviewerHarness,
-      reviewerExecutor,
-      permissionCoordinator,
-    );
+    const executionProvider = new SandcastleAgentExecutionProvider();
+    const reviewerProvider = executionProvider;
     const runner = new SingleTicketRunner(
       runtimeStore,
       new CompositeAgentExecutionProvider(executionProvider, reviewerProvider),
@@ -783,8 +781,6 @@ export async function runAfk(
             client: new LinearGraphqlClient(activeProjectConfig.linear?.apiKey ?? ''),
           }
         : undefined,
-      undefined,
-      new SandcastleImplementationCore(runtimeStore, sandboxMode),
     );
     const renderer: OpenTUIRenderer = {
       capabilities: { notifications: io.stdout.isTTY ?? false },
@@ -890,7 +886,7 @@ export async function runAfk(
 
     const scheduler = new Scheduler({
       runner,
-      scratchWorktreeService: new ScratchWorktreeService(),
+      sandcastleWorktreeService: new SandcastleWorktreeService(),
       concurrencyLimit: concurrency,
       featureMergeBackProvider: {
         isWaveMerged: (feature: string, wave: number, issueNames: string[]) =>
@@ -1205,7 +1201,7 @@ export function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
         ticketCount++;
         if (!modelId && typeof parsed.EXECUTION_MODEL_ID === 'string') modelId = parsed.EXECUTION_MODEL_ID;
         if (!harness && typeof parsed.EXECUTION_PROVIDER === 'string') {
-          harness = displayNameForProvider(migrateLegacyProviderName(parsed.EXECUTION_PROVIDER));
+          harness = displayNameForProvider(parsed.EXECUTION_PROVIDER);
         }
       } catch {
         // skip malformed metadata files
@@ -1411,82 +1407,6 @@ export function expandSelectedFeaturesToAllTickets(
 ): TicketRecord[] {
   const selectedFeatures = new Set(selectedTickets.map((ticket) => ticket.feature));
   return allTickets.filter((ticket) => selectedFeatures.has(ticket.feature));
-}
-
-async function preflightSelectedModels(
-  implementationExecutor: OpenCodeSessionExecutor,
-  model: LaunchModel,
-  reviewerExecutor: OpenCodeSessionExecutor,
-  reviewerModel: LaunchModel,
-  harness: SelectableHarnessId,
-  reviewerHarness: SelectableHarnessId,
-): Promise<string | null> {
-  const implementationFailure = await preflightModel(implementationExecutor, model, 'implementation', harness);
-  if (implementationFailure) return implementationFailure;
-  if (reviewerModel.id === model.id && reviewerHarness === harness) return null;
-  return preflightModel(reviewerExecutor, reviewerModel, 'reviewer', reviewerHarness);
-}
-
-export async function preflightModel(
-  executor: OpenCodeSessionExecutor,
-  model: LaunchModel,
-  role: 'implementation' | 'reviewer',
-  harness: SelectableHarnessId,
-): Promise<string | null> {
-  try {
-    const result = await executor.run({
-      model,
-      title: `afk preflight: ${model.id}`,
-      agent: role === 'reviewer' ? (harness === 'OpenCode' ? 'review' : undefined) : 'build',
-      prompt: 'AFK model availability preflight. Reply OK.',
-    });
-    const reason = result.terminalError ?? detectPreflightFailureReason(result.output);
-    return reason ? formatPreflightFailure(model.id, role, reason, harness) : null;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : `${harness} model preflight failed`;
-    return formatPreflightFailure(model.id, role, reason, harness);
-  }
-}
-
-export function detectPreflightFailureReason(output: string[]): string | null {
-  const reason = output.find((line) => {
-    const classification = classifyProviderFailureFromSource(line, 'agent-output');
-    return classification && classification.kind !== 'unknown';
-  });
-  return reason ?? null;
-}
-
-export function formatPreflightFailure(
-  modelId: string,
-  role: 'implementation' | 'reviewer',
-  reason: string,
-  harness: SelectableHarnessId = 'OpenCode',
-): string {
-  const classification = classifyProviderFailure(reason);
-  const roleLabel = role === 'implementation' ? 'Implementation model' : 'Reviewer model';
-  const title =
-    classification?.kind === 'model-unavailable' ? `${roleLabel} unavailable` : `${roleLabel} preflight failed`;
-  const provider = modelId.includes('/') ? modelId.slice(0, modelId.indexOf('/')) : harness;
-  const lines = [
-    title,
-    '',
-    `Selected ${role} model: ${modelId}`,
-    `Provider: ${provider}`,
-    `Reason: ${classification?.reason ?? reason}`,
-  ];
-  if (classification?.availableModels.length) {
-    lines.push(
-      '',
-      'Available models from provider error:',
-      ...classification.availableModels.map((item) => `- ${item}`),
-    );
-  }
-  const nextStep =
-    classification?.kind === 'model-unavailable'
-      ? 'No tickets were started. Re-run `afk` and select an available model.'
-      : `No tickets were started. Fix the ${harness} provider issue and re-run \`afk\`.`;
-  lines.push('', nextStep);
-  return lines.join('\n');
 }
 
 export function readRunOutcomeLines(

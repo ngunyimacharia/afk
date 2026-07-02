@@ -76,7 +76,6 @@ export interface LaunchPreferences {
   concurrency?: number;
   budgets?: Partial<BudgetPolicy>;
   featureCompletionAction?: FeatureCompletionAction;
-  mergeBackToBase?: boolean;
   sandboxMode?: SandboxMode;
 }
 

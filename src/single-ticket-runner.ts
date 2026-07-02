@@ -12,7 +12,6 @@ import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
-import type { SandcastleImplementationCore } from './sandcastle-execution-core.js';
 import { type SandcastlePhaseName, SandcastleRuntimeStore } from './sandcastle-runtime-store.js';
 import type {
   AfkStateSnapshot,
@@ -77,16 +76,6 @@ export interface LinearRunSyncer {
   client: LinearRunSyncClient;
 }
 
-interface ImplementationExecutionInput {
-  plan: LaunchPlan;
-  ticket: TicketRecord;
-  prompt: string;
-  record: RuntimeRecordHandle;
-  sessionId: string | null;
-  onProgress: AgentExecutionProgressCallback;
-  signal?: AbortSignal;
-}
-
 export interface WarmSandcastleSandboxHandle {
   run(request: AgentExecutionRequest): Promise<AgentExecutionResult>;
 }
@@ -105,7 +94,6 @@ class ProviderBackedWarmSandcastleSandbox implements WarmSandcastleSandboxHandle
 
 export class SingleTicketRunner {
   private readonly linearSyncer?: LinearRunSyncer;
-  private readonly sandcastleImplementationCore?: SandcastleImplementationCore;
   private readonly sandcastleSandboxFactory?: WarmSandcastleSandboxFactory;
 
   constructor(
@@ -114,18 +102,12 @@ export class SingleTicketRunner {
     private readonly configuredBudgets: Partial<BudgetPolicy> = {},
     linearSyncerOrCommandExecutor?: LinearRunSyncer | ReadinessCommandExecutor,
     _commandExecutor: ReadinessCommandExecutor = new SyncReadinessCommandExecutor(),
-    sandcastleExecution?: SandcastleImplementationCore | WarmSandcastleSandboxFactory,
     sandcastleSandboxFactory?: WarmSandcastleSandboxFactory,
   ) {
     if (linearSyncerOrCommandExecutor && 'resolvedConfig' in linearSyncerOrCommandExecutor) {
       this.linearSyncer = linearSyncerOrCommandExecutor;
     }
-    if (sandcastleExecution && 'execute' in sandcastleExecution) {
-      this.sandcastleImplementationCore = sandcastleExecution;
-    } else {
-      this.sandcastleSandboxFactory = sandcastleExecution;
-    }
-    if (sandcastleSandboxFactory) this.sandcastleSandboxFactory = sandcastleSandboxFactory;
+    this.sandcastleSandboxFactory = sandcastleSandboxFactory;
   }
 
   async launch(plan: LaunchPlan, options: SingleTicketLaunchOptions = {}): Promise<SingleTicketRunResult> {
@@ -351,25 +333,15 @@ export class SingleTicketRunner {
               record.logPath,
               'execution',
               () =>
-                this.sandcastleImplementationCore
-                  ? this.executeImplementationWithConfiguredCore({
-                      plan,
-                      ticket,
-                      prompt,
-                      record,
-                      sessionId,
-                      onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
-                      signal: options.signal,
-                    })
-                  : runAgentPhase(nextImplementationPhase, reviewCycle + 1, {
-                      plan,
-                      ticketIndex: 0,
-                      prompt,
-                      invocationMode: 'execution',
-                      sessionId,
-                      onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
-                      signal: options.signal,
-                    }),
+                runAgentPhase(nextImplementationPhase, reviewCycle + 1, {
+                  plan,
+                  ticketIndex: 0,
+                  prompt,
+                  invocationMode: 'execution',
+                  sessionId,
+                  onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
+                  signal: options.signal,
+                }),
               reviewCycle + 1,
             );
             sessionId = executionResult.sessionId ?? sessionId;
@@ -898,28 +870,6 @@ export class SingleTicketRunner {
       ...DEFAULT_BUDGET_POLICY,
       ...this.configuredBudgets,
     };
-  }
-
-  private executeImplementationWithConfiguredCore(input: ImplementationExecutionInput): Promise<AgentExecutionResult> {
-    if (this.sandcastleImplementationCore) {
-      return this.sandcastleImplementationCore.execute({
-        plan: input.plan,
-        ticket: input.ticket,
-        prompt: input.prompt,
-        record: input.record,
-        onProgress: input.onProgress,
-        signal: input.signal,
-      });
-    }
-    return this.provider.execute({
-      plan: input.plan,
-      ticketIndex: 0,
-      prompt: input.prompt,
-      invocationMode: 'execution',
-      sessionId: input.sessionId,
-      onProgress: input.onProgress,
-      signal: input.signal,
-    });
   }
 
   private checkTicketBudget(

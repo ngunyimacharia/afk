@@ -50,6 +50,8 @@ export type SandcastleSandbox =
 
 export interface SandcastleRunLocation {
   branch: string;
+  branchNameSource?: 'linear' | 'override' | 'fallback';
+  worktreeName?: string;
   worktreePath: string;
 }
 
@@ -121,6 +123,16 @@ export interface SandcastleProviderFailureRecord extends SandcastleProviderFailu
   occurredAt: string;
 }
 
+export type SandcastleCleanupStatus = 'pending' | 'succeeded' | 'skipped' | 'failed';
+
+export interface SandcastleCleanupResult {
+  resourceId: string;
+  resourceType: SandcastleCleanupResourceType;
+  status: SandcastleCleanupStatus;
+  message?: string;
+  updatedAt: string;
+}
+
 export interface SandcastleRuntimeRecord {
   schemaVersion: 1;
   runId: string;
@@ -131,6 +143,8 @@ export interface SandcastleRuntimeRecord {
   provider: SandcastleProviderIdentity;
   sandbox: SandcastleSandbox;
   branch: string;
+  branchNameSource?: 'linear' | 'override' | 'fallback';
+  worktreeName?: string;
   worktreePath: string;
   phases: SandcastlePhaseAttempt[];
   commits: SandcastleCommitRecord[];
@@ -142,6 +156,7 @@ export interface SandcastleRuntimeRecord {
   };
   providerFailures: SandcastleProviderFailureRecord[];
   cleanupResources: SandcastleCleanupResource[];
+  cleanupResults?: SandcastleCleanupResult[];
 }
 
 function isoFromEpoch(epochMs: number): string {
@@ -187,6 +202,8 @@ export class SandcastleRuntimeStore {
       provider: input.provider,
       sandbox: input.sandbox,
       branch: input.location.branch,
+      branchNameSource: input.location.branchNameSource,
+      worktreeName: input.location.worktreeName,
       worktreePath: input.location.worktreePath,
       phases: [],
       commits: [],
@@ -197,6 +214,7 @@ export class SandcastleRuntimeStore {
       terminal: { status: 'running' },
       providerFailures: [],
       cleanupResources: [],
+      cleanupResults: [],
     };
     this.writeRecord(recordPath, record);
     return { runId: input.runId, recordPath, runDirectory };

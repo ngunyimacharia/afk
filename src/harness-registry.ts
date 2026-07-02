@@ -1,13 +1,6 @@
-import {
-  type AgentExecutionProvider,
-  ClaudeAgentExecutionProvider,
-  CodexAgentExecutionProvider,
-  OpenCodeAgentExecutionProvider,
-} from './agent-execution-provider.js';
-import { ClaudeCodeSessionExecutor, discoverClaudeModels } from './claude-code.js';
-import { CodexSessionExecutor, discoverCodexModels } from './codex.js';
-import { discoverOpenCodeModels, type OpenCodeSessionExecutor, SDKOpenCodeSessionExecutor } from './opencode.js';
-import type { PermissionCoordinator } from './permission-coordinator.js';
+import { discoverClaudeModels } from './claude-code.js';
+import { discoverCodexModels } from './codex.js';
+import { discoverOpenCodeModels } from './opencode.js';
 import type { LaunchModel } from './types.js';
 
 export type HarnessId = 'OpenCode' | 'Claude' | 'Codex';
@@ -19,11 +12,6 @@ interface HarnessRegistryEntry {
   providerName: string;
   selectable: boolean;
   discoverModels?: (repoRoot?: string) => Promise<LaunchModel[]>;
-  createExecutor?: (repoRoot?: string) => OpenCodeSessionExecutor;
-  createAgentExecutionProvider?: (
-    executor: OpenCodeSessionExecutor,
-    permissionCoordinator?: PermissionCoordinator,
-  ) => AgentExecutionProvider;
 }
 
 const HARNESS_REGISTRY = [
@@ -33,9 +21,6 @@ const HARNESS_REGISTRY = [
     providerName: 'opencode',
     selectable: true,
     discoverModels: discoverOpenCodeModels,
-    createExecutor: () => new SDKOpenCodeSessionExecutor(),
-    createAgentExecutionProvider: (executor, permissionCoordinator) =>
-      new OpenCodeAgentExecutionProvider(executor, permissionCoordinator),
   },
   {
     id: 'Claude',
@@ -43,9 +28,6 @@ const HARNESS_REGISTRY = [
     providerName: 'claude',
     selectable: true,
     discoverModels: discoverClaudeModels,
-    createExecutor: (repoRoot) => new ClaudeCodeSessionExecutor(repoRoot ?? process.cwd()),
-    createAgentExecutionProvider: (executor, permissionCoordinator) =>
-      new ClaudeAgentExecutionProvider(executor, permissionCoordinator),
   },
   {
     id: 'Codex',
@@ -53,9 +35,6 @@ const HARNESS_REGISTRY = [
     providerName: 'codex',
     selectable: true,
     discoverModels: (repoRoot) => discoverCodexModels(process.env, repoRoot),
-    createExecutor: () => new CodexSessionExecutor(),
-    createAgentExecutionProvider: (executor, permissionCoordinator) =>
-      new CodexAgentExecutionProvider(executor, permissionCoordinator),
   },
 ] satisfies HarnessRegistryEntry[];
 
@@ -101,36 +80,10 @@ export async function discoverHarnessModels(harness: SelectableHarnessId, repoRo
   return discoverModels ? discoverModels(repoRoot) : [];
 }
 
-export function createHarnessExecutor(harness: SelectableHarnessId, repoRoot?: string): OpenCodeSessionExecutor {
-  const createExecutor = HARNESS_BY_ID.get(harness)?.createExecutor;
-  if (!createExecutor) throw new Error(`Harness is not executable: ${harness}`);
-  return createExecutor(repoRoot);
-}
-
-export function createHarnessAgentExecutionProvider(
-  harness: SelectableHarnessId,
-  executor: OpenCodeSessionExecutor,
-  permissionCoordinator?: PermissionCoordinator,
-): AgentExecutionProvider {
-  const createProvider = HARNESS_BY_ID.get(harness)?.createAgentExecutionProvider;
-  if (!createProvider) throw new Error(`Harness provider is not available: ${harness}`);
-  return createProvider(executor, permissionCoordinator);
-}
-
 export function displayNameForHarness(harness: HarnessId): string {
   return HARNESS_BY_ID.get(harness)?.displayName ?? harness;
 }
 
 export function providerNameForHarness(harness: HarnessId): string {
   return HARNESS_BY_ID.get(harness)?.providerName ?? harness.toLowerCase();
-}
-
-export function migrateLegacyHarnessId(value: string): string {
-  if (value === 'Claude-Kimi') return 'Claude';
-  return value;
-}
-
-export function migrateLegacyProviderName(value: string): string {
-  if (value === 'claude-kimi') return 'claude';
-  return value;
 }
