@@ -236,6 +236,8 @@ function commandArg(): string | undefined {
     'tui',
     'stop',
     'status',
+    'pause',
+    'resume',
     '__daemon',
   ]);
   const arg1 = process.argv[1];
@@ -267,6 +269,23 @@ export interface SpawnDaemonHandle {
   pid: number | undefined;
   unref: () => void;
   on: (event: 'exit' | 'error', callback: (code?: number | null, signal?: NodeJS.Signals | null) => void) => void;
+}
+
+interface JsonOutputData {
+  ok: boolean;
+  command: string;
+  data?: Record<string, unknown>;
+  error?: { code: string; message: string; details?: Record<string, unknown> };
+}
+
+function jsonOk(command: string, data: Record<string, unknown>): string {
+  const output: JsonOutputData = { ok: true, command, data };
+  return JSON.stringify(output, null, 2);
+}
+
+function jsonError(command: string, code: string, message: string, details?: Record<string, unknown>): string {
+  const output: JsonOutputData = { ok: false, command, error: { code, message, details } };
+  return JSON.stringify(output, null, 2);
 }
 
 export async function runAfk(
@@ -446,6 +465,12 @@ export async function runAfk(
     const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
     const activeRun = activeRunControlPlane.read();
     if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
+      if (hasFlag('--json')) {
+        return {
+          code: 1,
+          message: jsonError('stop', 'no-active-run', 'No active AFK run'),
+        };
+      }
       return { code: 1, message: 'No active AFK run' };
     }
     const eventStream = new ActiveRunEventStream(repoRoot, activeRun.runId);
@@ -457,8 +482,28 @@ export async function runAfk(
       await new Promise((resolve) => setTimeout(resolve, stopPollIntervalMs));
       const current = activeRunControlPlane.read();
       if (!current || !activeRunControlPlane.isHealthy(current)) {
+        if (hasFlag('--json')) {
+          return {
+            code: 0,
+            message: jsonOk('stop', { runId: activeRun.runId, stopped: true }),
+          };
+        }
         return { code: 0, message: `Stopped AFK run ${activeRun.runId}` };
       }
+    }
+    if (hasFlag('--json')) {
+      return {
+        code: 1,
+        message: jsonError(
+          'stop',
+          'stop-timeout',
+          `AFK run ${activeRun.runId} did not stop within ${stopTimeoutMs / 1000}s`,
+          {
+            runId: activeRun.runId,
+            timeoutMs: stopTimeoutMs,
+          },
+        ),
+      };
     }
     return { code: 1, message: `Timeout: AFK run ${activeRun.runId} did not stop within ${stopTimeoutMs / 1000}s` };
   }
@@ -467,12 +512,33 @@ export async function runAfk(
     const activeRun = activeRunControlPlane.read();
     const pendingCleanupCount = readPendingPostMergeCleanupItems(repoRoot).length;
     if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
+      if (hasFlag('--json')) {
+        return {
+          code: 0,
+          message: jsonOk('status', { active: false, pendingPostMergeCleanupDebt: pendingCleanupCount }),
+        };
+      }
       const lines = ['No active AFK run'];
       if (pendingCleanupCount > 0) lines.push(`Pending post-merge cleanup debt: ${pendingCleanupCount}`);
       return { code: 0, message: lines.join('\n') };
     }
     const runMetadata = readRunMetadata(repoRoot, activeRun.runId);
     const heartbeatAgeMs = Date.now() - Date.parse(activeRun.heartbeatAt);
+    if (hasFlag('--json')) {
+      const data: Record<string, unknown> = {
+        active: true,
+        runId: activeRun.runId,
+        pid: activeRun.pid,
+        state: activeRun.state,
+        heartbeatAgeMs,
+        startedAt: activeRun.startedAt,
+        ticketCount: runMetadata.ticketCount,
+        pendingPostMergeCleanupDebt: pendingCleanupCount,
+      };
+      if (runMetadata.modelId) data.modelId = runMetadata.modelId;
+      if (runMetadata.harness) data.harness = runMetadata.harness;
+      return { code: 0, message: jsonOk('status', data) };
+    }
     const lines = [
       `Run ID:    ${activeRun.runId}`,
       `State:     ${activeRun.state}`,
@@ -485,6 +551,27 @@ export async function runAfk(
     if (runMetadata.ticketCount > 0) lines.push(`Tickets:   ${runMetadata.ticketCount}`);
     if (pendingCleanupCount > 0) lines.push(`Pending post-merge cleanup debt: ${pendingCleanupCount}`);
     return { code: 0, message: lines.join('\n') };
+  }
+  if (command === 'pause' || command === 'resume') {
+    const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
+    const activeRun = activeRunControlPlane.read();
+    if (!activeRun || !activeRunControlPlane.isHealthy(activeRun)) {
+      if (hasFlag('--json')) {
+        return {
+          code: 1,
+          message: jsonError(command, 'no-active-run', 'No healthy active run'),
+        };
+      }
+      return { code: 1, message: 'No healthy active run' };
+    }
+    activeRunControlPlane.enqueueCommand(activeRun.runId, { type: command, clientPid: process.pid });
+    if (hasFlag('--json')) {
+      return {
+        code: 0,
+        message: jsonOk(command, { runId: activeRun.runId, targetState: command === 'pause' ? 'paused' : 'running' }),
+      };
+    }
+    return { code: 0, message: `Enqueued ${command} for active run ${activeRun.runId}` };
   }
   if (command === '__daemon') {
     const contextPath = process.argv[1] === '__daemon' ? process.argv[2] : process.argv[3];

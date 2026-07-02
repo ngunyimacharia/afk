@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -409,4 +409,312 @@ test('readRunPlan returns null for missing plan file', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-plan-missing-'));
   const read = readRunPlan(repoRoot, 'nonexistent-run');
   assert.equal(read, null);
+});
+
+async function withCommandArgs<T>(args: string[], fn: () => Promise<T>): Promise<T> {
+  const original = process.argv.slice();
+  process.argv = [...process.argv.slice(0, 2), ...args];
+  try {
+    return await fn();
+  } finally {
+    process.argv = original;
+  }
+}
+
+test('afk pause --json returns structured not-found error when no active run exists', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-pause-json-no-run-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await withCommandArgs(['pause', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 1);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.command, 'pause');
+  assert.equal(parsed.error.code, 'no-active-run');
+});
+
+test('afk pause --json enqueues pause command for a healthy active run', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-pause-json-active-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  const runId = 'pause-run-123';
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId,
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  const result = await withCommandArgs(['pause', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'pause');
+  assert.equal(parsed.data.runId, runId);
+  assert.equal(parsed.data.targetState, 'paused');
+
+  const commandPath = path.join(logsDir, 'active-run-commands', `${runId}.jsonl`);
+  assert.ok(existsSync(commandPath));
+  const commands = readFileSync(commandPath, 'utf8').trim().split('\n');
+  assert.equal(commands.length, 1);
+  const command = JSON.parse(commands[0] ?? '{}');
+  assert.equal(command.type, 'pause');
+});
+
+test('afk pause text mode enqueues pause command', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-pause-text-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  const runId = 'pause-text-run';
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId,
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  const result = await withCommandArgs(['pause'], () => runAfk(repoRoot));
+  assert.equal(result.code, 0);
+  assert.match(result.message, /Enqueued pause for active run/);
+});
+
+test('afk resume --json returns structured not-found error when no active run exists', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-resume-json-no-run-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await withCommandArgs(['resume', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 1);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.command, 'resume');
+  assert.equal(parsed.error.code, 'no-active-run');
+});
+
+test('afk resume --json enqueues resume command for a healthy active run', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-resume-json-active-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  const runId = 'resume-run-123';
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId,
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'paused',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  const result = await withCommandArgs(['resume', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'resume');
+  assert.equal(parsed.data.runId, runId);
+  assert.equal(parsed.data.targetState, 'running');
+});
+
+test('afk status --json reports no-active-run state without failing', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-json-no-run-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await withCommandArgs(['status', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'status');
+  assert.equal(parsed.data.active, false);
+  assert.equal(parsed.data.pendingPostMergeCleanupDebt, 0);
+});
+
+test('afk status --json reports active run metadata', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-json-active-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  const metadataDir = path.join(logsDir, 'runtime-metadata');
+  mkdirSync(metadataDir, { recursive: true });
+  const now = Date.now();
+  const runId = 'status-json-run-123';
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId,
+      pid: process.pid,
+      startedAt: new Date(now - 60_000).toISOString(),
+      heartbeatAt: new Date(now - 2_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(metadataDir, 'feat-ticket1.json'),
+    JSON.stringify({
+      RUN_ID: runId,
+      EXECUTION_MODEL_ID: 'claude-sonnet-4',
+      EXECUTION_PROVIDER: 'opencode',
+      TICKET_PATH: '/tmp/t1.md',
+      FEATURE_SLUG: 'feat',
+      ISSUE_NAME: 'ticket1',
+    }),
+    'utf8',
+  );
+
+  const result = await withCommandArgs(['status', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'status');
+  assert.equal(parsed.data.active, true);
+  assert.equal(parsed.data.runId, runId);
+  assert.equal(parsed.data.pid, process.pid);
+  assert.equal(parsed.data.state, 'running');
+  assert.equal(typeof parsed.data.heartbeatAgeMs, 'number');
+  assert.equal(parsed.data.startedAt, new Date(now - 60_000).toISOString());
+  assert.equal(parsed.data.modelId, 'claude-sonnet-4');
+  assert.equal(parsed.data.harness, 'OpenCode');
+  assert.equal(parsed.data.ticketCount, 1);
+  assert.equal(parsed.data.pendingPostMergeCleanupDebt, 0);
+});
+
+test('afk status --json includes pending post-merge cleanup debt', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-json-cleanup-'));
+  writeMinimalAfkConfig(repoRoot);
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(
+    path.join(logsDir, 'pending-post-merge-cleanup.json'),
+    JSON.stringify([
+      {
+        feature: 'feat',
+        issueName: '01',
+        branchName: 'afk/feat/01',
+        worktreePath: '/tmp/afk-feat-01',
+        featureWorktreePath: '/tmp/afk-feat',
+        featureBranchName: 'afk/feat',
+        mergedIssueTip: 'abc123',
+        warning: 'merge proof failed',
+        failedAt: '2026-06-11T00:00:00.000Z',
+      },
+    ]),
+    'utf8',
+  );
+
+  const result = await withCommandArgs(['status', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.data.active, false);
+  assert.equal(parsed.data.pendingPostMergeCleanupDebt, 1);
+});
+
+test('afk stop --json returns structured not-found error when no active run exists', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-json-no-run-'));
+  const result = await withCommandArgs(['stop', '--json'], () => runAfk(repoRoot));
+  assert.equal(result.code, 1);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.command, 'stop');
+  assert.equal(parsed.error.code, 'no-active-run');
+});
+
+test('afk stop --json returns structured success when run stops', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-json-success-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  const runId = 'stop-json-run-123';
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId,
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  setTimeout(() => {
+    try {
+      const activeRunPath = path.join(logsDir, 'active-run.json');
+      if (existsSync(activeRunPath)) {
+        rmSync(activeRunPath);
+      }
+    } catch {
+      // ignore
+    }
+  }, 100);
+
+  const result = await withCommandArgs(['stop', '--json'], () =>
+    runAfk(repoRoot, { stopTimeoutMs: 2_000, stopPollIntervalMs: 50 }),
+  );
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'stop');
+  assert.equal(parsed.data.runId, runId);
+  assert.equal(parsed.data.stopped, true);
+});
+
+test('afk stop --json returns structured timeout data', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-stop-json-timeout-'));
+  const logsDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs');
+  mkdirSync(logsDir, { recursive: true });
+  const now = Date.now();
+  const runId = 'stop-json-run-456';
+  writeFileSync(
+    path.join(logsDir, 'active-run.json'),
+    `${JSON.stringify({
+      version: 1,
+      runId,
+      pid: process.pid,
+      startedAt: new Date(now - 10_000).toISOString(),
+      heartbeatAt: new Date(now - 1_000).toISOString(),
+      state: 'running',
+      command: 'afk',
+    })}
+`,
+    'utf8',
+  );
+
+  const result = await withCommandArgs(['stop', '--json'], () =>
+    runAfk(repoRoot, { stopTimeoutMs: 150, stopPollIntervalMs: 50 }),
+  );
+  assert.equal(result.code, 1);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.command, 'stop');
+  assert.equal(parsed.error.code, 'stop-timeout');
+  assert.equal(parsed.error.details.runId, runId);
+  assert.equal(parsed.error.details.timeoutMs, 150);
 });
