@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -938,11 +938,7 @@ test('headless run with valid flags starts daemon and writes run plan', async ()
   initGitRepo(repoRoot);
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
   mkdirSync(issuesDir, { recursive: true });
-  writeFileSync(
-    path.join(issuesDir, '01.md'),
-    '---\nfeature: feat\nstatus: ready-for-agent\n---\n',
-    'utf8',
-  );
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: ready-for-agent\n---\n', 'utf8');
   writeFileSync(
     path.join(repoRoot, '.scratch', 'feat', 'PRD.md'),
     '---\nstatus: ready-for-agent\n---\n\n# Feat\n',
