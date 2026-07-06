@@ -68,6 +68,7 @@ export interface OpenCodeSessionExecutor {
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
+    sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access';
     permissionMode?: 'allow' | 'ask';
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     decidePermission?: (request: OpenCodePermissionRequest) => Promise<OpenCodePermissionDecision | null>;

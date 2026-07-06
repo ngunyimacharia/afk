@@ -2,7 +2,11 @@ import type { AgentExecutionProvider, AgentExecutionRequest } from './agent-exec
 import { decideAfkPermission, resolveAgentInvocationPolicy } from './agent-execution-provider.js';
 import { ClaudeCodeSessionExecutor } from './claude-code.js';
 import { CodexSessionExecutor } from './codex.js';
-import { type OpenCodeSessionExecutor, type OpenCodeSessionProgressEvent, SDKOpenCodeSessionExecutor } from './opencode.js';
+import {
+  type OpenCodeSessionExecutor,
+  type OpenCodeSessionProgressEvent,
+  SDKOpenCodeSessionExecutor,
+} from './opencode.js';
 import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 import type { AgentExecutionResult } from './types.js';
 
@@ -55,6 +59,10 @@ class DefaultSandcastleExecutionClient implements SandcastlePhaseExecutionClient
       sessionId: request.sessionId,
       workDir: request.plan.checkout.worktreePath,
       repoRoot: request.plan.repoRoot,
+      sandboxMode:
+        input.provider.provider === 'codex' && request.plan.sandboxMode === 'no-sandbox'
+          ? 'danger-full-access'
+          : undefined,
       permissionMode: 'allow',
       onProgress: (event) => request.onProgress?.(toAgentProgressEvent(ticket?.label ?? 'unknown', event)),
       decidePermission: (permissionRequest) =>

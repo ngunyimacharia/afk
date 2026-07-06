@@ -1,3 +1,4 @@
+import { Codex } from '@openai/codex-sdk';
 import type { OpenCodeSessionExecutor, OpenCodeSessionProgressEvent } from './opencode.js';
 import { buildStaleRecoveryPrompt } from './opencode.js';
 import type { LaunchModel } from './types.js';
@@ -63,6 +64,7 @@ export class CodexSessionExecutor implements OpenCodeSessionExecutor {
     staleProgressTimeoutMs?: number;
     activeToolStaleTimeoutMs?: number;
     maxStaleRecoveries?: number;
+    sandboxMode?: SandboxMode;
     onProgress?: (event: OpenCodeSessionProgressEvent) => void;
     signal?: AbortSignal;
   }): Promise<{
@@ -71,7 +73,7 @@ export class CodexSessionExecutor implements OpenCodeSessionExecutor {
     terminalError?: string | null;
     finalMessageText?: string | null;
   }> {
-    const threadOptions = buildCodexThreadOptions(input.model, input.workDir);
+    const threadOptions = buildCodexThreadOptions(input.model, input.workDir, process.env, input.sandboxMode);
     const output: string[] = [];
     let finalMessageText: string | null = null;
     let terminalError: string | null = null;
@@ -170,11 +172,7 @@ export class CodexSessionExecutor implements OpenCodeSessionExecutor {
       });
       return { sessionId, output, terminalError, finalMessageText };
     } catch (error) {
-      const reason = input.signal?.aborted
-        ? 'run killed'
-        : error instanceof Error
-          ? error.message
-          : 'codex execution failed';
+      const reason = input.signal?.aborted ? 'run killed' : formatCodexExecutionError(error);
       return {
         sessionId,
         output,
@@ -259,9 +257,10 @@ export function buildCodexThreadOptions(
   model: LaunchModel,
   workDir?: string,
   env: NodeJS.ProcessEnv = process.env,
+  sandboxMode?: SandboxMode,
 ): ThreadOptions {
   const options: ThreadOptions = {
-    sandboxMode: parseCodexSandboxMode(env.AFK_CODEX_SANDBOX),
+    sandboxMode: sandboxMode ?? parseCodexSandboxMode(env.AFK_CODEX_SANDBOX),
     approvalPolicy: parseCodexApprovalPolicy(env.AFK_CODEX_APPROVAL),
     networkAccessEnabled: parseCodexBoolean(env.AFK_CODEX_NETWORK),
   };
@@ -300,12 +299,18 @@ export function parseCodexBoolean(value: string | undefined): boolean {
 }
 
 async function createDefaultCodexClient(): Promise<CodexClientLike> {
-  const dynamicImport = new Function('specifier', 'return import(specifier)') as (
-    specifier: string,
-  ) => Promise<unknown>;
-  const mod = (await dynamicImport('@openai/codex-sdk')) as { Codex?: new () => CodexClientLike };
-  if (!mod.Codex) throw new Error('Codex SDK is unavailable');
-  return new mod.Codex();
+  return new Codex();
+}
+
+function formatCodexExecutionError(error: unknown): string {
+  if (error instanceof Error) return error.message || error.name || 'codex execution failed';
+  if (typeof error === 'string') return error || 'codex execution failed';
+  if (error === null || error === undefined) return 'codex execution failed';
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function extractAgentMessageText(event: CodexThreadEventLike): string | null {

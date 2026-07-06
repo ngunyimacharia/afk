@@ -148,6 +148,23 @@ describe('CodexSessionExecutor', () => {
     });
   });
 
+  test('uses explicit Codex sandbox override ahead of environment defaults', () => {
+    assert.deepEqual(
+      buildCodexThreadOptions(
+        { id: 'codex/default' },
+        '/repo/worktree',
+        { AFK_CODEX_SANDBOX: 'read-only' },
+        'danger-full-access',
+      ),
+      {
+        approvalPolicy: 'never',
+        networkAccessEnabled: false,
+        sandboxMode: 'danger-full-access',
+        workingDirectory: '/repo/worktree',
+      },
+    );
+  });
+
   test('parses Codex environment overrides and falls back on invalid values', () => {
     assert.equal(parseCodexSandboxMode('danger-full-access'), 'danger-full-access');
     assert.equal(parseCodexSandboxMode('invalid'), 'workspace-write');
