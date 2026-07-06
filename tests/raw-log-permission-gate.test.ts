@@ -23,7 +23,7 @@ test('summary reporter requests raw-log permission when configured', async () =>
   assert.equal(requested, true);
   const requestArgs = requests[0];
   if (!requestArgs) throw new Error('expected permission request args');
-  assert.equal(requestArgs.scope, '.scratch/.opencode-afk-logs/');
-  assert.match(requestArgs.reason, /missing summaries|incomplete|contradictory/i);
+  assert.equal(requestArgs.scope, '.scratch/sandcastle-runtime/');
+  assert.match(requestArgs.reason, /inspect Sandcastle runtime records/i);
   assert.match(report.message, /Raw logs were not inspected/);
 });

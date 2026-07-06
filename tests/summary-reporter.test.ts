@@ -3,8 +3,36 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import type { SandcastleRuntimeRecord } from '../src/sandcastle-runtime-store.js';
 import { SummaryReporter, TrackerProviderSummaryIssueSource } from '../src/summary-reporter.js';
 import type { TrackerProvider, TrackerWorkItem } from '../src/tracker-contract.js';
+
+function writeSandcastleRecord(
+  repoRoot: string,
+  overrides: Partial<SandcastleRuntimeRecord> & { runId: string; ticket: SandcastleRuntimeRecord['ticket'] },
+): void {
+  const runDir = path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', overrides.runId);
+  mkdirSync(runDir, { recursive: true });
+  const record: SandcastleRuntimeRecord = {
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    trackerSource: 'scratch',
+    provider: { provider: 'opencode', model: '' },
+    sandbox: { mode: 'none' },
+    branch: '',
+    worktreePath: '',
+    phases: [],
+    commits: [],
+    logs: { run: '', phases: [] },
+    terminal: { status: 'running' },
+    providerFailures: [],
+    cleanupResources: [],
+    cleanupResults: [],
+    ...overrides,
+  };
+  writeFileSync(path.join(runDir, 'record.json'), JSON.stringify(record, null, 2));
+}
 
 test('extracts repeated summary blocks and missing summaries', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
@@ -39,12 +67,10 @@ Outcome: completed
   assert.match(report.message, /feat\/01: 2 attempts/);
 });
 
-test('enriches with runtime metadata without raw logs', async () => {
+test('enriches with Sandcastle runtime record without raw logs', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
-  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   mkdirSync(issuesDir, { recursive: true });
-  mkdirSync(metadataDir, { recursive: true });
   writeFileSync(
     path.join(issuesDir, '01.md'),
     `---
@@ -58,33 +84,20 @@ Session or run ID: session-1
 Outcome: completed
 `,
   );
-  writeFileSync(
-    path.join(metadataDir, 'feat-01.json'),
-    JSON.stringify(
-      {
-        TICKET_PATH: path.join(issuesDir, '01.md'),
-        FEATURE_SLUG: 'feat',
-        ISSUE_NAME: '01',
-        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
-        START_TIME: '2026-05-18T00:00:00.000Z',
-        START_EPOCH: 1,
-        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
-        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
-        STATUS: 'completed',
-        EXECUTION_PROVIDER: 'opencode',
-        PROVIDER_SESSION_ID: 'session-1',
-        PROVIDER_SESSION_REMOVABLE: true,
-        INSPECTION_PROVIDER: null,
-        INSPECTION_TARGET_IDENTIFIER: null,
-        UNSAFE_REASON: null,
-      },
-      null,
-      2,
-    ),
-  );
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-feat-01',
+    ticket: {
+      featureSlug: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      ticketPath: path.join(issuesDir, '01.md'),
+    },
+    terminal: { status: 'completed' },
+    createdAt: '2026-05-18T00:00:00.000Z',
+  });
 
   const report = await new SummaryReporter({ repoRoot }).summarize();
-  assert.match(report.message, /runtime: completed/);
+  assert.match(report.message, /terminal: completed/);
   assert.match(report.message, /started: 2026-05-18T00:00:00.000Z/);
   assert.doesNotMatch(report.message, /malformed reviewer outputs:/);
   assert.doesNotMatch(report.message, /fixup cycles:/);
@@ -92,61 +105,38 @@ Outcome: completed
   assert.match(report.message, /- none/);
 });
 
-test('reports Linear-backed run identity and sync status from metadata', async () => {
+test('reports Linear-backed run identity from Sandcastle runtime record', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   const mirrorPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors', 'eng-1-eng-2.md');
-  mkdirSync(metadataDir, { recursive: true });
   mkdirSync(path.dirname(mirrorPath), { recursive: true });
   writeFileSync(mirrorPath, 'Linear mirror\n');
-  writeFileSync(
-    path.join(metadataDir, 'eng-1-eng-2.json'),
-    JSON.stringify(
-      {
-        TICKET_PATH: mirrorPath,
-        FEATURE_SLUG: 'eng-1',
-        ISSUE_NAME: 'eng-2',
-        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'eng-1-eng-2.log'),
-        START_TIME: '2026-05-18T00:00:00.000Z',
-        START_EPOCH: 1,
-        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'eng-1-eng-2.done'),
-        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'eng-1-eng-2.failed'),
-        STATUS: 'completed',
-        RUN_STATUS: 'completed',
-        EXECUTION_PROVIDER: 'opencode',
-        PROVIDER_SESSION_ID: 'session-1',
-        PROVIDER_SESSION_REMOVABLE: true,
-        INSPECTION_PROVIDER: null,
-        INSPECTION_TARGET_IDENTIFIER: null,
-        UNSAFE_REASON: null,
-        LINEAR_ISSUE_ID: 'issue-2',
-        LINEAR_ISSUE_KEY: 'ENG-2',
-        LINEAR_ISSUE_URL: 'https://linear.app/acme/issue/ENG-2/test',
-        LINEAR_PARENT_KEY: 'ENG-1',
-        LINEAR_MIRROR_PATH: mirrorPath,
-        LINEAR_SYNC_STATUS: 'terminal-synced',
-      },
-      null,
-      2,
-    ),
-  );
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-eng-1-eng-2',
+    trackerSource: 'linear',
+    ticket: {
+      featureSlug: 'eng-1',
+      issueName: 'eng-2',
+      label: 'eng-1/eng-2',
+      ticketPath: mirrorPath,
+      trackerIssueId: 'issue-2',
+      trackerIssueKey: 'ENG-2',
+      trackerIssueUrl: 'https://linear.app/acme/issue/ENG-2/test',
+    },
+    terminal: { status: 'completed' },
+  });
 
   const report = await new SummaryReporter({ repoRoot }).summarize();
   assert.match(report.message, /eng-1\/eng-2/);
+  assert.match(report.message, /provider: linear/);
   assert.match(report.message, /linear issue: ENG-2/);
   assert.match(report.message, /linear url: https:\/\/linear\.app\/acme\/issue\/ENG-2\/test/);
-  assert.match(report.message, /linear parent: ENG-1/);
-  assert.match(report.message, /linear workflow sync: terminal-synced/);
-  assert.match(report.message, /linear summary comment: synced/);
   assert.match(report.message, new RegExp(`linear mirror: ${mirrorPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
 });
 
-test('reports timing and review counters from metadata when available', async () => {
+test('reports timing highlights from Sandcastle phase history', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
-  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   mkdirSync(issuesDir, { recursive: true });
-  mkdirSync(metadataDir, { recursive: true });
 
   writeFileSync(
     path.join(issuesDir, '01.md'),
@@ -161,78 +151,58 @@ Outcome: blocked
 `,
   );
 
-  writeFileSync(
-    path.join(metadataDir, 'feat-01.json'),
-    JSON.stringify(
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-feat-01',
+    ticket: {
+      featureSlug: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      ticketPath: path.join(issuesDir, '01.md'),
+    },
+    terminal: { status: 'blocked' },
+    phases: [
       {
-        TICKET_PATH: path.join(issuesDir, '01.md'),
-        FEATURE_SLUG: 'feat',
-        ISSUE_NAME: '01',
-        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
-        START_TIME: '2026-05-18T00:00:00.000Z',
-        START_EPOCH: 1,
-        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
-        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
-        STATUS: 'blocked',
-        EXECUTION_PROVIDER: 'opencode',
-        PROVIDER_SESSION_ID: 'session-1',
-        PROVIDER_SESSION_REMOVABLE: true,
-        INSPECTION_PROVIDER: null,
-        INSPECTION_TARGET_IDENTIFIER: null,
-        FAILURE_KIND: 'needs-human',
-        UNSAFE_REASON: 'budget exceeded: fixup-cycle-cap',
-        REVIEW_CYCLE_HISTORY: [
-          { cycle: 1, outcome: 'loop-required', reason: 'missing tests', malformed: true, findings: [] },
-          { cycle: 2, outcome: 'loop-required', reason: 'cleanup needed', malformed: false, findings: [] },
-        ],
-        PHASE_HISTORY: [
-          {
-            name: 'execution',
-            startTime: '2026-05-18T00:00:00.000Z',
-            endTime: '2026-05-18T00:00:10.000Z',
-            durationMs: 10000,
-            cycle: 1,
-          },
-          {
-            name: 'review',
-            startTime: '2026-05-18T00:00:11.000Z',
-            endTime: '2026-05-18T00:00:25.000Z',
-            durationMs: 14000,
-            cycle: 1,
-          },
-          {
-            name: 'fixup',
-            startTime: '2026-05-18T00:00:26.000Z',
-            endTime: '2026-05-18T00:00:40.000Z',
-            durationMs: 14000,
-            cycle: 1,
-          },
-          {
-            name: 'fixup',
-            startTime: '2026-05-18T00:00:41.000Z',
-            endTime: '2026-05-18T00:01:03.000Z',
-            durationMs: 22000,
-            cycle: 2,
-          },
-        ],
+        phase: 'implementation',
+        attempt: 1,
+        status: 'passed',
+        startedAt: '2026-05-18T00:00:00.000Z',
+        completedAt: '2026-05-18T00:00:10.000Z',
+        durationMs: 10000,
       },
-      null,
-      2,
-    ),
-  );
+      {
+        phase: 'review',
+        attempt: 1,
+        status: 'passed',
+        startedAt: '2026-05-18T00:00:11.000Z',
+        completedAt: '2026-05-18T00:00:25.000Z',
+        durationMs: 14000,
+      },
+      {
+        phase: 'fixup',
+        attempt: 1,
+        status: 'passed',
+        startedAt: '2026-05-18T00:00:26.000Z',
+        completedAt: '2026-05-18T00:00:40.000Z',
+        durationMs: 14000,
+      },
+      {
+        phase: 'fixup',
+        attempt: 2,
+        status: 'passed',
+        startedAt: '2026-05-18T00:00:41.000Z',
+        completedAt: '2026-05-18T00:01:03.000Z',
+        durationMs: 22000,
+      },
+    ],
+  });
 
   const report = await new SummaryReporter({ repoRoot }).summarize();
-  assert.match(report.message, /review cycles: 2/);
-  assert.match(report.message, /malformed reviewer outputs: 1/);
-  assert.match(report.message, /fixup cycles: 2/);
-  assert.match(report.message, /failure kind: needs-human/);
-  assert.match(report.message, /readiness blocker: needs-human/);
   assert.match(report.message, /Overall slowest phases/);
   assert.match(report.message, /feat\/01 fixup#2: 22000ms/);
   assert.match(report.message, /Slowest by phase category/);
   assert.match(report.message, /fixup: feat\/01#2 \(22000ms\)/);
-  assert.match(report.message, /Failure kind totals/);
-  assert.match(report.message, /needs-human: 1 run, 60000ms/);
+  assert.match(report.message, /Terminal state totals/);
+  assert.match(report.message, /blocked: 1 run, 60000ms/);
 });
 
 test('detects AFK summary when it is the last section in file', async () => {
@@ -257,12 +227,10 @@ Outcome: completed`,
   assert.match(report.message, /Completed or successful work[\s\S]*feat\/01/);
 });
 
-test('reports handoff state from runtime metadata', async () => {
+test('reports handoff state from Sandcastle runtime record', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
-  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   mkdirSync(issuesDir, { recursive: true });
-  mkdirSync(metadataDir, { recursive: true });
 
   writeFileSync(
     path.join(issuesDir, '01.md'),
@@ -277,39 +245,21 @@ Outcome: handoff
 `,
   );
 
-  writeFileSync(
-    path.join(metadataDir, 'feat-01.json'),
-    JSON.stringify(
-      {
-        TICKET_PATH: path.join(issuesDir, '01.md'),
-        FEATURE_SLUG: 'feat',
-        ISSUE_NAME: '01',
-        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
-        START_TIME: '2026-05-18T00:00:00.000Z',
-        START_EPOCH: 1,
-        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
-        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
-        STATUS: 'blocked',
-        IMPLEMENTATION_STATUS: 'completed',
-        REVIEW_STATUS: 'unavailable',
-        RUN_STATUS: 'handoff',
-        EXECUTION_PROVIDER: 'opencode',
-        PROVIDER_SESSION_ID: 'session-1',
-        PROVIDER_SESSION_REMOVABLE: true,
-        INSPECTION_PROVIDER: null,
-        INSPECTION_TARGET_IDENTIFIER: null,
-        UNSAFE_REASON: null,
-      },
-      null,
-      2,
-    ),
-  );
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-feat-01',
+    ticket: {
+      featureSlug: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      ticketPath: path.join(issuesDir, '01.md'),
+    },
+    terminal: { status: 'handoff', handoffReason: 'awaiting manual review' },
+  });
 
   const report = await new SummaryReporter({ repoRoot }).summarize();
   assert.match(report.message, /Handoff or manual review[\s\S]*feat\/01/);
-  assert.match(report.message, /run: handoff/);
-  assert.match(report.message, /implementation: completed/);
-  assert.match(report.message, /review: unavailable/);
+  assert.match(report.message, /terminal: handoff/);
+  assert.match(report.message, /handoff reason: awaiting manual review/);
   assert.doesNotMatch(report.message, /Failed or blocked work[\s\S]*feat\/01/);
 });
 
@@ -394,50 +344,20 @@ Outcome: completed
   assert.doesNotMatch(report.message, /Not yet started[\s\S]*feat\/01/);
 });
 
-test('reports budget exceeded tickets and leftover cleanup counts', async () => {
+test('reports leftover cleanup counts from Sandcastle runtime records', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
-  mkdirSync(metadataDir, { recursive: true });
-
-  writeFileSync(
-    path.join(metadataDir, 'feat-01.json'),
-    JSON.stringify(
-      {
-        TICKET_PATH: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'),
-        FEATURE_SLUG: 'feat',
-        ISSUE_NAME: '01',
-        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
-        START_TIME: '2026-05-18T00:00:00.000Z',
-        START_EPOCH: 1,
-        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
-        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
-        STATUS: 'blocked',
-        RUN_STATUS: 'blocked',
-        EXECUTION_PROVIDER: 'opencode',
-        PROVIDER_SESSION_ID: null,
-        PROVIDER_SESSION_REMOVABLE: false,
-        INSPECTION_PROVIDER: null,
-        INSPECTION_TARGET_IDENTIFIER: null,
-        UNSAFE_REASON: null,
-        BUDGET_EXCEEDED_EVENTS: [
-          {
-            budgetName: 'phase-execution-wall-clock-ms',
-            limit: 5000,
-            observed: 7200,
-            phase: 'execution',
-            cycle: 1,
-            evidence: 'execution phase exceeded budget',
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-  );
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-feat-01',
+    ticket: {
+      featureSlug: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      ticketPath: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'),
+    },
+    terminal: { status: 'blocked' },
+  });
 
   const report = await new SummaryReporter({ repoRoot }).summarize();
-  assert.match(report.message, /Budget exceeded tickets/);
-  assert.match(report.message, /feat\/01: phase-execution-wall-clock-ms \(execution#1, 7200ms > 5000ms\)/);
   assert.match(report.message, /Leftover cleanup counts/);
   assert.match(report.message, /leftover branches: 0/);
   assert.match(report.message, /leftover worktrees: 0/);
@@ -475,40 +395,21 @@ Outcome: completed
 
 test('counts leftover worktrees excluding active runtime worktree paths', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   const worktreeRoot = path.join(repoRoot, '.worktree');
-  mkdirSync(metadataDir, { recursive: true });
   mkdirSync(path.join(worktreeRoot, 'active-run'), { recursive: true });
   mkdirSync(path.join(worktreeRoot, 'orphan'), { recursive: true });
 
-  writeFileSync(
-    path.join(metadataDir, 'feat-01.json'),
-    JSON.stringify(
-      {
-        TICKET_PATH: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'),
-        FEATURE_SLUG: 'feat',
-        ISSUE_NAME: '01',
-        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
-        START_TIME: '2026-05-18T00:00:00.000Z',
-        START_EPOCH: 1,
-        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
-        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
-        STATUS: 'running',
-        RUN_STATUS: 'running',
-        EXECUTION_PROVIDER: 'opencode',
-        PROVIDER_SESSION_ID: null,
-        PROVIDER_SESSION_REMOVABLE: false,
-        INSPECTION_PROVIDER: null,
-        INSPECTION_TARGET_IDENTIFIER: null,
-        UNSAFE_REASON: null,
-        SNAPSHOT_SAFE_FIELDS: {
-          worktreePath: path.join(worktreeRoot, 'active-run'),
-        },
-      },
-      null,
-      2,
-    ),
-  );
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-feat-01',
+    ticket: {
+      featureSlug: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      ticketPath: path.join(repoRoot, '.scratch', 'feat', 'issues', '01.md'),
+    },
+    terminal: { status: 'running' },
+    worktreePath: path.join(worktreeRoot, 'active-run'),
+  });
 
   const report = await new SummaryReporter({ repoRoot }).summarize();
   assert.match(report.message, /Leftover cleanup counts/);

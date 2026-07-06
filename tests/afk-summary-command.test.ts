@@ -4,13 +4,39 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { runAfk } from '../src/cli.js';
+import type { SandcastleRuntimeRecord } from '../src/sandcastle-runtime-store.js';
 
-test('afk-summary is read-only and issue-file-first', async () => {
+function writeSandcastleRecord(
+  repoRoot: string,
+  overrides: Partial<SandcastleRuntimeRecord> & { runId: string; ticket: SandcastleRuntimeRecord['ticket'] },
+): void {
+  const runDir = path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', overrides.runId);
+  mkdirSync(runDir, { recursive: true });
+  const record: SandcastleRuntimeRecord = {
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    trackerSource: 'scratch',
+    provider: { provider: 'opencode', model: '' },
+    sandbox: { mode: 'none' },
+    branch: '',
+    worktreePath: '',
+    phases: [],
+    commits: [],
+    logs: { run: '', phases: [] },
+    terminal: { status: 'running' },
+    providerFailures: [],
+    cleanupResources: [],
+    cleanupResults: [],
+    ...overrides,
+  };
+  writeFileSync(path.join(runDir, 'record.json'), JSON.stringify(record, null, 2));
+}
+
+test('afk-summary is read-only and Sandcastle-first', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
-  const metadataDir = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   mkdirSync(issuesDir, { recursive: true });
-  mkdirSync(metadataDir, { recursive: true });
   writeFileSync(
     path.join(issuesDir, '01.md'),
     `---
@@ -23,40 +49,26 @@ Timestamp: 2026-05-18T00:00:00.000Z
 Outcome: completed
 `,
   );
-  writeFileSync(
-    path.join(metadataDir, 'feat-01.json'),
-    JSON.stringify(
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-feat-01',
+    ticket: {
+      featureSlug: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      ticketPath: path.join(issuesDir, '01.md'),
+    },
+    terminal: { status: 'completed' },
+    phases: [
       {
-        TICKET_PATH: path.join(issuesDir, '01.md'),
-        FEATURE_SLUG: 'feat',
-        ISSUE_NAME: '01',
-        LOG_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-01.log'),
-        START_TIME: '2026-05-18T00:00:00.000Z',
-        START_EPOCH: 1,
-        DONE_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.done'),
-        FAILED_SENTINEL_PATH: path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'sentinels', 'feat-01.failed'),
-        STATUS: 'completed',
-        EXECUTION_PROVIDER: 'opencode',
-        PROVIDER_SESSION_ID: 'session-1',
-        PROVIDER_SESSION_REMOVABLE: true,
-        INSPECTION_PROVIDER: null,
-        INSPECTION_TARGET_IDENTIFIER: null,
-        UNSAFE_REASON: null,
-        REVIEW_CYCLE_HISTORY: [],
-        PHASE_HISTORY: [
-          {
-            name: 'execution',
-            startTime: '2026-05-18T00:00:00.000Z',
-            endTime: '2026-05-18T00:00:09.000Z',
-            durationMs: 9000,
-            cycle: 1,
-          },
-        ],
+        phase: 'implementation',
+        attempt: 1,
+        status: 'passed',
+        startedAt: '2026-05-18T00:00:00.000Z',
+        completedAt: '2026-05-18T00:00:09.000Z',
+        durationMs: 9000,
       },
-      null,
-      2,
-    ),
-  );
+    ],
+  });
   const originalArg = process.argv[2];
   process.argv[2] = 'afk-summary';
   const result = await runAfk(repoRoot);
@@ -65,7 +77,7 @@ Outcome: completed
   assert.match(result.message, /AFK Summary/);
   assert.match(result.message, /completed/);
   assert.match(result.message, /Phase timing highlights/);
-  assert.match(result.message, /feat\/01 execution#1: 9000ms/);
+  assert.match(result.message, /feat\/01 implementation#1: 9000ms/);
   assert.match(result.message, /Pending post-merge cleanup debt\n- none/);
 });
 
