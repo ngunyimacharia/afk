@@ -515,31 +515,31 @@ function isWithinRepoLocalWorktree(worktreePath: string, repoRoot: string): bool
   return relative.startsWith('.worktree/') && relative !== '.worktree';
 }
 
-function buildTerminalRuntimeWorktreeMap(repoRoot: string): Map<string, { feature: string; issueName: string }> {
+function buildTerminalRuntimeWorktreeMap(
+  records: Array<{ record: SandcastleRuntimeRecord; recordPath: string }>,
+): Map<string, { feature: string; issueName: string }> {
   const result = new Map<string, { feature: string; issueName: string }>();
-  const metadataRoot = ticketMetadataRoot(repoRoot);
-  if (!exists(metadataRoot)) return result;
-  for (const file of readdirSync(metadataRoot).filter((entry) => entry.endsWith('.json'))) {
-    const metadataPath = path.join(metadataRoot, file);
-    let runtime: RuntimeMetadataRecord;
-    try {
-      runtime = JSON.parse(readFileSync(metadataPath, 'utf8')) as RuntimeMetadataRecord;
-    } catch {
-      continue;
-    }
-    if (!isTerminalRuntimeStatus(runtime)) continue;
-    const safeWorktreePath = runtime.SNAPSHOT_SAFE_FIELDS?.worktreePath;
+  for (const { record } of records) {
+    if (record.terminal.status === 'running' || record.terminal.status === 'handoff') continue;
+    const safeWorktreePath = record.worktreePath;
     if (!safeWorktreePath) continue;
-    result.set(safeRealpath(safeWorktreePath), { feature: runtime.FEATURE_SLUG, issueName: runtime.ISSUE_NAME });
+    result.set(safeRealpath(safeWorktreePath), {
+      feature: record.ticket.featureSlug,
+      issueName: record.ticket.issueName,
+    });
   }
   return result;
 }
 
-function _buildOrphanedWorktreeTargets(repoRoot: string, terminalKeys: Set<string>): OrphanedWorktreeCleanupTarget[] {
+function _buildOrphanedWorktreeTargets(
+  repoRoot: string,
+  terminalKeys: Set<string>,
+  records: Array<{ record: SandcastleRuntimeRecord; recordPath: string }>,
+): OrphanedWorktreeCleanupTarget[] {
   const pending = readPendingPostMergeCleanupItems(repoRoot);
   const pendingWorktreePaths = new Set(pending.map((item) => safeRealpath(item.worktreePath)));
   const pendingBranchNames = new Set(pending.map((item) => item.branchName));
-  const runtimeWorktreeMap = buildTerminalRuntimeWorktreeMap(repoRoot);
+  const runtimeWorktreeMap = buildTerminalRuntimeWorktreeMap(records);
   const targets: OrphanedWorktreeCleanupTarget[] = [];
   const seenKeys = new Set<string>();
 
@@ -662,10 +662,6 @@ function _isTerminalTicketStatus(status: string | undefined, runtime: RuntimeMet
   return isFrontmatterTerminal;
 }
 
-function isTerminalRuntimeStatus(runtime: RuntimeMetadataRecord): boolean {
-  return ['completed', 'failed', 'blocked', 'interrupted'].includes(normalize(runtime.RUN_STATUS ?? runtime.STATUS));
-}
-
 function linearMirrorRoot(repoRoot: string): string {
   return path.resolve(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors');
 }
@@ -685,17 +681,25 @@ export class CleanupPlanner {
 
   buildPlan(): CleanupPlan {
     const sandcastleRuns = readSandcastleRuntimeRecords(this.input.repoRoot);
-    const sandcastleResourceTargets = sandcastleRuns
-      .filter(({ record }) => record.terminal.status !== 'running')
-      .flatMap(({ record, recordPath }) =>
-        record.cleanupResources.map((resource) => ({
-          runId: record.runId,
-          recordPath,
-          feature: record.ticket.featureSlug,
-          issueName: record.ticket.issueName,
-          resource,
-        })),
-      );
+    const pendingPostMergeCleanupTargets = readPendingPostMergeCleanupItems(this.input.repoRoot);
+    const terminalStatuses = new Set(['completed', 'failed', 'blocked', 'interrupted']);
+    const terminalRuns = sandcastleRuns.filter(({ record }) => terminalStatuses.has(record.terminal.status));
+    const preservedRuns = sandcastleRuns.filter(
+      ({ record }) => record.terminal.status === 'running' || record.terminal.status === 'handoff',
+    );
+    const terminalKeys = new Set(
+      terminalRuns.map(({ record }) => `${record.ticket.featureSlug}/${record.ticket.issueName}`),
+    );
+    const orphanedWorktreeTargets = _buildOrphanedWorktreeTargets(this.input.repoRoot, terminalKeys, sandcastleRuns);
+    const sandcastleResourceTargets = terminalRuns.flatMap(({ record, recordPath }) =>
+      record.cleanupResources.map((resource) => ({
+        runId: record.runId,
+        recordPath,
+        feature: record.ticket.featureSlug,
+        issueName: record.ticket.issueName,
+        resource,
+      })),
+    );
 
     if (sandcastleRuns.length === 0) {
       return {
@@ -703,8 +707,8 @@ export class CleanupPlanner {
         issueDeletionTargets: [],
         runtimeArtifactTargets: [],
         sandcastleResourceTargets: [],
-        orphanedWorktreeTargets: [],
-        pendingPostMergeCleanupTargets: [],
+        orphanedWorktreeTargets,
+        pendingPostMergeCleanupTargets,
         preservedIssues: [],
         preservedArtifacts: [],
         featureDirectoriesToDelete: [],
@@ -712,8 +716,8 @@ export class CleanupPlanner {
     }
 
     return {
-      terminalTargets: sandcastleRuns
-        .filter(({ record }) => record.terminal.status !== 'running')
+      terminalTargets: terminalRuns
+        .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
         .map(({ record }) => ({
           feature: record.ticket.featureSlug,
           issueName: record.ticket.issueName,
@@ -723,10 +727,10 @@ export class CleanupPlanner {
       issueDeletionTargets: [],
       runtimeArtifactTargets: [],
       sandcastleResourceTargets,
-      orphanedWorktreeTargets: [],
-      pendingPostMergeCleanupTargets: [],
-      preservedIssues: sandcastleRuns
-        .filter(({ record }) => record.terminal.status === 'running')
+      orphanedWorktreeTargets,
+      pendingPostMergeCleanupTargets,
+      preservedIssues: preservedRuns
+        .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
         .map(({ record }) => record.ticket.ticketPath),
       preservedArtifacts: [],
       featureDirectoriesToDelete: [],
@@ -785,6 +789,11 @@ function removeOrphanedWorktree(
 
 function isPathWithinSandcastleRuntime(repoRoot: string, candidatePath: string): boolean {
   return isPathWithinRoot(path.resolve(candidatePath), path.resolve(repoRoot, '.scratch', 'sandcastle-runtime'));
+}
+
+function isPathWithinScratch(repoRoot: string, candidatePath: string | undefined): boolean {
+  if (!candidatePath) return false;
+  return isPathWithinRoot(path.resolve(candidatePath), path.resolve(repoRoot, '.scratch'));
 }
 
 function cleanupSandcastleResource(
@@ -911,6 +920,7 @@ export class CleanupExecutor {
         target.failedSentinelPath,
         target.handoffSentinelPath,
       ]),
+      ...plan.terminalTargets.map((target) => target.issuePath),
       ...plan.terminalTargets.map((target) => target.linearMirrorPath),
     ].filter((value): value is string => Boolean(value));
 
