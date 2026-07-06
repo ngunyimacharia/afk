@@ -11,11 +11,12 @@ import {
 } from '../src/harness-registry.js';
 
 test('registry exposes only current selectable harnesses', () => {
-  assert.deepEqual(selectableHarnessIds(), ['OpenCode', 'Claude', 'Codex']);
+  assert.deepEqual(selectableHarnessIds(), ['OpenCode', 'Claude', 'Codex', 'PI']);
   assert.equal(isHarnessId('Codex'), true);
   assert.equal(isSelectableHarnessId('Codex'), true);
   assert.equal(isSelectableHarnessId('OpenCode'), true);
   assert.equal(isSelectableHarnessId('Claude'), true);
+  assert.equal(isSelectableHarnessId('PI'), true);
 });
 
 test('registry preserves harness display and provider names', () => {
@@ -25,6 +26,8 @@ test('registry preserves harness display and provider names', () => {
   assert.equal(providerNameForHarness('Claude'), 'claude');
   assert.equal(displayNameForHarness('Codex'), 'Codex');
   assert.equal(providerNameForHarness('Codex'), 'codex');
+  assert.equal(displayNameForHarness('PI'), 'PI');
+  assert.equal(providerNameForHarness('PI'), 'pi');
 });
 
 test('Codex discovery makes Codex available to launch', async () => {
@@ -39,5 +42,20 @@ test('Codex discovery makes Codex available to launch', async () => {
   assert.deepEqual(
     discovery.harnessModelCache.Codex?.map((model) => model.id),
     ['codex/default'],
+  );
+});
+
+test('PI discovery makes PI available to launch', async () => {
+  const models = await discoverHarnessModels('PI');
+  assert.deepEqual(
+    models.map((model) => model.id),
+    ['pi/default'],
+  );
+
+  const discovery = await discoverAvailableHarnesses(async (harness) => (harness === 'PI' ? models : []));
+  assert.equal(discovery.availableHarnesses.includes('PI'), true);
+  assert.deepEqual(
+    discovery.harnessModelCache.PI?.map((model) => model.id),
+    ['pi/default'],
   );
 });

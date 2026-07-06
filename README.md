@@ -25,7 +25,7 @@ Requirements:
 
 - Bun
 - git
-- OpenCode, Claude Code, Kimi Code, or Codex installed and authenticated for the harnesses you want to execute
+- OpenCode, Claude Code, Kimi Code, Codex, or PI installed and authenticated for the harnesses you want to execute
 
 Install dependencies and verify the checkout:
 
@@ -155,8 +155,9 @@ Launch behavior notes:
 - `afk` launch is interactive-only and requires a TTY (no CI/non-interactive launch mode in this pass).
 - `afk` launch requires repo-local `afk.json`; run `/afk-config` first.
 - prompt order is harness -> model -> reviewer model -> feature multiselect -> global concurrency.
-- selectable harnesses are `OpenCode`, `Claude`, and `Codex` when their model discovery returns at least one launch model.
+- selectable harnesses are `OpenCode`, `Claude`, `Codex`, and `PI` when their model discovery returns at least one launch model.
 - Codex appears in the harness prompt with the built-in `codex/default` model option. Install and authenticate Codex before launching Codex tickets so the SDK-backed execution can start real threads.
+- PI appears in the harness prompt when `pi/default` is available. Install the PI SDK and authenticate it before launching PI tickets; AFK sends the prepared worktree path and a phase-appropriate tool allowlist to the PI agent.
 - no prompt preselects a default option.
 - canceling any prompt exits without creating worktrees or runtime artifacts.
 - global concurrency defaults to `3` and is persisted as a launch preference.
@@ -190,6 +191,25 @@ Override them only when the repo and ticket require different Codex behavior:
 
 Invalid override values are ignored and fall back to the defaults above.
 
+## PI Configuration
+
+PI model discovery always includes `pi/default`, which lets PI use its configured default model. Set `AFK_PI_MODELS` to a comma-separated list of explicit PI model names (in `provider/model` form where possible) to add more launch choices; AFK prefixes each entry with `pi/` in the model picker and sends only the suffix to PI.
+
+Example:
+
+```bash
+AFK_PI_MODELS="openai/gpt-5.1-codex,anthropic/claude-opus" afk
+```
+
+PI execution uses the host PI configuration under `~/.pi/agent`:
+
+- the prepared worktree path is passed as the PI session working directory
+- execution mode receives the full tool allowlist
+- reviewer mode receives a read-only allowlist (`read`, `diagnostic`, `scratch-write`, `git-commit`)
+- pull-request mode receives a limited allowlist (`read`, `diagnostic`, `git-push`, `github-pr`)
+
+PI has no interactive permission prompt, so AFK relies on these SDK tool allowlists to enforce phase boundaries. If PI's SDK does not support a tool allowlist option, the boundaries are enforced only by the prompt instructions and the existing permission coordinator.
+
 ## Runtime Artifacts
 
 AFK writes runtime state under `.scratch/.opencode-afk-logs/`:
@@ -199,6 +219,15 @@ AFK writes runtime state under `.scratch/.opencode-afk-logs/`:
 - sentinels: `.scratch/.opencode-afk-logs/sentinels/<feature>-<issue>.{done,failed}`
 
 `afk summary` remains issue-file-first. Runtime metadata is readable by default. Raw log inspection is intended to remain permission-gated by caller policy.
+
+## Known Limitations
+
+- Codex and PI both require the relevant SDK and host credentials to be installed and authenticated before they appear in the launch wizard.
+- Codex event parsing is defensive and based on observed Codex SDK event shapes; events that diverge from those shapes may not produce detailed progress messages.
+- PI event parsing is similarly defensive because the PI SDK event schema is not stable in this pass; some PI-specific event types may be summarized generically.
+- PI tool allowlists enforce phase boundaries through the SDK when supported; otherwise, phase restrictions rely on prompt instructions and the existing permission coordinator.
+- PI sessions are durable per ticket but are not resumed across AFK restarts in this pass; the session id is captured in runtime metadata for inspection.
+- Real network calls to Codex or PI providers are not exercised by the automated test suite; manual verification with installed providers is required before relying on either harness in production.
 
 ## Development
 

@@ -69,6 +69,55 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   assert.match(readFileSync(logPath, 'utf8'), /reviewer model: review-model/);
 });
 
+test('launches a PI ticket and writes provider-specific runtime metadata', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-pi-'));
+  const store = new RuntimeStore({ repoRoot });
+  const runner = new SingleTicketRunner(
+    store,
+    new FakeAgentExecutionProvider({
+      status: 'completed',
+      sessionId: 'pi-session-1',
+      removable: true,
+      output: ['pi worker started'],
+    }),
+  );
+  const plan = {
+    repoRoot,
+    harness: 'PI' as const,
+    model: { id: 'pi/default' },
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'pi/default' }),
+    reviewerHarness: 'Claude' as const,
+    reviewerModel: { id: 'review-model' },
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '002', label: 'feat/002', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+  const result = await runner.launch(plan as never);
+  assert.equal(result.scheduled, true);
+  assert.match(result.message, /Scheduled feat\/002/);
+  const metadataPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-002.json');
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-002.log');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+  assert.equal(metadata.PROVIDER_SESSION_ID, 'pi-session-1');
+  assert.equal(metadata.EXECUTION_PROVIDER, 'pi');
+  assert.equal(metadata.SANDCASTLE_EXECUTION_PROVIDER, 'pi');
+  assert.equal(metadata.SANDCASTLE_EXECUTION_MODEL_ID, null);
+  assert.deepEqual(metadata.SANDCASTLE_EXECUTION_DOCKER_AUTH.env, ['PI_API_KEY']);
+  assert.equal(metadata.SANDCASTLE_REVIEWER_PROVIDER, 'claudeCode');
+  assert.match(readFileSync(logPath, 'utf8'), /pi worker started/);
+  assert.match(readFileSync(logPath, 'utf8'), /reviewer model: review-model/);
+});
+
 test('emits progress while launching a ticket', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-progress-'));
   const store = new RuntimeStore({ repoRoot });

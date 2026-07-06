@@ -6,7 +6,9 @@ import { ClaudeCodeSyncAdapter } from '../src/sync/adapters/claude-code.js';
 import { CodexSyncAdapter } from '../src/sync/adapters/codex.js';
 import { KimiCodeSyncAdapter } from '../src/sync/adapters/kimi-code.js';
 import { OpenCodeSyncAdapter } from '../src/sync/adapters/opencode.js';
+import { PiSyncAdapter } from '../src/sync/adapters/pi.js';
 import { formatSyncReport } from '../src/sync/engine.js';
+import { SyncAdapters } from '../src/sync/runner.js';
 
 test('adapter provides mappings without hard-coded core paths', () => {
   const categories = OpenCodeSyncAdapter.assetCategories();
@@ -194,5 +196,57 @@ test('codex sync report renders reviewable counts and actions', () => {
   assert.match(
     output,
     /CREATED skills: artifacts\/skills\/afk-summary\.md -> ~\/\.agents\/skills\/afk-summary\/SKILL\.md/,
+  );
+});
+
+test('pi adapter maps skills and prompts into the agent directory', () => {
+  const categories = PiSyncAdapter.assetCategories();
+  assert.equal(categories.length, 2);
+  const [skills, prompts] = categories;
+  assert.equal(skills.name, 'skills');
+  assert.equal(path.basename(skills.destinationRoot), 'skills');
+  assert.equal(path.basename(path.dirname(skills.destinationRoot)), 'agent');
+  assert.equal(skills.destinationBase, path.dirname(skills.destinationRoot));
+  assert.equal(
+    skills.mapDestination?.('afk-summary.md', skills.destinationRoot),
+    path.join(skills.destinationRoot, 'afk-summary', 'SKILL.md'),
+  );
+  assert.equal(prompts.name, 'prompts');
+  assert.equal(path.basename(prompts.destinationRoot), 'prompts');
+});
+
+test('pi sync report renders reviewable counts and actions', () => {
+  const output = formatSyncReport({
+    adapterId: 'pi',
+    counts: { created: 1, updated: 1, unchanged: 0, skipped: 0 },
+    actions: [
+      {
+        category: 'skills',
+        sourcePath: 'artifacts/skills/afk-summary.md',
+        destinationPath: '~/.pi/agent/skills/afk-summary/SKILL.md',
+        status: 'created',
+      },
+      {
+        category: 'prompts',
+        sourcePath: 'artifacts/prompts/afk-config.md',
+        destinationPath: '~/.pi/agent/prompts/afk-config.md',
+        status: 'updated',
+      },
+    ],
+  });
+
+  assert.match(output, /Adapter: pi/);
+  assert.match(output, /Created: 1/);
+  assert.match(output, /Updated: 1/);
+  assert.match(
+    output,
+    /CREATED skills: artifacts\/skills\/afk-summary\.md -> ~\/\.pi\/agent\/skills\/afk-summary\/SKILL\.md/,
+  );
+});
+
+test('sync runner includes pi report after existing adapters', () => {
+  assert.deepEqual(
+    SyncAdapters.map((adapter) => adapter.id),
+    ['opencode', 'claude-code', 'kimi-code', 'codex', 'pi'],
   );
 });

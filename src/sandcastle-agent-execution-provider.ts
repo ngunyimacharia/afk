@@ -7,6 +7,7 @@ import {
   type OpenCodeSessionProgressEvent,
   SDKOpenCodeSessionExecutor,
 } from './opencode.js';
+import { PiSessionExecutor } from './pi.js';
 import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 import type { AgentExecutionResult } from './types.js';
 
@@ -39,7 +40,7 @@ class DefaultSandcastleExecutionClient implements SandcastlePhaseExecutionClient
     if (!input.provider) return this.missingClient.execute(input);
 
     const request = input.request;
-    const executor = this.createExecutor(input.provider, request.plan.repoRoot);
+    const executor = this.createExecutor(input.provider, request.plan.repoRoot, request.invocationMode);
     const ticket = request.plan.tickets[request.ticketIndex];
     const model = request.invocationMode === 'reviewer' ? request.plan.reviewerModel : request.plan.model;
     if (!model) {
@@ -84,9 +85,15 @@ class DefaultSandcastleExecutionClient implements SandcastlePhaseExecutionClient
     };
   }
 
-  private createExecutor(provider: SandcastleAgentProviderSelection, repoRoot: string): OpenCodeSessionExecutor {
+  private createExecutor(
+    provider: SandcastleAgentProviderSelection,
+    repoRoot: string,
+    invocationMode?: string,
+  ): OpenCodeSessionExecutor {
     if (provider.provider === 'claudeCode') return new ClaudeCodeSessionExecutor(repoRoot);
     if (provider.provider === 'codex') return new CodexSessionExecutor();
+    if (provider.provider === 'pi')
+      return new PiSessionExecutor(invocationMode as import('./agent-execution-provider.js').AgentInvocationMode);
     return new SDKOpenCodeSessionExecutor();
   }
 }

@@ -66,7 +66,7 @@ export async function runInteractiveLaunchWizard(input: {
 }): Promise<LaunchWizardResult> {
   const harnessChoices = input.availableHarnesses;
   if (harnessChoices.length === 0) {
-    input.io.stdout.write('No harnesses available. Install and configure OpenCode or Claude.\n');
+    input.io.stdout.write('No harnesses available. Install and configure OpenCode, Claude, Codex, or PI.\n');
     return { cancelled: true };
   }
 

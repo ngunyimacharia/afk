@@ -20,3 +20,4 @@ This directory documents the AFK implementation that exists in this repository t
 - `src/cleanup.ts`: cleanup planning and execution
 - `src/sync/`: adapter-based asset sync
 - `src/codex.ts`: Codex model discovery, environment parsing, and SDK execution defaults
+- `src/pi.ts`: PI model discovery, session execution, and phase tool allowlists

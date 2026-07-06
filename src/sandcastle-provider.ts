@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { SelectableHarnessId } from './harness-registry.js';
 import type { LaunchModel } from './types.js';
 
-export type SandcastleAgentProviderName = 'opencode' | 'claudeCode' | 'codex';
+export type SandcastleAgentProviderName = 'opencode' | 'claudeCode' | 'codex' | 'pi';
 export type SandcastleProviderFailureKind = 'missing-auth' | 'invalid-provider' | 'runtime-error';
 
 export interface SandcastleDockerMountRequirement {
@@ -81,6 +81,21 @@ export function resolveSandcastleAgentProvider(
     };
   }
 
+  if (harness === 'PI') {
+    return {
+      provider: 'pi',
+      model: modelId,
+      docker: {
+        env: ['PI_API_KEY'],
+        mounts: [{ source: path.join(homeDir, '.pi'), target: '/home/sandbox/.pi', required: true }],
+      },
+      noSandbox: {
+        enabled: true,
+        reason: 'PI no-sandbox mode uses the host PI configuration under ~/.pi.',
+      },
+    };
+  }
+
   return {
     provider: 'codex',
     model: modelId,
@@ -99,6 +114,7 @@ export function normalizeSandcastleModelId(
   const trimmed = modelId?.trim();
   if (!trimmed || DEFAULT_MODEL_IDS.has(trimmed)) return undefined;
   if (harness === 'Codex' && trimmed === 'codex/default') return undefined;
+  if (harness === 'PI' && trimmed === 'pi/default') return undefined;
   return trimmed;
 }
 
