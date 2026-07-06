@@ -72,7 +72,8 @@ import { OpenTUINotificationAdapter, type OpenTUIRenderer } from './opentui-noti
 import { assertPathWithinRoot } from './path-validation.js';
 import type { PermissionDecisionHistoryEntry } from './permission-coordinator.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
-import { inferTrackerProviderKind, loadAfkProjectConfig } from './project-config.js';
+import { type AfkProjectConfig, inferTrackerProviderKind, loadAfkProjectConfig } from './project-config.js';
+import { resolveReviewerPromptTemplate } from './reviewer-prompt-catalog.js';
 import { RuntimeStore } from './runtime-store.js';
 import { detectDockerAvailable } from './sandbox-selection.js';
 import { SandcastleAgentExecutionProvider } from './sandcastle-agent-execution-provider.js';
@@ -85,7 +86,7 @@ import { SummaryReporter } from './summary-reporter.js';
 import { runSync } from './sync/runner.js';
 import type { TrackerProvider } from './tracker-contract.js';
 import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
-import type { FeatureCompletionAction, LaunchModel, SandboxMode, TicketRecord } from './types.js';
+import type { FeatureCompletionAction, LaunchModel, LaunchPreferences, SandboxMode, TicketRecord } from './types.js';
 import {
   orderSelectedFeaturesByWaves,
   refreshWorkspaceExecutionGraph,
@@ -234,6 +235,10 @@ function buildLinearWorkspaceGraph(
   };
 }
 
+function hasFlag(argv: string[], flag: string): boolean {
+  return argv.includes(flag);
+}
+
 export interface SpawnDaemonHandle {
   pid: number | undefined;
   unref: () => void;
@@ -253,6 +258,13 @@ export async function runAfk(
     stopPollIntervalMs?: number;
     linearProvider?: LinearProvider;
     linearManifest?: LinearPlanManifest;
+    discoverAvailableHarnesses?: (
+      discoverModels?: (harness: SelectableHarnessId, repoRoot?: string) => Promise<LaunchModel[]>,
+      repoRoot?: string,
+    ) => Promise<{
+      availableHarnesses: SelectableHarnessId[];
+      harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
+    }>;
   } = {},
 ): Promise<CliResult> {
   const argv = runtime.argv ?? process.argv;
@@ -260,7 +272,7 @@ export async function runAfk(
   const command = parsed.command;
   const isJson = parsed.flags.json;
 
-  const incompleteCommands = new Set(['run', 'pause', 'resume', 'plan', 'events']);
+  const incompleteCommands = new Set(['pause', 'resume', 'plan', 'events']);
   if (command && incompleteCommands.has(command)) {
     return formatNotImplemented(command, isJson);
   }
@@ -294,6 +306,7 @@ export async function runAfk(
 async function runAfkInternal(
   repoRoot: string,
   runtime: {
+    argv?: string[];
     io?: PromptIO;
     env?: NodeJS.ProcessEnv;
     spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
@@ -303,6 +316,13 @@ async function runAfkInternal(
     stopPollIntervalMs?: number;
     linearProvider?: LinearProvider;
     linearManifest?: LinearPlanManifest;
+    discoverAvailableHarnesses?: (
+      discoverModels?: (harness: SelectableHarnessId, repoRoot?: string) => Promise<LaunchModel[]>,
+      repoRoot?: string,
+    ) => Promise<{
+      availableHarnesses: SelectableHarnessId[];
+      harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
+    }>;
   },
   parsed: ParsedCliArgs,
 ): Promise<CliResult> {
@@ -525,6 +545,15 @@ async function runAfkInternal(
   const launchPreferences = runtimeStore.readLaunchPreferences();
   const projectConfig = loadAfkProjectConfig(repoRoot);
   if (!projectConfig.config) return { code: 1, message: projectConfig.errors.join('\n') };
+  if (command === 'run') {
+    return runHeadlessLaunch({
+      repoRoot,
+      runtime,
+      env,
+      launchPreferences,
+      projectConfig: projectConfig.config,
+    });
+  }
   const interactivity = isInteractiveLaunchAllowed(io, env);
   if (!interactivity.ok)
     return { code: 1, message: interactivity.reason ?? 'AFK launch requires an interactive terminal.' };
@@ -604,7 +633,9 @@ async function runAfkInternal(
     let sandboxMode: SandboxMode =
       launchPreferences.sandboxMode ?? launchPreferences.sandcastleSandboxMode ?? 'no-sandbox';
 
-    const { availableHarnesses, harnessModelCache } = await discoverAvailableHarnesses(undefined, repoRoot);
+    const { availableHarnesses, harnessModelCache } = await (
+      runtime.discoverAvailableHarnesses ?? discoverAvailableHarnesses
+    )(undefined, repoRoot);
 
     if (availableHarnesses.length === 0) {
       return {
@@ -1595,4 +1626,462 @@ function defaultSpawnDaemon(context: DaemonLaunchContext): SpawnDaemonHandle {
     unref: () => child.unref(),
     on: (event, callback) => child.on(event, callback),
   };
+}
+
+function parseStringFlag(argv: string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  if (index >= 0) return argv[index + 1];
+  const prefix = `${flag}=`;
+  const prefixed = argv.find((arg) => arg.startsWith(prefix));
+  if (prefixed) return prefixed.slice(prefix.length);
+  return undefined;
+}
+
+function parseCommaSeparatedFlag(argv: string[], flag: string): string[] {
+  const value = parseStringFlag(argv, flag);
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function headlessJsonEnvelope(command: string, data: unknown, message = 'Daemon started in background.'): string {
+  return JSON.stringify({ ok: true, command, message, data }, null, 2);
+}
+
+function headlessJsonError(
+  command: string,
+  code: string,
+  message: string,
+  details: Record<string, unknown> = {},
+): string {
+  return JSON.stringify({ ok: false, command, error: { code, message, details } }, null, 2);
+}
+
+function headlessFailure(
+  command: string,
+  isJson: boolean,
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): { code: number; message: string } {
+  return { code: 1, message: isJson ? headlessJsonError(command, code, message, details) : message };
+}
+
+interface HeadlessLaunchInput {
+  repoRoot: string;
+  runtime: {
+    argv?: string[];
+    io?: PromptIO;
+    env?: NodeJS.ProcessEnv;
+    spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
+    trackerProvider?: TrackerProvider;
+    inlineLaunch?: boolean;
+    linearProvider?: LinearProvider;
+    discoverAvailableHarnesses?: (
+      discoverModels?: (harness: SelectableHarnessId, repoRoot?: string) => Promise<LaunchModel[]>,
+      repoRoot?: string,
+    ) => Promise<{
+      availableHarnesses: SelectableHarnessId[];
+      harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
+    }>;
+  };
+  env: NodeJS.ProcessEnv;
+  launchPreferences: LaunchPreferences;
+  projectConfig: AfkProjectConfig;
+}
+
+async function runHeadlessLaunch(input: HeadlessLaunchInput): Promise<{ code: number; message: string }> {
+  const { repoRoot, runtime, env, launchPreferences, projectConfig } = input;
+  const argv = runtime.argv ?? process.argv;
+  const isJson = hasFlag(argv, '--json');
+  const command = 'run';
+
+  const requiredFlags = [
+    { flag: '--harness', name: 'harness' },
+    { flag: '--model', name: 'model' },
+    { flag: '--reviewer-harness', name: 'reviewer-harness' },
+    { flag: '--reviewer-model', name: 'reviewer-model' },
+    { flag: '--features', name: 'features' },
+    { flag: '--concurrency', name: 'concurrency' },
+    { flag: '--completion', name: 'completion' },
+    { flag: '--sandbox', name: 'sandbox' },
+  ] as const;
+
+  for (const { flag, name } of requiredFlags) {
+    const value = parseStringFlag(argv, flag);
+    if (!value) {
+      return headlessFailure(command, isJson, 'missing-required-flag', `Missing required flag: ${flag}`, {
+        flag,
+        name,
+      });
+    }
+  }
+
+  const harnessFlag = parseStringFlag(argv, '--harness') as string;
+  const modelFlag = parseStringFlag(argv, '--model') as string;
+  const reviewerHarnessFlag = parseStringFlag(argv, '--reviewer-harness') as string;
+  const reviewerModelFlag = parseStringFlag(argv, '--reviewer-model') as string;
+  const featureSlugs = parseCommaSeparatedFlag(argv, '--features');
+  const concurrencyFlag = parseStringFlag(argv, '--concurrency') as string;
+  const completionFlag = parseStringFlag(argv, '--completion') as string;
+  const sandboxFlag = parseStringFlag(argv, '--sandbox') as string;
+
+  if (sandboxFlag !== 'docker' && sandboxFlag !== 'no-sandbox') {
+    return headlessFailure(
+      command,
+      isJson,
+      'invalid-sandbox-mode',
+      `Invalid sandbox mode: ${sandboxFlag}. Must be 'docker' or 'no-sandbox'.`,
+      { sandbox: sandboxFlag },
+    );
+  }
+  const sandboxMode: SandboxMode = sandboxFlag;
+
+  const concurrency = Number(concurrencyFlag);
+  if (!Number.isInteger(concurrency) || concurrency <= 0) {
+    return headlessFailure(
+      command,
+      isJson,
+      'invalid-concurrency',
+      `Invalid concurrency: ${concurrencyFlag}. Must be a positive integer.`,
+      { concurrency: concurrencyFlag },
+    );
+  }
+
+  if (completionFlag !== 'merge-to-base' && completionFlag !== 'create-pr') {
+    return headlessFailure(
+      command,
+      isJson,
+      'invalid-completion-action',
+      `Invalid completion action: ${completionFlag}. Must be 'merge-to-base' or 'create-pr'.`,
+      { completion: completionFlag },
+    );
+  }
+  const featureCompletionAction: FeatureCompletionAction = completionFlag;
+  const mergeBackToBase = featureCompletionAction === 'merge-to-base';
+
+  const { availableHarnesses, harnessModelCache } = await (
+    runtime.discoverAvailableHarnesses ?? discoverAvailableHarnesses
+  )(undefined, repoRoot);
+
+  function validateHarnessAndModel(
+    harnessValue: string,
+    modelValue: string,
+    role: 'implementation' | 'reviewer',
+  ):
+    | { harness: SelectableHarnessId; model: LaunchModel }
+    | { code: string; message: string; details: Record<string, unknown> } {
+    if (!isSelectableHarnessId(harnessValue)) {
+      return {
+        code: 'invalid-harness',
+        message: `Invalid ${role} harness: ${harnessValue}.`,
+        details: { harness: harnessValue, role },
+      };
+    }
+    if (!availableHarnesses.includes(harnessValue)) {
+      return {
+        code: 'unavailable-harness',
+        message: `${role === 'implementation' ? 'Implementation' : 'Reviewer'} harness '${harnessValue}' is not available. Available: ${availableHarnesses.join(', ') || 'none'}.`,
+        details: { harness: harnessValue, role, availableHarnesses },
+      };
+    }
+    const models = harnessModelCache[harnessValue] ?? [];
+    const model = models.find((item) => item.id === modelValue);
+    if (!model) {
+      return {
+        code: 'invalid-model',
+        message: `Invalid ${role} model: ${modelValue} for harness ${harnessValue}. Available models: ${models.map((m) => m.id).join(', ') || 'none'}.`,
+        details: { model: modelValue, harness: harnessValue, role, availableModels: models.map((m) => m.id) },
+      };
+    }
+    return { harness: harnessValue, model };
+  }
+
+  const implValidation = validateHarnessAndModel(harnessFlag, modelFlag, 'implementation');
+  if ('code' in implValidation) {
+    return headlessFailure(command, isJson, implValidation.code, implValidation.message, implValidation.details);
+  }
+  const reviewerValidation = validateHarnessAndModel(reviewerHarnessFlag, reviewerModelFlag, 'reviewer');
+  if ('code' in reviewerValidation) {
+    return headlessFailure(
+      command,
+      isJson,
+      reviewerValidation.code,
+      reviewerValidation.message,
+      reviewerValidation.details,
+    );
+  }
+
+  if (featureSlugs.length === 0) {
+    return headlessFailure(command, isJson, 'missing-required-flag', 'Missing required flag: --features', {
+      flag: '--features',
+      name: 'features',
+    });
+  }
+
+  let allTickets: TicketRecord[];
+  let eligibleTickets: TicketRecord[];
+  try {
+    const provider =
+      runtime.trackerProvider ?? createDefaultTrackerProvider(repoRoot, inferTrackerProviderKind(projectConfig));
+    const launchTickets = await discoverLaunchTickets(provider);
+    allTickets = launchTickets.allTickets;
+    eligibleTickets = launchTickets.eligibleTickets;
+  } catch (error) {
+    const metadataError = formatTicketMetadataError(error);
+    return {
+      code: 1,
+      message: isJson ? headlessJsonError(command, 'ticket-discovery-failed', metadataError) : metadataError,
+    };
+  }
+
+  if (projectConfig.linear) {
+    try {
+      const client = new LinearGraphqlClient(projectConfig.linear.apiKey ?? '');
+      const resolvedConfig = await resolveLinearConfig({
+        config: projectConfig.linear,
+        projectId: projectConfig.linear.projectId,
+        env,
+        client,
+      });
+      const linearFeatures = await discoverLinearFeatures({
+        resolvedConfig,
+        client: new LinearGraphqlClient(projectConfig.linear.apiKey ?? ''),
+      });
+      const linearTickets = linearFeaturesToTicketRecords(linearFeatures);
+      allTickets = [...allTickets, ...linearTickets];
+      eligibleTickets = [...eligibleTickets, ...linearTickets];
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown Linear config error';
+      const message = `Linear sync config failed.\nReason: ${reason}`;
+      return {
+        code: 1,
+        message: isJson ? headlessJsonError(command, 'linear-config-failed', message) : message,
+      };
+    }
+  }
+
+  const eligibleFeatures = new Set(eligibleTickets.map((ticket) => ticket.feature));
+  const unknownFeatures = featureSlugs.filter((slug) => !eligibleFeatures.has(slug));
+  if (unknownFeatures.length > 0) {
+    return headlessFailure(command, isJson, 'invalid-feature', `Invalid feature(s): ${unknownFeatures.join(', ')}`, {
+      features: featureSlugs,
+      unknownFeatures,
+      eligibleFeatures: [...eligibleFeatures],
+    });
+  }
+
+  let selectedTickets = eligibleTickets.filter((ticket) => featureSlugs.includes(ticket.feature));
+  if (selectedTickets.length === 0) {
+    return headlessFailure(
+      command,
+      isJson,
+      'invalid-feature',
+      `No eligible tickets found for selected feature(s): ${featureSlugs.join(', ')}`,
+      {
+        features: featureSlugs,
+      },
+    );
+  }
+
+  let runId: string = randomUUID();
+  const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
+  const activeRun = activeRunControlPlane.acquireOrAttach(runId);
+  if (activeRun.action === 'attached') {
+    return headlessFailure(
+      command,
+      isJson,
+      'active-run-exists',
+      `Active AFK run already in progress: ${activeRun.record.runId}`,
+      {
+        runId: activeRun.record.runId,
+      },
+    );
+  }
+  runId = activeRun.record.runId;
+  activeRunControlPlane.transition(runId, 'running');
+
+  const harness = implValidation.harness;
+  const model = implValidation.model;
+  const reviewerHarness = reviewerValidation.harness;
+  const reviewerModel = reviewerValidation.model;
+  const reviewerPrompt = resolveReviewerPromptTemplate();
+
+  let launchTickets = [...allTickets];
+  selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, launchTickets);
+  selectedTickets = materializeLinearTicketMirrors(repoRoot, selectedTickets);
+  launchTickets = launchTickets.map(
+    (ticket) => selectedTickets.find((selected) => selected.label === ticket.label) ?? ticket,
+  );
+
+  const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
+
+  const refresh = new FeatureExecutionRefreshService(repoRoot);
+  let featureGraphs: Record<string, FeatureExecutionGraph>;
+  const selectedLinearFeatures = new Set(selectedTickets.filter(isLinearTicket).map((ticket) => ticket.feature));
+  try {
+    featureGraphs = Object.fromEntries(
+      selectedFeatures.map((feature) => {
+        const featureTickets = selectedTickets.filter((ticket) => ticket.feature === feature);
+        if (selectedLinearFeatures.has(feature)) {
+          return [feature, buildFeatureExecutionGraph(repoRoot, feature, featureTickets, false)];
+        }
+        return [feature, refresh.refresh(feature)];
+      }),
+    );
+  } catch (error) {
+    const metadataError = formatTicketMetadataError(error);
+    return {
+      code: 1,
+      message: isJson ? headlessJsonError(command, 'ticket-metadata-error', metadataError) : metadataError,
+    };
+  }
+
+  const orderingBlock = validateSelectedTicketDependencies(selectedTickets, launchTickets);
+  if (orderingBlock) {
+    return headlessFailure(command, isJson, 'invalid-ticket-dependencies', orderingBlock);
+  }
+  selectedTickets = orderSelectedTicketsByFeatureGraph(selectedTickets, featureGraphs);
+
+  const localSelectedFeatures = selectedFeatures.filter((feature) => !selectedLinearFeatures.has(feature));
+  const localWorkspaceGraph = localSelectedFeatures.length
+    ? refreshWorkspaceExecutionGraph(repoRoot, localSelectedFeatures, concurrency)
+    : null;
+  const workspaceGraph = selectedLinearFeatures.size
+    ? buildLinearWorkspaceGraph(selectedFeatures, selectedLinearFeatures, localWorkspaceGraph, concurrency)
+    : (localWorkspaceGraph as WorkspaceExecutionGraph);
+  const featureBlock = validateSelectedFeatureDependencies(workspaceGraph, selectedFeatures);
+  if (featureBlock) {
+    return headlessFailure(command, isJson, 'invalid-feature-dependencies', featureBlock);
+  }
+
+  const firstTicket = selectedTickets[0];
+  if (!firstTicket) {
+    return headlessFailure(command, isJson, 'invalid-feature', 'No tickets selected.');
+  }
+  const baseBranch = runGit(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+  const checkoutFeatures = orderSelectedFeaturesByWaves(workspaceGraph);
+  const worktreePreparationService = new WorktreePreparationService();
+  let checkouts: ReturnType<WorktreePreparationService['prepare']>[];
+  try {
+    checkouts = checkoutFeatures.map((feature) => {
+      const stackParent = workspaceGraph.features[feature]?.stackParent;
+      const linearTicket = selectedTickets.find((ticket) => ticket.feature === feature && ticket.source === 'linear');
+      return worktreePreparationService.prepare({
+        repoRoot,
+        featureSlug: feature,
+        linearIssueKey: linearTicket?.linear?.parentKey,
+        linearIssueBranchName: linearTicket?.linear?.parentBranchName,
+        baseRef: stackParent ? stackParent : undefined,
+        selectedTicketPaths: selectedTickets
+          .filter((ticket) => ticket.feature === feature && !isLinearTicket(ticket))
+          .map((ticket) => ticket.path),
+        projectConfig,
+      });
+    });
+  } catch (error) {
+    if (error instanceof WorktreeReadinessBlockedError) {
+      return headlessFailure(
+        command,
+        isJson,
+        'worktree-readiness-blocked',
+        `Launch blocked by worktree readiness: ${error.message}`,
+      );
+    }
+    throw error;
+  }
+
+  const checkoutsByFeature = Object.fromEntries(checkoutFeatures.map((feature, index) => [feature, checkouts[index]]));
+
+  const featureDependencies = Object.fromEntries(
+    selectedFeatures.map((feature) => [feature, workspaceGraph.features[feature]?.dependsOnFeatures ?? []]),
+  );
+  const checkout = checkoutsByFeature[firstTicket.feature];
+  const plan = buildLaunchPlan(
+    repoRoot,
+    model,
+    selectedTickets,
+    checkout,
+    { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
+    checkoutsByFeature,
+    featureDependencies,
+    harness,
+    sandboxMode,
+  );
+  writeRunPlan(repoRoot, runId, plan.tickets);
+
+  if (runtime.inlineLaunch) {
+    return headlessFailure(
+      command,
+      isJson,
+      'inline-launch-unsupported',
+      'Headless launch does not support inline execution.',
+    );
+  }
+
+  const context: DaemonLaunchContext = {
+    repoRoot,
+    runId,
+    plan,
+    harness,
+    reviewerHarness,
+    concurrency,
+    budgets: launchPreferences.budgets,
+    mergeBackToBase,
+    featureCompletionAction,
+    sandcastleSandboxMode: sandboxMode,
+    baseBranch,
+  };
+  const spawnDaemon = runtime.spawnDaemon ?? defaultSpawnDaemon;
+  const handle = spawnDaemon(context);
+  if (!handle.pid) {
+    activeRunControlPlane.clear(runId);
+    return headlessFailure(
+      command,
+      isJson,
+      'daemon-start-failed',
+      'Failed to start background daemon. Check permissions and disk space.',
+    );
+  }
+  activeRunControlPlane.updatePid(runId, handle.pid);
+  handle.unref();
+
+  const data = {
+    runId,
+    harness,
+    model: model.id,
+    reviewerHarness,
+    reviewerModel: reviewerModel.id,
+    features: selectedFeatures,
+    tickets: selectedTickets.map((ticket) => ticket.label),
+    concurrency,
+    sandboxMode,
+    completionAction: featureCompletionAction,
+    repoRoot: path.resolve(repoRoot),
+    worktree: checkout.effectiveWorktreeName,
+    branch: checkout.effectiveBranchName,
+  };
+
+  const message = [
+    `Run ID: ${runId}`,
+    `Selected model: ${plan.model.id}`,
+    `Selected harness: ${harness}`,
+    `Selected reviewer model: ${plan.reviewerModel?.id ?? 'unknown'}`,
+    `Selected reviewer harness: ${reviewerHarness}`,
+    `Selected sandbox: ${plan.sandboxMode ?? 'no-sandbox'}`,
+    `Reviewer prompt: ${plan.reviewerPrompt?.id ?? 'unknown'}`,
+    `Selected tickets (${plan.tickets.length}): ${plan.tickets.map((ticket) => ticket.label).join(', ')}`,
+    `Selected features (${selectedFeatures.length}): ${selectedFeatures.join(', ')}`,
+    `Concurrency: ${concurrency}`,
+    `Repo root: ${path.resolve(plan.repoRoot)}`,
+    `Worktree: ${plan.checkout.effectiveWorktreeName}`,
+    `Branch: ${plan.checkout.effectiveBranchName}`,
+    '',
+    'Daemon started in background.',
+    'Run `afk tui` to attach and view progress.',
+  ].join('\n');
+
+  return { code: 0, message: isJson ? headlessJsonEnvelope(command, data, 'Daemon started in background.') : message };
 }

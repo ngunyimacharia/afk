@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -862,6 +863,161 @@ test('does not attach to stale active run with expired heartbeat', async () => {
   assert.doesNotMatch(result.message, /Attached to active run/);
   assert.match(result.message, /No pending AFK tickets found/);
 });
+
+test('headless run --json without required flags reports missing-required-flag', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-headless-missing-'));
+  writeMinimalAfkConfig(repoRoot);
+  const originalArgv = process.argv;
+  process.argv = ['node', 'src/cli.ts', 'run', '--json'];
+  try {
+    const result = await runAfk(repoRoot, {
+      io: { stdin: { isTTY: false } as never, stdout: { isTTY: false } as never },
+      env: { ...process.env, CI: '' },
+    });
+    assert.equal(result.code, 1);
+    const parsed = JSON.parse(result.message);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.command, 'run');
+    assert.equal(parsed.error.code, 'missing-required-flag');
+  } finally {
+    process.argv = originalArgv;
+  }
+});
+
+test('headless run --features missing-feature ... --json reports invalid-feature before worktree', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-headless-feature-'));
+  writeMinimalAfkConfig(repoRoot);
+  initGitRepo(repoRoot);
+  const originalArgv = process.argv;
+  process.argv = [
+    'node',
+    'src/cli.ts',
+    'run',
+    '--harness',
+    'Codex',
+    '--model',
+    'codex/default',
+    '--reviewer-harness',
+    'Codex',
+    '--reviewer-model',
+    'codex/default',
+    '--features',
+    'missing-feature',
+    '--concurrency',
+    '1',
+    '--completion',
+    'create-pr',
+    '--sandbox',
+    'no-sandbox',
+    '--json',
+  ];
+  try {
+    const result = await runAfk(repoRoot, {
+      io: { stdin: { isTTY: false } as never, stdout: { isTTY: false } as never },
+      env: { ...process.env, CI: '' },
+      discoverAvailableHarnesses: async () => ({
+        availableHarnesses: ['Codex'],
+        harnessModelCache: { Codex: [{ id: 'codex/default' }] },
+      }),
+      trackerProvider: makeFakeTrackerProvider([makeTrackerWorkItem('existing', '01', 'ready-for-agent')]),
+    });
+    assert.equal(result.code, 1);
+    const parsed = JSON.parse(result.message);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, 'invalid-feature');
+    assert.ok(parsed.error.details.unknownFeatures.includes('missing-feature'));
+    assert.equal(existsSync(path.join(repoRoot, '.worktree')), false);
+  } finally {
+    process.argv = originalArgv;
+  }
+});
+
+test('headless run with valid flags starts daemon and writes run plan', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-headless-valid-'));
+  writeMinimalAfkConfig(repoRoot);
+  initGitRepo(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: ready-for-agent\n---\n', 'utf8');
+  writeFileSync(
+    path.join(repoRoot, '.scratch', 'feat', 'PRD.md'),
+    '---\nstatus: ready-for-agent\n---\n\n# Feat\n',
+    'utf8',
+  );
+  const originalArgv = process.argv;
+  process.argv = [
+    'node',
+    'src/cli.ts',
+    'run',
+    '--harness',
+    'Codex',
+    '--model',
+    'codex/default',
+    '--reviewer-harness',
+    'Codex',
+    '--reviewer-model',
+    'codex/default',
+    '--features',
+    'feat',
+    '--concurrency',
+    '2',
+    '--completion',
+    'create-pr',
+    '--sandbox',
+    'no-sandbox',
+    '--json',
+  ];
+  let spawned = false;
+  try {
+    const result = await runAfk(repoRoot, {
+      io: { stdin: { isTTY: false } as never, stdout: { isTTY: false } as never },
+      env: { ...process.env, CI: '' },
+      discoverAvailableHarnesses: async () => ({
+        availableHarnesses: ['Codex'],
+        harnessModelCache: { Codex: [{ id: 'codex/default' }] },
+      }),
+      spawnDaemon: () => {
+        spawned = true;
+        return { pid: 12345, unref: () => {}, on: () => {} };
+      },
+    });
+    assert.equal(result.code, 0);
+    const parsed = JSON.parse(result.message);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.command, 'run');
+    assert.ok(typeof parsed.data.runId === 'string');
+    assert.deepEqual(parsed.data.features, ['feat']);
+    assert.deepEqual(parsed.data.tickets, ['feat/01']);
+    assert.equal(parsed.data.harness, 'Codex');
+    assert.equal(parsed.data.model, 'codex/default');
+    assert.equal(parsed.data.reviewerHarness, 'Codex');
+    assert.equal(parsed.data.reviewerModel, 'codex/default');
+    assert.equal(parsed.data.concurrency, 2);
+    assert.equal(parsed.data.sandboxMode, 'no-sandbox');
+    assert.equal(parsed.data.completionAction, 'create-pr');
+    assert.equal(path.resolve(parsed.data.repoRoot), path.resolve(repoRoot));
+    assert.equal(typeof parsed.data.worktree, 'string');
+    assert.equal(typeof parsed.data.branch, 'string');
+    assert.equal(spawned, true);
+    const planPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'run-plans', `${parsed.data.runId}.json`);
+    assert.equal(existsSync(planPath), true);
+    const plan = JSON.parse(readFileSync(planPath, 'utf8'));
+    assert.equal(plan.tickets.length, 1);
+    assert.equal(plan.tickets[0].label, 'feat/01');
+    assert.equal(existsSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'launch-preferences.json')), false);
+  } finally {
+    process.argv = originalArgv;
+  }
+});
+
+function initGitRepo(repoRoot: string): void {
+  execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'afk@test'], { cwd: repoRoot, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.name', 'AFK Test'], { cwd: repoRoot, stdio: 'ignore' });
+  writeFileSync(path.join(repoRoot, 'README.md'), '# test\n', 'utf8');
+  execFileSync('git', ['add', 'README.md'], { cwd: repoRoot, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'init'], { cwd: repoRoot, stdio: 'ignore' });
+}
 
 function injectPromptAnswers(answers: unknown[]): void {
   (prompts as unknown as { inject(values: unknown[]): void }).inject(answers);
