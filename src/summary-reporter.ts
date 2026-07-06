@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import { countLeftoverBranches, countLeftoverWorktrees, safeRealpath } from './cleanup.js';
+import {
+  countLeftoverBranches,
+  countLeftoverWorktrees,
+  readPendingPostMergeCleanupItems,
+  safeRealpath,
+} from './cleanup.js';
 import type { SandcastleRuntimeRecord } from './sandcastle-runtime-store.js';
 import type { TrackerProvider } from './tracker-contract.js';
 
@@ -251,6 +256,15 @@ function formatAttempt(item: SummaryGroupItem): string {
     runtime?.branch ? `branch: ${runtime.branch}` : null,
     runtime?.worktreePath ? `worktree: ${runtime.worktreePath}` : null,
     runtime?.terminal.status ? `terminal: ${runtime.terminal.status}` : null,
+    runtime?.trackerSource === 'linear' && runtime.ticket.trackerIssueKey
+      ? `linear issue: ${runtime.ticket.trackerIssueKey}`
+      : null,
+    runtime?.trackerSource === 'linear' && runtime.ticket.trackerIssueUrl
+      ? `linear url: ${runtime.ticket.trackerIssueUrl}`
+      : null,
+    runtime?.trackerSource === 'linear' && runtime.ticket.ticketPath
+      ? `linear mirror: ${runtime.ticket.ticketPath}`
+      : null,
     cleanupStatus ? `cleanup: ${cleanupStatus}` : null,
     runtime?.createdAt ? `started: ${runtime.createdAt}` : null,
     fieldValue(attempt?.fields ?? {}, 'timestamp')
@@ -378,6 +392,18 @@ function summarizeLeftoverCounts(repoRoot: string, records: SandcastleRuntimeRec
   return [`- leftover branches: ${branchCount}`, `- leftover worktrees: ${worktreeCount}`];
 }
 
+function summarizePendingPostMergeCleanup(repoRoot: string): string[] {
+  const items = readPendingPostMergeCleanupItems(repoRoot);
+  if (!items.length) return ['- none'];
+  return [
+    `count: ${items.length}`,
+    ...items.map(
+      (item) =>
+        `- ${item.feature}/${item.issueName} branch=${item.branchName} worktree=${item.worktreePath} reason=${item.warning ?? item.error ?? 'pending retry'}`,
+    ),
+  ];
+}
+
 export class SummaryReporter {
   constructor(private readonly input: SummaryReporterInput) {}
 
@@ -409,8 +435,9 @@ export class SummaryReporter {
         else if (bucket === 'failed') failed.push(rendered);
         else if (bucket === 'interrupted') interrupted.push(rendered);
       }
-    } else if (this.input.source) {
-      const issues = await this.input.source.listIssueSummaries();
+    } else {
+      const source = this.input.source ?? new ScratchSummaryIssueSource(this.input.repoRoot);
+      const issues = await source.listIssueSummaries();
       for (const issue of issues) {
         if (!issue.summaries.length) {
           const bucket = getNoSummaryBucket(issue.status);
@@ -472,6 +499,9 @@ export class SummaryReporter {
       '',
       'Leftover cleanup counts',
       ...summarizeLeftoverCounts(this.input.repoRoot, records),
+      '',
+      'Pending post-merge cleanup debt',
+      ...summarizePendingPostMergeCleanup(this.input.repoRoot),
     ];
 
     const permission = this.input.permission;
