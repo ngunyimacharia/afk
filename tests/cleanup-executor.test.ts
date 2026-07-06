@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { CleanupExecutor, CleanupPlanner } from '../src/cleanup.js';
 import { resolveExecutable } from '../src/executable-resolution.js';
+import type { SandcastleCleanupResource, SandcastleRuntimeRecord } from '../src/sandcastle-runtime-store.js';
 
 const GIT_PATH = resolveExecutable('git');
 
@@ -13,41 +14,191 @@ function git(repoRoot: string, args: string[]): string {
   return execFileSync(GIT_PATH, args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-test('executes only approved cleanup targets', () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  const issuePath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'done.md');
-  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-done.log');
-  mkdirSync(path.dirname(issuePath), { recursive: true });
-  mkdirSync(path.dirname(logPath), { recursive: true });
-  writeFileSync(issuePath, 'x');
-  writeFileSync(logPath, 'x');
-  const result = new CleanupExecutor().execute(
-    {
-      terminalTargets: [{ feature: 'feat', issueName: 'done', issuePath, logPath, reason: 'done' }],
-      issueDeletionTargets: [{ feature: 'feat', issueName: 'done', issuePath, reason: 'done' }],
-      runtimeArtifactTargets: [{ feature: 'feat', issueName: 'done', logPath }],
-      pendingPostMergeCleanupTargets: [],
-      orphanedWorktreeTargets: [],
-      preservedIssues: [],
-      preservedArtifacts: [],
-      featureDirectoriesToDelete: [],
-    },
-    repoRoot,
-  );
-  assert.equal(existsSync(issuePath), false);
-  assert.equal(existsSync(logPath), false);
-  assert.equal(result.deleted.length >= 2, true);
-  assert.equal(result.postMergeCleanupResults.length, 0);
-});
-
-test('retries pending post-merge cleanup and clears successful entries', () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+function initRepo(repoRoot: string): void {
   git(repoRoot, ['init', '-b', 'main']);
   git(repoRoot, ['config', 'user.name', 'Test']);
   git(repoRoot, ['config', 'user.email', 'test@example.com']);
   writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
   git(repoRoot, ['add', 'README.md']);
   git(repoRoot, ['commit', '-m', 'init']);
+}
+
+function sandcastleRecordPath(repoRoot: string, runId: string): string {
+  return path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', runId, 'record.json');
+}
+
+function writeSandcastleRecord(recordPath: string, record: SandcastleRuntimeRecord): void {
+  mkdirSync(path.dirname(recordPath), { recursive: true });
+  writeFileSync(recordPath, JSON.stringify(record, null, 2));
+}
+
+function makeSandcastleRecord(input: {
+  runId: string;
+  feature: string;
+  issue: string;
+  ticketPath: string;
+  status: 'running' | 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted';
+  worktreePath?: string;
+  cleanupResources?: SandcastleCleanupResource[];
+}): SandcastleRuntimeRecord {
+  return {
+    schemaVersion: 1,
+    runId: input.runId,
+    createdAt: '2026-05-18T00:00:00.000Z',
+    updatedAt: '2026-05-18T00:00:00.000Z',
+    ticket: {
+      featureSlug: input.feature,
+      issueName: input.issue,
+      label: `${input.feature}/${input.issue}`,
+      ticketPath: input.ticketPath,
+    },
+    trackerSource: 'scratch',
+    provider: { provider: 'opencode', model: 'test' },
+    sandbox: { mode: 'none' },
+    branch: `afk/${input.feature}/${input.issue}`,
+    worktreePath: input.worktreePath ?? path.join('/tmp', `worktree-${input.runId}`),
+    phases: [],
+    commits: [],
+    logs: { run: `/tmp/${input.runId}.log`, phases: [] },
+    terminal: { status: input.status },
+    providerFailures: [],
+    cleanupResources: input.cleanupResources ?? [],
+    cleanupResults: [],
+  };
+}
+
+test('deletes Sandcastle log cleanup resources', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const recordPath = sandcastleRecordPath(repoRoot, 'run-done');
+  mkdirSync(issuesDir, { recursive: true });
+  const ticketPath = path.join(issuesDir, 'done.md');
+  writeFileSync(ticketPath, '---\nstatus: done\n---\n');
+  writeSandcastleRecord(
+    recordPath,
+    makeSandcastleRecord({
+      runId: 'run-done',
+      feature: 'feat',
+      issue: 'done',
+      ticketPath,
+      status: 'completed',
+      cleanupResources: [{ type: 'log', id: 'run-log', path: path.join(path.dirname(recordPath), 'run.log') }],
+    }),
+  );
+  const logPath = path.join(path.dirname(recordPath), 'run.log');
+  writeFileSync(logPath, 'log');
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(existsSync(logPath), false);
+  assert.ok(result.deleted.some((item) => item === logPath));
+  const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
+  assert.equal(record.cleanupResults?.length, 1);
+  assert.equal(record.cleanupResults?.[0]?.status, 'succeeded');
+});
+
+test('removes Sandcastle worktree cleanup resources', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  initRepo(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const recordPath = sandcastleRecordPath(repoRoot, 'run-done');
+  mkdirSync(issuesDir, { recursive: true });
+  const ticketPath = path.join(issuesDir, 'done.md');
+  writeFileSync(ticketPath, '---\nstatus: done\n---\n');
+
+  const branchName = 'afk/feat/done';
+  git(repoRoot, ['branch', '--no-track', branchName]);
+  const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-done');
+  git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
+
+  writeSandcastleRecord(
+    recordPath,
+    makeSandcastleRecord({
+      runId: 'run-done',
+      feature: 'feat',
+      issue: 'done',
+      ticketPath,
+      status: 'completed',
+      worktreePath: issueWorktreePath,
+      cleanupResources: [{ type: 'worktree', id: 'issue-worktree', path: issueWorktreePath }],
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(existsSync(issueWorktreePath), false);
+  assert.ok(result.deleted.some((item) => item === issueWorktreePath));
+  const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
+  assert.equal(record.cleanupResults?.[0]?.status, 'succeeded');
+});
+
+test('removes Sandcastle branch cleanup resources', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  initRepo(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const recordPath = sandcastleRecordPath(repoRoot, 'run-done');
+  mkdirSync(issuesDir, { recursive: true });
+  const ticketPath = path.join(issuesDir, 'done.md');
+  writeFileSync(ticketPath, '---\nstatus: done\n---\n');
+
+  const branchName = 'afk/feat/done';
+  git(repoRoot, ['branch', '--no-track', branchName]);
+
+  writeSandcastleRecord(
+    recordPath,
+    makeSandcastleRecord({
+      runId: 'run-done',
+      feature: 'feat',
+      issue: 'done',
+      ticketPath,
+      status: 'completed',
+      cleanupResources: [{ type: 'branch', id: branchName }],
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = new CleanupExecutor().execute(plan, repoRoot);
+  assert.equal(git(repoRoot, ['branch', '--list', branchName]), '');
+  assert.ok(result.deleted.some((item) => item === `branch ${branchName}`));
+  const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
+  assert.equal(record.cleanupResults?.[0]?.status, 'succeeded');
+});
+
+test('skips Sandcastle branch cleanup for non-afk branches', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  initRepo(repoRoot);
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  const recordPath = sandcastleRecordPath(repoRoot, 'run-done');
+  mkdirSync(issuesDir, { recursive: true });
+  const ticketPath = path.join(issuesDir, 'done.md');
+  writeFileSync(ticketPath, '---\nstatus: done\n---\n');
+
+  const branchName = 'main';
+
+  writeSandcastleRecord(
+    recordPath,
+    makeSandcastleRecord({
+      runId: 'run-done',
+      feature: 'feat',
+      issue: 'done',
+      ticketPath,
+      status: 'completed',
+      cleanupResources: [{ type: 'branch', id: branchName }],
+    }),
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = new CleanupExecutor().execute(plan, repoRoot);
+  assert.ok(!result.deleted.some((item) => item === `branch ${branchName}`));
+  assert.ok(result.deleted.some((item) => item === ticketPath));
+  const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
+  assert.equal(record.cleanupResults?.[0]?.status, 'skipped');
+  assert.match(record.cleanupResults?.[0]?.message ?? '', /not an AFK branch/);
+});
+
+test('retries pending post-merge cleanup and clears successful entries', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
   const featureWorktreePath = path.join(repoRoot, '.worktree', 'feat');
   git(repoRoot, ['worktree', 'add', featureWorktreePath, 'feat']);
@@ -91,12 +242,7 @@ test('retries pending post-merge cleanup and clears successful entries', () => {
 
 test('removes planned orphaned issue worktree and branch', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  git(repoRoot, ['init', '-b', 'main']);
-  git(repoRoot, ['config', 'user.name', 'Test']);
-  git(repoRoot, ['config', 'user.email', 'test@example.com']);
-  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
-  git(repoRoot, ['add', 'README.md']);
-  git(repoRoot, ['commit', '-m', 'init']);
+  initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
   const branchName = 'afk/feat/001';
   git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
@@ -108,6 +254,7 @@ test('removes planned orphaned issue worktree and branch', () => {
       terminalTargets: [],
       issueDeletionTargets: [],
       runtimeArtifactTargets: [],
+      sandcastleResourceTargets: [],
       orphanedWorktreeTargets: [
         { feature: 'feat', issueName: '001', branchName, worktreePath: issueWorktreePath, reason: 'terminal' },
       ],
@@ -131,12 +278,7 @@ test('removes planned orphaned issue worktree and branch', () => {
 
 test('skips dirty orphaned issue worktree and reports reason', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  git(repoRoot, ['init', '-b', 'main']);
-  git(repoRoot, ['config', 'user.name', 'Test']);
-  git(repoRoot, ['config', 'user.email', 'test@example.com']);
-  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
-  git(repoRoot, ['add', 'README.md']);
-  git(repoRoot, ['commit', '-m', 'init']);
+  initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
   const branchName = 'afk/feat/001';
   git(repoRoot, ['branch', '--no-track', branchName, 'feat']);
@@ -149,6 +291,7 @@ test('skips dirty orphaned issue worktree and reports reason', () => {
       terminalTargets: [],
       issueDeletionTargets: [],
       runtimeArtifactTargets: [],
+      sandcastleResourceTargets: [],
       orphanedWorktreeTargets: [
         { feature: 'feat', issueName: '001', branchName, worktreePath: issueWorktreePath, reason: 'terminal' },
       ],
@@ -171,12 +314,7 @@ test('skips dirty orphaned issue worktree and reports reason', () => {
 
 test('retries pending post-merge cleanup and removes extra worktrees using the same branch', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  git(repoRoot, ['init', '-b', 'main']);
-  git(repoRoot, ['config', 'user.name', 'Test']);
-  git(repoRoot, ['config', 'user.email', 'test@example.com']);
-  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
-  git(repoRoot, ['add', 'README.md']);
-  git(repoRoot, ['commit', '-m', 'init']);
+  initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
   const featureWorktreePath = path.join(repoRoot, '.worktree', 'feat');
   git(repoRoot, ['worktree', 'add', featureWorktreePath, 'feat']);
@@ -226,12 +364,7 @@ test('retries pending post-merge cleanup and removes extra worktrees using the s
 
 test('retries pending post-merge cleanup and tolerates unreachable issue tip with warning', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  git(repoRoot, ['init', '-b', 'main']);
-  git(repoRoot, ['config', 'user.name', 'Test']);
-  git(repoRoot, ['config', 'user.email', 'test@example.com']);
-  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
-  git(repoRoot, ['add', 'README.md']);
-  git(repoRoot, ['commit', '-m', 'init']);
+  initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
   const featureWorktreePath = path.join(repoRoot, '.worktree', 'feat');
   git(repoRoot, ['worktree', 'add', featureWorktreePath, 'feat']);
@@ -279,12 +412,7 @@ test('retries pending post-merge cleanup and tolerates unreachable issue tip wit
 
 test('retries pending post-merge cleanup and tolerates already-deleted branch', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
-  git(repoRoot, ['init', '-b', 'main']);
-  git(repoRoot, ['config', 'user.name', 'Test']);
-  git(repoRoot, ['config', 'user.email', 'test@example.com']);
-  writeFileSync(path.join(repoRoot, 'README.md'), 'test\n');
-  git(repoRoot, ['add', 'README.md']);
-  git(repoRoot, ['commit', '-m', 'init']);
+  initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
   const featureWorktreePath = path.join(repoRoot, '.worktree', 'feat');
   git(repoRoot, ['worktree', 'add', featureWorktreePath, 'feat']);
