@@ -161,9 +161,9 @@ test('syncs initial codex skills into the user skills tree', async () => {
   assert.equal(second.counts.unchanged, 1);
 });
 
-test('sync runner includes codex report after existing adapters', () => {
+test('sync runner includes codex and pi reports after existing adapters', () => {
   assert.deepEqual(
     SyncAdapters.map((adapter) => adapter.id),
-    ['opencode', 'claude-code', 'kimi-code', 'codex'],
+    ['opencode', 'claude-code', 'kimi-code', 'codex', 'pi'],
   );
 });

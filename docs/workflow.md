@@ -62,6 +62,8 @@ The produced launch plan contains:
 
 Codex is selectable when its discovery path returns at least `codex/default`. Set `AFK_CODEX_MODELS` to a comma-separated list of explicit model names when operators should choose a concrete Codex model instead of the configured Codex default.
 
+PI is selectable when its discovery path returns at least `pi/default`. Set `AFK_PI_MODELS` to a comma-separated list of explicit PI model names (in `provider/model` form when possible) when operators should choose a concrete PI model. PI uses the host configuration under `~/.pi/agent` and receives the prepared worktree path plus a phase-appropriate tool allowlist.
+
 ## Checkout Preparation
 
 Deterministic checkout preparation is implemented in `src/worktree-preparation-service.ts`.
@@ -73,7 +75,7 @@ Current rules:
 - `afk_worktree` and `afk_branch` overrides are supported
 - worktrees are created or reused before execution
 - branches are local-only and use `git branch --no-track`
-- Codex runs receive the prepared worktree path as their `workingDirectory`
+- Codex and PI runs receive the prepared worktree path as their `workingDirectory`
 
 Normal preparation does not:
 

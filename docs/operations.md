@@ -81,8 +81,9 @@ into each harness's config directory:
 - Claude Code: `~/.claude/`
 - Kimi Code: `$KIMI_CODE_HOME/`, or `~/.kimi-code/`
 - Codex: `$HOME/.agents/skills/<skill>/SKILL.md`
+- PI: `$HOME/.pi/agent/skills/<skill>/SKILL.md` and `$HOME/.pi/agent/prompts/`
 
-Codex skills are synced at the user level because current Codex skill discovery reads from `$HOME/.agents/skills/`; AFK does not install repo-local Codex skills in this pass.
+Codex skills are synced at the user level because current Codex skill discovery reads from `$HOME/.agents/skills/`; AFK does not install repo-local Codex skills in this pass. PI assets are synced to the host agent directory under `~/.pi/agent`.
 
 Current sync behavior:
 
@@ -114,3 +115,4 @@ Tests cover:
 - cleanup planning and execution
 - asset sync engine and harness sync mappings
 - Codex configuration parsing and SDK thread option defaults
+- PI model discovery, session execution, and event mapping

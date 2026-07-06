@@ -726,7 +726,7 @@ async function runAfkInternal(
     if (availableHarnesses.length === 0) {
       return {
         code: 0,
-        message: 'No harnesses available. Install and configure OpenCode or Claude.',
+        message: 'No harnesses available. Install and configure OpenCode, Claude, Codex, or PI.',
       };
     }
 
@@ -1372,6 +1372,7 @@ export function displayNameForProvider(provider: string): string {
   if (provider === 'opencode') return 'OpenCode';
   if (provider === 'claude') return 'Claude';
   if (provider === 'codex') return 'Codex';
+  if (provider === 'pi') return 'PI';
   return provider;
 }
 
