@@ -142,7 +142,7 @@ test('formatJsonError includes code, message, and optional details', () => {
   assert.deepEqual(parsed.error.details, { flag: '--features' });
 });
 
-test('run returns JSON not-implemented error with --json', async () => {
+test('run returns JSON missing-required-flag error without required flags', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-json-'));
   writeMinimalAfkConfig(repoRoot);
   const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'run', '--json'] });
@@ -150,18 +150,31 @@ test('run returns JSON not-implemented error with --json', async () => {
   const parsed = JSON.parse(result.message) as { ok: false; command: string; error: { code: string } };
   assert.equal(parsed.ok, false);
   assert.equal(parsed.command, 'run');
-  assert.equal(parsed.error.code, 'not-implemented');
+  assert.equal(parsed.error.code, 'missing-required-flag');
 });
 
-test('run returns human-readable not-implemented error without --json', async () => {
+test('run returns human-readable missing-required-flag error without required flags', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-text-'));
   writeMinimalAfkConfig(repoRoot);
   const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'run'] });
   assert.equal(result.code, 1);
-  assert.match(result.message, /not yet implemented/i);
+  assert.match(result.message, /Missing required flag: --harness/);
 });
 
-for (const command of ['pause', 'resume', 'plan', 'events']) {
+for (const command of ['pause', 'resume']) {
+  test(`${command} returns JSON no-active-run error when --json is passed without an active run`, async () => {
+    const repoRoot = mkdtempSync(path.join(tmpdir(), `afk-${command}-json-`));
+    writeMinimalAfkConfig(repoRoot);
+    const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', command, '--json'] });
+    assert.equal(result.code, 1);
+    const parsed = JSON.parse(result.message) as { ok: false; command: string; error: { code: string } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.command, command);
+    assert.equal(parsed.error.code, 'no-active-run');
+  });
+}
+
+for (const command of ['plan', 'events']) {
   test(`${command} returns stable JSON error when --json is passed`, async () => {
     const repoRoot = mkdtempSync(path.join(tmpdir(), `afk-${command}-json-`));
     writeMinimalAfkConfig(repoRoot);
@@ -208,15 +221,20 @@ test('bare afk with --json returns JSON error for missing interactive terminal',
   assert.match(parsed.error.message, /interactive terminal/i);
 });
 
-test('existing status output is wrapped in JSON envelope with --json', async () => {
+test('status JSON output reports inactive run as structured data', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-json-'));
   writeMinimalAfkConfig(repoRoot);
   const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'status', '--json'] });
   assert.equal(result.code, 0);
-  const parsed = JSON.parse(result.message) as { ok: true; command: string; message: string };
+  const parsed = JSON.parse(result.message) as {
+    ok: true;
+    command: string;
+    data: { active: boolean; pendingPostMergeCleanupDebt: number };
+  };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.command, 'status');
-  assert.match(parsed.message, /No active AFK run/);
+  assert.equal(parsed.data.active, false);
+  assert.equal(typeof parsed.data.pendingPostMergeCleanupDebt, 'number');
 });
 
 test('linear-plan JSON output uses data field for plan payload', async () => {
