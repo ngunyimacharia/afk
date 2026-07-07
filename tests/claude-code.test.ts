@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, test } from 'node:test';
+import { afterEach, beforeEach, describe, test } from 'node:test';
 import {
   DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS,
   DEFAULT_MAX_STALE_RECOVERIES,
@@ -14,6 +14,29 @@ import {
 } from '../src/claude-code.js';
 import { buildStaleRecoveryPrompt } from '../src/opencode.js';
 import { detectClaudeCodeFailure } from '../src/provider-failure.js';
+
+let originalAnthropicApiKey: string | undefined;
+let originalAnthropicBaseUrl: string | undefined;
+
+beforeEach(() => {
+  originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_BASE_URL;
+});
+
+afterEach(() => {
+  if (originalAnthropicApiKey === undefined) {
+    delete process.env.ANTHROPIC_API_KEY;
+  } else {
+    process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+  }
+  if (originalAnthropicBaseUrl === undefined) {
+    delete process.env.ANTHROPIC_BASE_URL;
+  } else {
+    process.env.ANTHROPIC_BASE_URL = originalAnthropicBaseUrl;
+  }
+});
 
 function makeTempRepo(): string {
   return mkdtempSync(path.join(os.tmpdir(), 'afk-claude-test-'));
