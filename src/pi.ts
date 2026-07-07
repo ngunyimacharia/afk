@@ -21,22 +21,11 @@ const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_STALE_RECOVERIES = 5;
 
-const EXECUTION_TOOL_ALLOWLIST = [
-  'read',
-  'diagnostic',
-  'write',
-  'edit',
-  'delete',
-  'git-commit',
-  'git-push',
-  'github-pr',
-  'scratch-write',
-  'bash',
-];
+const EXECUTION_TOOL_ALLOWLIST = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 
-const REVIEWER_TOOL_ALLOWLIST = ['read', 'diagnostic', 'scratch-write', 'git-commit'];
+const REVIEWER_TOOL_ALLOWLIST = ['read', 'grep', 'find', 'ls'];
 
-const PULL_REQUEST_TOOL_ALLOWLIST = ['read', 'diagnostic', 'git-push', 'github-pr'];
+const PULL_REQUEST_TOOL_ALLOWLIST = ['read', 'bash', 'grep', 'find', 'ls'];
 
 export function resolvePiToolAllowlist(mode?: AgentInvocationMode): string[] {
   if (mode === 'reviewer') return REVIEWER_TOOL_ALLOWLIST;

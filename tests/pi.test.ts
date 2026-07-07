@@ -97,12 +97,23 @@ describe('PiSessionExecutor', () => {
     assert.equal(options.model, 'openai/gpt-5.1');
   });
 
-  test('restricts tool allowlists by invocation mode', () => {
+  test('restricts PI SDK tool allowlists by invocation mode', () => {
+    const sdkTools = new Set(['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']);
+    for (const mode of ['execution', 'reviewer', 'pull-request'] as const) {
+      assert.deepEqual(
+        resolvePiToolAllowlist(mode).filter((tool) => !sdkTools.has(tool)),
+        [],
+      );
+    }
+
     assert.ok(resolvePiToolAllowlist('execution').includes('write'));
     assert.ok(!resolvePiToolAllowlist('reviewer').includes('write'));
-    assert.ok(resolvePiToolAllowlist('reviewer').includes('read'));
+    assert.ok(resolvePiToolAllowlist('reviewer').includes('grep'));
+    assert.ok(resolvePiToolAllowlist('reviewer').includes('find'));
+    assert.ok(resolvePiToolAllowlist('reviewer').includes('ls'));
+    assert.ok(!resolvePiToolAllowlist('reviewer').includes('bash'));
     assert.ok(!resolvePiToolAllowlist('pull-request').includes('write'));
-    assert.ok(resolvePiToolAllowlist('pull-request').includes('github-pr'));
+    assert.ok(resolvePiToolAllowlist('pull-request').includes('bash'));
   });
 
   test('starts a new PI session and returns the session id from the stream', async () => {
