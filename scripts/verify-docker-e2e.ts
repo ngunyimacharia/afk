@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { SummaryReporter } from '../src/summary-reporter.js';
 import type { SandcastleRuntimeRecord } from '../src/sandcastle-runtime-store.js';
+import { SummaryReporter } from '../src/summary-reporter.js';
 
 const REQUIRED_PROVIDERS = ['opencode', 'claude', 'codex', 'pi'] as const;
 const REQUIRED_RUNTIME_IMAGE = 'afk-runtime:latest';
@@ -78,23 +78,37 @@ if (!existsSync(recordsRoot)) missing.push(`runtime records path ${path.relative
 const verified: Record<string, string> = {};
 
 for (const provider of REQUIRED_PROVIDERS) {
-  const record = records.find(
+  const candidates = records.filter(
     (candidate) =>
       candidate.provider.provider === provider &&
       candidate.sandbox.mode === 'docker' &&
       candidate.terminal.status === 'completed' &&
       containerIdentity(candidate),
   );
-  if (!record) {
+  if (candidates.length === 0) {
     missing.push(provider);
     continue;
   }
-  const evidenceProblems = realRunEvidenceProblems(repoRoot, record);
-  if (evidenceProblems.length) {
-    missing.push(`${provider}: ${evidenceProblems.join('; ')}`);
+
+  const rejectedCandidates = candidates.map((candidate) => ({
+    record: candidate,
+    evidenceProblems: realRunEvidenceProblems(repoRoot, candidate),
+  }));
+  const accepted = rejectedCandidates.find(({ evidenceProblems }) => evidenceProblems.length === 0);
+  if (!accepted) {
+    const details = rejectedCandidates
+      .map(({ record, evidenceProblems }) => `${record.runId}: ${evidenceProblems.join('; ')}`)
+      .join(' | ');
+    missing.push(`${provider}: ${details}`);
     continue;
   }
-  const container = containerIdentity(record)!;
+
+  const record = accepted.record;
+  const container = containerIdentity(record);
+  if (!container) {
+    missing.push(`${provider}: missing container identity`);
+    continue;
+  }
   verified[provider] = `${record.runId} (${container})`;
   if (!summary.message.includes('sandbox: docker') || !summary.message.includes(container)) {
     missing.push(`${provider}: afk summary missing docker/container evidence`);
