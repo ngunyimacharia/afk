@@ -18,7 +18,12 @@ const GIT_PATH = resolveExecutable('git');
 
 test('collects PI Docker auth mount as writable for session persistence', () => {
   const mounts = collectSandcastleDockerMounts({
-    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' }, 'docker'),
+    sandcastleProvider: resolveSandcastleAgentProvider(
+      'PI',
+      { id: 'pi/default' },
+      { homeDir: '/home/runner' },
+      'docker',
+    ),
     reviewerSandcastleProvider: resolveSandcastleAgentProvider(
       'Codex',
       { id: 'codex/default' },

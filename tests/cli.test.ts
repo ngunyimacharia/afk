@@ -36,6 +36,57 @@ function writeMinimalAfkConfig(repoRoot: string): void {
   writeFileSync(path.join(repoRoot, 'afk.json'), JSON.stringify({ testsEnabled: false, staticCheckCommands: [] }));
 }
 
+const allHarnessModels = {
+  OpenCode: [{ id: 'opencode/default', label: 'OpenCode default' }],
+  Claude: [{ id: 'claude/default', label: 'Claude default' }],
+  Codex: [{ id: 'codex/default', label: 'Codex default' }],
+  PI: [{ id: 'pi/default', label: 'PI default' }],
+};
+
+function runArgs(harness = 'OpenCode', reviewerHarness = 'Claude', sandbox = 'docker') {
+  return [
+    'bun',
+    'src/bin.ts',
+    'run',
+    '--harness',
+    harness,
+    '--model',
+    allHarnessModels[harness as keyof typeof allHarnessModels][0].id,
+    '--reviewer-harness',
+    reviewerHarness,
+    '--reviewer-model',
+    allHarnessModels[reviewerHarness as keyof typeof allHarnessModels][0].id,
+    '--features',
+    'feat',
+    '--concurrency',
+    '1',
+    '--completion',
+    'create-pr',
+    '--sandbox',
+    sandbox,
+    '--json',
+  ];
+}
+
+function dockerRunRuntime(overrides: object = {}) {
+  return {
+    discoverAvailableHarnesses: async () =>
+      ({ availableHarnesses: Object.keys(allHarnessModels), harnessModelCache: allHarnessModels }) as never,
+    detectDockerAvailable: () => true,
+    validateSandcastleRuntimeImage: async () =>
+      ({ ok: true, image: 'afk-runtime:latest', capability: 'afk.phase-executor.v1' }) as never,
+    dockerAuthPathExists: () => true,
+    env: {
+      OPENCODE_AUTH: 'token',
+      ANTHROPIC_API_KEY: 'token',
+      OPENAI_API_KEY: 'token',
+      PI_API_KEY: 'token',
+    },
+    skipUpgradeCheck: true,
+    ...overrides,
+  };
+}
+
 test('displayNameForProvider maps current provider names', () => {
   assert.equal(displayNameForProvider('opencode'), 'OpenCode');
   assert.equal(displayNameForProvider('claude'), 'Claude');
@@ -170,6 +221,81 @@ test('run returns human-readable missing-required-flag error without required fl
   const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'run'], skipUpgradeCheck: true });
   assert.equal(result.code, 1);
   assert.match(result.message, /Missing required flag: --harness/);
+});
+
+test('docker sandbox run fails before launch when Docker is unavailable', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-docker-missing-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await runAfk(repoRoot, dockerRunRuntime({ argv: runArgs(), detectDockerAvailable: () => false }));
+  assert.equal(result.code, 1);
+  assert.equal(JSON.parse(result.message).error.code, 'docker-unavailable');
+});
+
+test('docker sandbox run fails before launch when runtime image is unavailable', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-docker-image-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await runAfk(
+    repoRoot,
+    dockerRunRuntime({
+      argv: runArgs(),
+      validateSandcastleRuntimeImage: async () => ({
+        ok: false,
+        failure: { kind: 'missing-image', image: 'afk-runtime:latest', message: 'runtime image missing' },
+      }),
+    }),
+  );
+  assert.equal(result.code, 1);
+  assert.equal(JSON.parse(result.message).error.code, 'docker-runtime-image-unavailable');
+});
+
+for (const harness of ['OpenCode', 'Claude', 'Codex', 'PI']) {
+  test(`docker sandbox run validates missing implementation auth for ${harness}`, async () => {
+    const repoRoot = mkdtempSync(path.join(tmpdir(), `afk-docker-auth-${harness}-`));
+    writeMinimalAfkConfig(repoRoot);
+    const result = await runAfk(
+      repoRoot,
+      dockerRunRuntime({ argv: runArgs(harness, 'OpenCode'), env: {}, dockerAuthPathExists: () => false }),
+    );
+    assert.equal(result.code, 1);
+    const parsed = JSON.parse(result.message);
+    assert.equal(parsed.error.code, 'docker-auth-unavailable');
+    assert.match(parsed.error.message, /implementation:/);
+  });
+}
+
+test('docker sandbox run validates missing reviewer auth', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-docker-reviewer-auth-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await runAfk(
+    repoRoot,
+    dockerRunRuntime({ argv: runArgs('OpenCode', 'PI'), env: {}, dockerAuthPathExists: () => false }),
+  );
+  assert.equal(result.code, 1);
+  const parsed = JSON.parse(result.message);
+  assert.equal(parsed.error.code, 'docker-auth-unavailable');
+  assert.match(parsed.error.message, /reviewer: Sandcastle pi Docker auth is unavailable/);
+  assert.match(parsed.error.message, /PI_API_KEY/);
+});
+
+test('no-sandbox run bypasses Docker-specific validation', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-no-sandbox-bypass-'));
+  writeMinimalAfkConfig(repoRoot);
+  let dockerChecked = false;
+  const result = await runAfk(
+    repoRoot,
+    dockerRunRuntime({
+      argv: runArgs('PI', 'PI', 'no-sandbox'),
+      detectDockerAvailable: () => {
+        dockerChecked = true;
+        return false;
+      },
+      env: {},
+      dockerAuthPathExists: () => false,
+    }),
+  );
+  assert.equal(dockerChecked, false);
+  assert.equal(result.code, 1);
+  assert.notEqual(JSON.parse(result.message).error.code, 'docker-auth-unavailable');
 });
 
 for (const command of ['pause', 'resume']) {
