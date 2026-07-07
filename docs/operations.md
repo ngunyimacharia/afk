@@ -125,6 +125,12 @@ provider credentials/config mounts listed above. For each verified run, retain e
 
 Do not treat prerequisite-validation tests as a substitute for this live E2E matrix.
 
+After the four live runs complete, run `bun run verify:docker-e2e` from the repository root. The verifier reads
+`.scratch/sandcastle-runtime/runs`, requires one completed Docker run with a container identity for each supported
+harness, then renders `afk summary` and fails if the summary output does not include `sandbox: docker` plus the recorded
+container name or id. A failing verifier means AC6/AC7 are still incomplete and the ticket must remain blocked until the
+missing provider run or summary evidence is present.
+
 ## Asset Sync
 
 Asset sync is implemented under `src/sync/`.
