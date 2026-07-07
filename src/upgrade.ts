@@ -1,225 +1,230 @@
-import { type ChildProcess, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { rename, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
+import { chmod, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 
-export interface GitHubReleaseAsset {
+export interface ReleaseAsset {
   name: string;
-  browser_download_url: string;
+  browserDownloadUrl: string;
 }
 
-export interface GitHubRelease {
-  tag_name: string;
-  assets: GitHubReleaseAsset[];
+export interface ReleaseInfo {
+  tagName: string;
+  version: string;
+  assets: ReleaseAsset[];
 }
 
-export interface UpgradeConfig {
-  owner: string;
-  repo: string;
+export interface UpgradeCheckResult {
+  action: 'continue' | 'restarted' | 'skipped';
+  message?: string;
+}
+
+export interface UpgradeDependencies {
+  fetchLatestRelease: () => Promise<ReleaseInfo | null>;
+  prompt: (message: string) => Promise<boolean>;
+  downloadAsset: (url: string, tempPath: string) => Promise<void>;
+  replaceBinary: (tempPath: string, targetPath: string) => Promise<void>;
+  reexec: (targetPath: string, argv: string[]) => Promise<never>;
+}
+
+export interface UpgradeContext {
   currentVersion: string;
+  argv: string[];
+  targetPath: string;
+  isInteractive: boolean;
+  isJson: boolean;
+  isSourceMode: boolean;
 }
 
-export type LatestReleaseResult = { ok: true; release: GitHubRelease } | { ok: false; reason: string };
-
-export type DownloadResult = { ok: true; child: ChildProcess | FakeChildProcess } | { ok: false; reason: string };
-
-export interface FakeChildProcess {
-  unref(): void;
+export function parseSemver(version: string): { major: number; minor: number; patch: number; prerelease: string[] } {
+  const clean = version.startsWith('v') ? version.slice(1) : version;
+  const [core, ...prerelease] = clean.split('-');
+  const [major, minor, patch] = core.split('.').map((part) => Number.parseInt(part, 10));
+  return {
+    major: Number.isFinite(major) ? major : 0,
+    minor: Number.isFinite(minor) ? minor : 0,
+    patch: Number.isFinite(patch) ? patch : 0,
+    prerelease: prerelease.flatMap((segment) => segment.split('.')).filter(Boolean),
+  };
 }
 
-export type SpawnLike = (
-  command: string,
-  args: string[],
-  options: { stdio: 'inherit'; detached: boolean },
-) => ChildProcess | FakeChildProcess;
+export function isUpgradeAvailable(currentVersion: string, latestVersion: string): boolean {
+  if (currentVersion === latestVersion) return false;
+  const current = parseSemver(currentVersion);
+  const latest = parseSemver(latestVersion);
 
-export type DownloadLike = (url: string) => Promise<Uint8Array>;
+  if (latest.major !== current.major) return latest.major > current.major;
+  if (latest.minor !== current.minor) return latest.minor > current.minor;
+  if (latest.patch !== current.patch) return latest.patch > current.patch;
 
-const SCRIPT_RUNTIMES = new Set(['bun', 'node', 'tsx']);
+  // A version without prerelease identifiers is considered newer than one with them.
+  if (current.prerelease.length && !latest.prerelease.length) return true;
+  if (!current.prerelease.length && latest.prerelease.length) return false;
 
-function normalizeVersion(version: string): string {
-  return version.replace(/^v/i, '').split('+')[0] ?? '';
-}
-
-function parseVersion(version: string): number[] {
-  return normalizeVersion(version)
-    .split('.')
-    .map((part) => {
-      const [numeric] = part.split('-', 1);
-      return Number.parseInt(numeric ?? part, 10);
-    })
-    .filter((num) => !Number.isNaN(num));
-}
-
-/**
- * Compare two semantic version strings. Pre-release and build metadata are
- * ignored; comparison stops at the first differing numeric segment.
- */
-export function isUpgradeAvailable(runningVersion: string, latestVersion: string): boolean {
-  const running = parseVersion(runningVersion);
-  const latest = parseVersion(latestVersion);
-
-  const maxLength = Math.max(running.length, latest.length);
-  for (let i = 0; i < maxLength; i++) {
-    const left = running[i] ?? 0;
-    const right = latest[i] ?? 0;
-    if (right > left) return true;
-    if (right < left) return false;
+  // Both have prerelease identifiers; compare segment by segment.
+  const length = Math.max(current.prerelease.length, latest.prerelease.length);
+  for (let index = 0; index < length; index++) {
+    const left = current.prerelease[index];
+    const right = latest.prerelease[index];
+    if (left === undefined) return true;
+    if (right === undefined) return false;
+    const leftNum = Number.parseInt(left, 10);
+    const rightNum = Number.parseInt(right, 10);
+    const bothNumeric = Number.isFinite(leftNum) && Number.isFinite(rightNum);
+    if (bothNumeric) {
+      if (leftNum !== rightNum) return leftNum < rightNum;
+    } else {
+      if (left !== right) return left.localeCompare(right) < 0;
+    }
   }
 
   return false;
 }
 
-function normalizeName(name: string): string {
-  return path.basename(name).toLowerCase();
+export function assetNameForPlatform(platform: string, arch: string): string {
+  const platformSuffix = platform === 'win32' ? 'windows' : platform === 'darwin' ? 'macos' : platform;
+  const archSuffix = arch === 'arm64' ? 'arm64' : arch === 'x64' ? 'x64' : arch;
+  return `afk-${platformSuffix}-${archSuffix}`;
 }
 
-function platformToken(platform: string): string {
-  if (platform === 'darwin') return 'darwin';
-  if (platform === 'linux') return 'linux';
-  if (platform === 'win32') return 'windows';
-  return platform.toLowerCase();
+export function selectAsset(platform: string, arch: string, assets: ReleaseAsset[]): ReleaseAsset | null {
+  const expected = assetNameForPlatform(platform, arch);
+  return assets.find((asset) => asset.name === expected) ?? null;
 }
 
-function archToken(arch: string): string {
-  if (arch === 'x64') return 'x64';
-  if (arch === 'arm64') return 'arm64';
-  if (arch === 'ia32') return 'ia32';
-  return arch.toLowerCase();
-}
-
-/**
- * Select the release asset that matches the requested platform and architecture.
- * Asset names are expected to contain the platform and arch tokens, e.g.
- * `afk-linux-x64`, `afk-darwin-arm64`.
- */
-export function selectAsset(
-  assets: GitHubReleaseAsset[],
-  platform = process.platform,
-  arch = process.arch,
-): GitHubReleaseAsset | undefined {
-  const platformMatch = platformToken(platform);
-  const archMatch = archToken(arch);
-
-  return assets.find((asset) => {
-    const name = normalizeName(asset.name);
-    return name.includes(platformMatch) && name.includes(archMatch);
-  });
-}
-
-async function defaultDownload(url: string): Promise<Uint8Array> {
+export async function defaultDownloadAsset(url: string, tempPath: string): Promise<void> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Download failed: ${response.status} ${response.statusText}`);
   }
-  return new Uint8Array(await response.arrayBuffer());
+  const body = response.body;
+  if (!body) {
+    throw new Error('Download response had no body');
+  }
+  const file = createWriteStream(tempPath);
+  await finished(Readable.fromWeb(body as never).pipe(file));
 }
 
-function defaultSpawn(command: string, args: string[], options: { stdio: 'inherit'; detached: boolean }): ChildProcess {
-  return spawn(command, args, options);
+export async function defaultReplaceBinary(tempPath: string, targetPath: string): Promise<void> {
+  await chmod(tempPath, 0o755);
+  await rename(tempPath, targetPath);
 }
 
-/**
- * Detect whether the current process is running a TypeScript/JavaScript source
- * entry point (e.g. `bun src/bin.ts`). When true, the binary should not be
- * overwritten.
- */
-export function isRunningFromSource(argv: string[] = process.argv): boolean {
-  const runtime = path.basename(argv[0] ?? '');
-  if (!SCRIPT_RUNTIMES.has(runtime)) return false;
-  return argv.slice(1).some((arg) => arg.endsWith('.ts') || arg.endsWith('.js'));
+export function isSourceMode(targetPath: string): boolean {
+  return targetPath.endsWith('.ts') || targetPath.endsWith('.js');
 }
 
-/**
- * Detect whether the process is attached to an interactive terminal. When
- * false, upgrade prompts must be skipped and a notice should be printed.
- */
-export function isInteractive(
-  stdin: NodeJS.ReadStream = process.stdin,
-  stdout: NodeJS.WriteStream = process.stdout,
-): boolean {
-  return !!stdin.isTTY && !!stdout.isTTY;
-}
-
-function formatReason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Fetch the latest GitHub Release for the configured repository. Network and
- * API errors are caught and surfaced as a "continue without upgrade" outcome.
- */
-export async function fetchLatestRelease(
-  config: Pick<UpgradeConfig, 'owner' | 'repo'>,
-  fetchImpl: typeof fetch = globalThis.fetch,
-): Promise<LatestReleaseResult> {
-  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/releases/latest`;
+export async function checkForUpgrade(
+  context: UpgradeContext,
+  dependencies: UpgradeDependencies,
+): Promise<UpgradeCheckResult> {
+  const { currentVersion, argv, targetPath, isInteractive, isJson, isSourceMode: sourceMode } = context;
 
   try {
-    const response = await fetchImpl(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'afk-upgrader',
-      },
-    });
+    const release = await dependencies.fetchLatestRelease();
+    if (!release) {
+      return { action: 'continue' };
+    }
 
-    if (!response.ok) {
+    if (!isUpgradeAvailable(currentVersion, release.version)) {
+      return { action: 'continue' };
+    }
+
+    const asset = selectAsset(process.platform, process.arch, release.assets);
+    if (!asset) {
+      return { action: 'continue' };
+    }
+
+    const notice = `afk ${currentVersion} → ${release.version} available; run \`afk\` interactively to upgrade.`;
+
+    if (!isInteractive || isJson) {
+      return { action: 'skipped', message: notice };
+    }
+
+    if (sourceMode) {
       return {
-        ok: false,
-        reason: `GitHub API returned ${response.status} ${response.statusText}`,
+        action: 'skipped',
+        message: `afk ${currentVersion} → ${release.version} available; source-mode invocation cannot replace the running binary.`,
       };
     }
 
-    const release = (await response.json()) as GitHubRelease;
-    return {
-      ok: true,
-      release: {
-        tag_name: release.tag_name,
-        assets: release.assets ?? [],
-      },
-    };
+    const confirmed = await dependencies.prompt(
+      `A new version of afk is available: ${release.version} (you have ${currentVersion})\n? Upgrade now?`,
+    );
+    if (!confirmed) {
+      return { action: 'continue' };
+    }
+
+    const tempPath = `${targetPath}.download-${Date.now()}`;
+    try {
+      await dependencies.downloadAsset(asset.browserDownloadUrl, tempPath);
+      await dependencies.replaceBinary(tempPath, targetPath);
+    } catch (error) {
+      try {
+        await unlink(tempPath);
+      } catch {
+        // Best-effort cleanup of partial download.
+      }
+      throw error;
+    }
+
+    await dependencies.reexec(targetPath, argv);
+    return { action: 'restarted' };
   } catch (error) {
-    return { ok: false, reason: formatReason(error) };
+    const reason = error instanceof Error ? error.message : String(error);
+    return { action: 'continue', message: `Upgrade check failed: ${reason}` };
   }
 }
 
-/**
- * Download a release asset to a temporary path next to the target binary, make
- * it executable, atomically rename it over the target, and re-execute the
- * original command. When running from source the replacement is skipped.
- */
-export async function downloadAndReplace(
-  asset: GitHubReleaseAsset,
-  targetPath: string,
-  argv: string[] = process.argv,
-  options: { download?: DownloadLike; spawn?: SpawnLike } = {},
-): Promise<DownloadResult> {
-  if (isRunningFromSource(argv)) {
-    return { ok: false, reason: 'Running from source; skipping binary replacement.' };
-  }
-
-  const download = options.download ?? defaultDownload;
-  const spawnImpl = options.spawn ?? defaultSpawn;
-
+export async function fetchLatestGitHubRelease(
+  owner: string,
+  repo: string,
+  fetcher: typeof fetch = fetch,
+): Promise<ReleaseInfo | null> {
   try {
-    const data = await download(asset.browser_download_url);
-    const targetDir = path.dirname(targetPath);
-    const tempPath = path.join(targetDir, `.${path.basename(targetPath)}.upgrade-${randomUUID()}`);
-
-    await writeFile(tempPath, data, { mode: 0o755 });
-    await rename(tempPath, targetPath);
-
-    const child = spawnImpl(targetPath, argv.slice(1), { stdio: 'inherit', detached: true });
-    child.unref();
-    return { ok: true, child };
-  } catch (error) {
-    return { ok: false, reason: formatReason(error) };
+    const response = await fetcher(`https://api.github.com/repos/${owner}/${repo}/releases/latest`);
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as {
+      tag_name?: string;
+      assets?: Array<{ name?: string; browser_download_url?: string }>;
+    };
+    const tagName = payload.tag_name ?? '';
+    const version = tagName.startsWith('v') ? tagName.slice(1) : tagName;
+    const assets = (payload.assets ?? [])
+      .filter((asset) => typeof asset.name === 'string' && typeof asset.browser_download_url === 'string')
+      .map((asset) => ({
+        name: asset.name as string,
+        browserDownloadUrl: asset.browser_download_url as string,
+      }));
+    return { tagName, version, assets };
+  } catch {
+    return null;
   }
 }
 
-/**
- * Format a one-line notice for non-interactive environments.
- */
-export function formatUpgradeNotice(currentVersion: string, latestVersion: string): string {
-  return `afk ${currentVersion} → ${latestVersion} available; run \`afk\` interactively to upgrade.`;
+export function resolveTargetPath(argv: string[]): string {
+  // In a compiled binary invocation argv[0] is the binary path.
+  // In `bun src/bin.ts` argv[0] is `bun` and argv[1] is the script path.
+  if (argv[0]?.includes(path.sep) && !argv[0].includes('bun')) {
+    return path.resolve(argv[0]);
+  }
+  return path.resolve(argv[1] ?? argv[0] ?? process.argv[1] ?? process.argv[0] ?? 'afk');
+}
+
+export async function defaultReexec(targetPath: string, argv: string[]): Promise<never> {
+  const child = spawn(targetPath, argv.slice(2), {
+    stdio: 'inherit',
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      process.exitCode = code ?? 0;
+      resolve();
+    });
+  });
+  process.exit();
 }

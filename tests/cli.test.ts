@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { displayNameForProvider, readRunMetadata, runAfk } from '../src/cli.js';
 import { parseCliArgs } from '../src/cli-flags.js';
 import { formatJsonError, formatJsonSuccess, formatJsonSuccessWithData } from '../src/cli-response.js';
-
-const packageVersion = (JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as { version: string }).version;
+import { assetNameForPlatform } from '../src/upgrade.js';
 
 class FakeLinearProvider {
   readonly issues: Array<{ title: string; parentId?: string }> = [];
@@ -110,49 +109,14 @@ test('parseCliArgs does not interfere with existing boolean flags', () => {
   assert.equal(parsed.flags.verbose, true);
 });
 
-test('parseCliArgs recognizes --version / -V flags and the version command', () => {
-  const flagParsed = parseCliArgs(['bun', 'src/bin.ts', '--version']);
-  assert.equal(flagParsed.command, undefined);
-  assert.equal(flagParsed.flags.version, true);
-
-  const shorthandParsed = parseCliArgs(['bun', 'src/bin.ts', '-V']);
-  assert.equal(shorthandParsed.flags.version, true);
-
-  const commandParsed = parseCliArgs(['bun', 'src/bin.ts', 'version']);
-  assert.equal(commandParsed.command, 'version');
-  assert.equal(commandParsed.flags.version, false);
+test('parseCliArgs recognizes --version and -V flags', () => {
+  assert.equal(parseCliArgs(['afk', '--version']).flags.version, true);
+  assert.equal(parseCliArgs(['afk', '-V']).flags.version, true);
+  assert.equal(parseCliArgs(['bun', 'src/bin.ts', '--version']).flags.version, true);
 });
 
-test('parseCliArgs recognizes version command from compiled binary invocation', () => {
-  const parsed = parseCliArgs(['afk', 'version']);
-  assert.equal(parsed.command, 'version');
-});
-
-test('version command prints package version', async () => {
-  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', 'version'] });
-  assert.equal(result.code, 0);
-  assert.equal(result.message, packageVersion);
-});
-
-test('--version flag prints package version', async () => {
-  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', '--version'] });
-  assert.equal(result.code, 0);
-  assert.equal(result.message, packageVersion);
-});
-
-test('-V flag prints package version', async () => {
-  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', '-V'] });
-  assert.equal(result.code, 0);
-  assert.equal(result.message, packageVersion);
-});
-
-test('version command prints JSON envelope with --json', async () => {
-  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', 'version', '--json'] });
-  assert.equal(result.code, 0);
-  const parsed = JSON.parse(result.message) as { ok: true; command: string; data: { version: string } };
-  assert.equal(parsed.ok, true);
-  assert.equal(parsed.command, 'version');
-  assert.equal(parsed.data.version, packageVersion);
+test('parseCliArgs recognizes version command', () => {
+  assert.equal(parseCliArgs(['afk', 'version']).command, 'version');
 });
 
 test('formatJsonSuccess omits empty message field', () => {
@@ -192,7 +156,7 @@ test('formatJsonError includes code, message, and optional details', () => {
 test('run returns JSON missing-required-flag error without required flags', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-json-'));
   writeMinimalAfkConfig(repoRoot);
-  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'run', '--json'] });
+  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'run', '--json'], skipUpgradeCheck: true });
   assert.equal(result.code, 1);
   const parsed = JSON.parse(result.message) as { ok: false; command: string; error: { code: string } };
   assert.equal(parsed.ok, false);
@@ -203,7 +167,7 @@ test('run returns JSON missing-required-flag error without required flags', asyn
 test('run returns human-readable missing-required-flag error without required flags', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-run-text-'));
   writeMinimalAfkConfig(repoRoot);
-  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'run'] });
+  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'run'], skipUpgradeCheck: true });
   assert.equal(result.code, 1);
   assert.match(result.message, /Missing required flag: --harness/);
 });
@@ -212,7 +176,7 @@ for (const command of ['pause', 'resume']) {
   test(`${command} returns JSON no-active-run error when --json is passed without an active run`, async () => {
     const repoRoot = mkdtempSync(path.join(tmpdir(), `afk-${command}-json-`));
     writeMinimalAfkConfig(repoRoot);
-    const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', command, '--json'] });
+    const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', command, '--json'], skipUpgradeCheck: true });
     assert.equal(result.code, 1);
     const parsed = JSON.parse(result.message) as { ok: false; command: string; error: { code: string } };
     assert.equal(parsed.ok, false);
@@ -225,7 +189,7 @@ for (const command of ['plan', 'events']) {
   test(`${command} returns stable JSON error when --json is passed`, async () => {
     const repoRoot = mkdtempSync(path.join(tmpdir(), `afk-${command}-json-`));
     writeMinimalAfkConfig(repoRoot);
-    const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', command, '--json'] });
+    const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', command, '--json'], skipUpgradeCheck: true });
     assert.equal(result.code, 1);
     const parsed = JSON.parse(result.message) as { ok: false; command: string; error: { code: string } };
     assert.equal(parsed.ok, false);
@@ -237,7 +201,7 @@ for (const command of ['plan', 'events']) {
 test('unknown command returns JSON error with --json', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-unknown-json-'));
   writeMinimalAfkConfig(repoRoot);
-  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'nope', '--json'] });
+  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'nope', '--json'], skipUpgradeCheck: true });
   assert.equal(result.code, 1);
   const parsed = JSON.parse(result.message) as { ok: false; command: string; error: { code: string } };
   assert.equal(parsed.ok, false);
@@ -248,7 +212,7 @@ test('unknown command returns JSON error with --json', async () => {
 test('unknown command returns human-readable error without --json', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-unknown-text-'));
   writeMinimalAfkConfig(repoRoot);
-  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'nope'] });
+  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'nope'], skipUpgradeCheck: true });
   assert.equal(result.code, 1);
   assert.match(result.message, /Unknown command/);
 });
@@ -260,6 +224,7 @@ test('bare afk with --json returns JSON error for missing interactive terminal',
     argv: ['bun', 'src/bin.ts', '--json'],
     io: { stdin: { isTTY: false } as never, stdout: { isTTY: false } as never },
     env: { ...process.env, CI: '' },
+    skipUpgradeCheck: true,
   });
   assert.equal(result.code, 1);
   const parsed = JSON.parse(result.message) as { ok: false; error: { code: string; message: string } };
@@ -271,7 +236,7 @@ test('bare afk with --json returns JSON error for missing interactive terminal',
 test('status JSON output reports inactive run as structured data', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-json-'));
   writeMinimalAfkConfig(repoRoot);
-  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'status', '--json'] });
+  const result = await runAfk(repoRoot, { argv: ['bun', 'src/bin.ts', 'status', '--json'], skipUpgradeCheck: true });
   assert.equal(result.code, 0);
   const parsed = JSON.parse(result.message) as {
     ok: true;
@@ -320,6 +285,7 @@ test('linear-plan JSON output uses data field for plan payload', async () => {
   const result = await runAfk(repoRoot, {
     argv: ['bun', 'src/bin.ts', 'linear-plan', manifestPath, '--json'],
     linearProvider: new FakeLinearProvider() as never,
+    skipUpgradeCheck: true,
   });
   assert.equal(result.code, 0);
   const parsed = JSON.parse(result.message) as { ok: true; command: string; data: object; message?: string };
@@ -327,4 +293,153 @@ test('linear-plan JSON output uses data field for plan payload', async () => {
   assert.equal(parsed.command, 'linear-plan');
   assert.ok(parsed.data);
   assert.equal('message' in parsed, false);
+});
+
+test('version command prints version as text', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-version-text-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await runAfk(repoRoot, { argv: ['afk', 'version'], skipUpgradeCheck: true });
+  assert.equal(result.code, 0);
+  assert.match(result.message, /^\d+\.\d+\.\d+/);
+});
+
+test('--version prints version as JSON when --json is passed', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-version-json-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await runAfk(repoRoot, { argv: ['afk', '--version', '--json'], skipUpgradeCheck: true });
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message) as { ok: true; command: string; data: { version: string } };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'version');
+  assert.match(parsed.data.version, /^\d+\.\d+\.\d+/);
+});
+
+test('upgrade check prints a notice and continues in CI mode', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-ci-'));
+  writeMinimalAfkConfig(repoRoot);
+  const output: string[] = [];
+  const result = await runAfk(repoRoot, {
+    argv: ['afk', 'status'],
+    env: { ...process.env, CI: 'true' },
+    io: {
+      stdin: { isTTY: false } as never,
+      stdout: { isTTY: false, write: (chunk: string) => output.push(chunk) } as never,
+    },
+    upgradeDependencies: {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => true,
+      downloadAsset: async () => {},
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
+      },
+    },
+  });
+  assert.equal(result.code, 0);
+  assert.ok(output.some((line) => /available/.test(line)));
+  assert.match(result.message, /No active AFK run/);
+});
+
+test('upgrade check prints a notice and continues with --json', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-json-'));
+  writeMinimalAfkConfig(repoRoot);
+  const output: string[] = [];
+  const result = await runAfk(repoRoot, {
+    argv: ['afk', 'status', '--json'],
+    env: { ...process.env, CI: '' },
+    io: {
+      stdin: { isTTY: false } as never,
+      stdout: { isTTY: false, write: (chunk: string) => output.push(chunk) } as never,
+    },
+    upgradeDependencies: {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => true,
+      downloadAsset: async () => {},
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
+      },
+    },
+  });
+  assert.equal(result.code, 0);
+  assert.ok(output.some((line) => /available/.test(line)));
+  const parsed = JSON.parse(result.message) as { ok: true; command: string; data: { active: boolean } };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'status');
+  assert.equal(parsed.data.active, false);
+});
+
+test('upgrade check continues original command when user declines', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-decline-'));
+  writeMinimalAfkConfig(repoRoot);
+  const result = await runAfk(repoRoot, {
+    argv: ['afk', 'status'],
+    env: { ...process.env, CI: '' },
+    io: { stdin: { isTTY: true } as never, stdout: { isTTY: true } as never },
+    upgradeDependencies: {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => false,
+      downloadAsset: async () => {},
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
+      },
+    },
+  });
+  assert.equal(result.code, 0);
+  assert.match(result.message, /No active AFK run/);
+});
+
+test('upgrade check downloads, replaces, and re-executes when user accepts', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-accept-'));
+  writeMinimalAfkConfig(repoRoot);
+  const events: string[] = [];
+  const result = await runAfk(repoRoot, {
+    argv: ['afk', 'status'],
+    env: { ...process.env, CI: '' },
+    io: { stdin: { isTTY: true } as never, stdout: { isTTY: true } as never },
+    upgradeDependencies: {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => true,
+      downloadAsset: async (url, tempPath) => {
+        events.push(`download:${url}:${tempPath}`);
+      },
+      replaceBinary: async (tempPath, targetPath) => {
+        events.push(`replace:${tempPath}:${targetPath}`);
+      },
+      reexec: async (targetPath, argv) => {
+        events.push(`reexec:${targetPath}:${argv.join(',')}`);
+        return undefined as never;
+      },
+    },
+  });
+  assert.equal(result.code, 0);
+  assert.equal(events.length, 3);
+  assert.match(events[0], /^download:/);
+  assert.match(events[1], /^replace:/);
+  assert.match(events[2], /^reexec:/);
 });

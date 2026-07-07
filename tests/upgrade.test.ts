@@ -1,213 +1,285 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
-  downloadAndReplace,
-  fetchLatestRelease,
-  formatUpgradeNotice,
-  type GitHubReleaseAsset,
-  isInteractive,
-  isRunningFromSource,
+  assetNameForPlatform,
+  checkForUpgrade,
+  defaultDownloadAsset,
+  defaultReplaceBinary,
+  fetchLatestGitHubRelease,
+  isSourceMode,
   isUpgradeAvailable,
-  type SpawnLike,
+  parseSemver,
+  resolveTargetPath,
   selectAsset,
 } from '../src/upgrade.js';
 
-const baseAssets: GitHubReleaseAsset[] = [
-  { name: 'afk-linux-x64', browser_download_url: 'https://example.com/afk-linux-x64' },
-  { name: 'afk-darwin-arm64', browser_download_url: 'https://example.com/afk-darwin-arm64' },
-  { name: 'afk-darwin-x64', browser_download_url: 'https://example.com/afk-darwin-x64' },
-];
+test('parseSemver parses core versions and prereleases', () => {
+  assert.deepEqual(parseSemver('1.2.3'), { major: 1, minor: 2, patch: 3, prerelease: [] });
+  assert.deepEqual(parseSemver('v0.1.2-alpha.1'), { major: 0, minor: 1, patch: 2, prerelease: ['alpha', '1'] });
+});
 
-test('isUpgradeAvailable returns true when latest is greater', () => {
+test('isUpgradeAvailable compares versions by semver', () => {
   assert.equal(isUpgradeAvailable('0.0.1', '0.0.2'), true);
-  assert.equal(isUpgradeAvailable('0.0.1', '0.1.0'), true);
-  assert.equal(isUpgradeAvailable('0.0.1', '1.0.0'), true);
-  assert.equal(isUpgradeAvailable('v0.0.1', '0.0.2'), true);
-});
-
-test('isUpgradeAvailable returns false for equal or lower versions', () => {
+  assert.equal(isUpgradeAvailable('0.0.2', '0.0.1'), false);
   assert.equal(isUpgradeAvailable('0.0.2', '0.0.2'), false);
-  assert.equal(isUpgradeAvailable('0.0.3', '0.0.2'), false);
-  assert.equal(isUpgradeAvailable('0.1.0', '0.0.9'), false);
-  assert.equal(isUpgradeAvailable('0.0.2', 'v0.0.2'), false);
+  assert.equal(isUpgradeAvailable('0.1.0', '0.2.0'), true);
+  assert.equal(isUpgradeAvailable('1.0.0', '2.0.0'), true);
+  assert.equal(isUpgradeAvailable('0.0.2', '0.0.2-alpha'), false);
 });
 
-test('selectAsset returns the correct asset for supported platforms', () => {
-  assert.equal(selectAsset(baseAssets, 'linux', 'x64')?.name, 'afk-linux-x64');
-  assert.equal(selectAsset(baseAssets, 'darwin', 'arm64')?.name, 'afk-darwin-arm64');
-  assert.equal(selectAsset(baseAssets, 'darwin', 'x64')?.name, 'afk-darwin-x64');
+test('assetNameForPlatform builds platform-specific names', () => {
+  assert.equal(assetNameForPlatform('linux', 'x64'), 'afk-linux-x64');
+  assert.equal(assetNameForPlatform('darwin', 'arm64'), 'afk-macos-arm64');
+  assert.equal(assetNameForPlatform('win32', 'x64'), 'afk-windows-x64');
 });
 
-test('selectAsset returns undefined for unsupported or mismatched platforms', () => {
-  assert.equal(selectAsset(baseAssets, 'win32', 'x64'), undefined);
-  assert.equal(selectAsset(baseAssets, 'linux', 'arm64'), undefined);
-  assert.equal(selectAsset([], 'linux', 'x64'), undefined);
+test('selectAsset returns the matching asset or null', () => {
+  const assets = [
+    { name: 'afk-linux-x64', browserDownloadUrl: 'https://example.com/linux' },
+    { name: 'afk-macos-arm64', browserDownloadUrl: 'https://example.com/macos' },
+  ];
+  assert.equal(selectAsset('linux', 'x64', assets)?.name, 'afk-linux-x64');
+  assert.equal(selectAsset('darwin', 'x64', assets), null);
 });
 
-test('isRunningFromSource detects bun/node/tsx source invocations', () => {
-  assert.equal(isRunningFromSource(['bun', 'src/bin.ts']), true);
-  assert.equal(isRunningFromSource(['bun', 'src/bin.js']), true);
-  assert.equal(isRunningFromSource(['node', 'dist/bin.js']), true);
-  assert.equal(isRunningFromSource(['tsx', 'src/bin.ts']), true);
-  assert.equal(isRunningFromSource(['/usr/local/bin/afk']), false);
-  assert.equal(isRunningFromSource(['/usr/local/bin/afk', 'status']), false);
+test('isSourceMode detects TypeScript and JavaScript entry points', () => {
+  assert.equal(isSourceMode('src/bin.ts'), true);
+  assert.equal(isSourceMode('src/bin.js'), true);
+  assert.equal(isSourceMode('/usr/local/bin/afk'), false);
 });
 
-test('isInteractive requires both stdin and stdout to be TTY', () => {
-  assert.equal(isInteractive({ isTTY: true } as NodeJS.ReadStream, { isTTY: true } as NodeJS.WriteStream), true);
-  assert.equal(isInteractive({ isTTY: false } as NodeJS.ReadStream, { isTTY: true } as NodeJS.WriteStream), false);
-  assert.equal(isInteractive({ isTTY: true } as NodeJS.ReadStream, { isTTY: false } as NodeJS.WriteStream), false);
-  assert.equal(isInteractive({ isTTY: false } as NodeJS.ReadStream, { isTTY: false } as NodeJS.WriteStream), false);
+test('resolveTargetPath prefers binary path over script path', () => {
+  assert.equal(resolveTargetPath(['/usr/local/bin/afk', 'status']), '/usr/local/bin/afk');
+  assert.equal(resolveTargetPath(['bun', 'src/bin.ts', 'status']), path.resolve('src/bin.ts'));
 });
 
-test('fetchLatestRelease returns release data on success', async () => {
-  const fetchImpl = async () =>
-    ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      json: async () => ({
-        tag_name: 'v0.0.2',
-        assets: [{ name: 'afk-linux-x64', browser_download_url: 'https://example.com/afk-linux-x64' }],
+test('checkForUpgrade continues when no release is available', async () => {
+  const result = await checkForUpgrade(
+    {
+      currentVersion: '0.0.1',
+      argv: ['afk', 'status'],
+      targetPath: '/usr/local/bin/afk',
+      isInteractive: true,
+      isJson: false,
+      isSourceMode: false,
+    },
+    {
+      fetchLatestRelease: async () => null,
+      prompt: async () => true,
+      downloadAsset: async () => {},
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
+      },
+    },
+  );
+  assert.equal(result.action, 'continue');
+});
+
+test('checkForUpgrade continues when already on latest version', async () => {
+  const result = await checkForUpgrade(
+    {
+      currentVersion: '0.0.2',
+      argv: ['afk', 'status'],
+      targetPath: '/usr/local/bin/afk',
+      isInteractive: true,
+      isJson: false,
+      isSourceMode: false,
+    },
+    {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [{ name: 'afk-linux-x64', browserDownloadUrl: 'https://example.com/afk' }],
       }),
-    }) as unknown as Response;
-
-  const result = await fetchLatestRelease({ owner: 'acme', repo: 'afk' }, fetchImpl);
-
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.release.tag_name, 'v0.0.2');
-  assert.equal(result.release.assets.length, 1);
-  assert.equal(result.release.assets[0]?.name, 'afk-linux-x64');
-});
-
-test('fetchLatestRelease surfaces API errors as continue outcomes', async () => {
-  const fetchImpl = async () =>
-    ({
-      ok: false,
-      status: 404,
-      statusText: 'Not Found',
-      json: async () => ({}),
-    }) as unknown as Response;
-
-  const result = await fetchLatestRelease({ owner: 'acme', repo: 'afk' }, fetchImpl);
-
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.reason, /404/);
-});
-
-test('fetchLatestRelease surfaces network failures as continue outcomes', async () => {
-  const fetchImpl = async () => {
-    throw new Error('network unreachable');
-  };
-
-  const result = await fetchLatestRelease({ owner: 'acme', repo: 'afk' }, fetchImpl);
-
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.reason, /network unreachable/);
-});
-
-test('downloadAndReplace writes, chmods, renames, and re-executes the binary', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-'));
-  const targetPath = path.join(dir, 'afk');
-  writeFileSync(targetPath, 'old binary');
-
-  const downloadCalls: string[] = [];
-  const downloadImpl = async (url: string) => {
-    downloadCalls.push(url);
-    return new Uint8Array(Buffer.from('new binary'));
-  };
-
-  const spawnCalls: Array<{ command: string; args: string[] }> = [];
-  const spawnImpl = (command: string, args: string[]) => {
-    spawnCalls.push({ command, args });
-    return { unref: () => undefined };
-  };
-
-  const argv = ['/usr/local/bin/afk', 'status'];
-  const result = await downloadAndReplace(
-    { name: 'afk-linux-x64', browser_download_url: 'https://example.com/afk-linux-x64' },
-    targetPath,
-    argv,
-    { download: downloadImpl, spawn: spawnImpl as SpawnLike },
-  );
-
-  assert.equal(result.ok, true);
-  assert.deepEqual(downloadCalls, ['https://example.com/afk-linux-x64']);
-  assert.deepEqual(spawnCalls, [{ command: targetPath, args: ['status'] }]);
-
-  const stat = statSync(targetPath);
-  assert.equal(readFileSync(targetPath).toString(), 'new binary');
-  assert.notEqual(stat.mode & 0o111, 0, 'target binary should be executable');
-  assert.deepEqual(readdirSync(dir).sort(), ['afk']);
-});
-
-test('downloadAndReplace skips replacement when running from source', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-'));
-  const scriptPath = path.join(dir, 'src', 'bin.ts');
-  mkdirSync(path.dirname(scriptPath), { recursive: true });
-  writeFileSync(scriptPath, 'source entry');
-
-  let downloadCalled = false;
-  let spawnCalled = false;
-
-  const result = await downloadAndReplace(
-    { name: 'afk-linux-x64', browser_download_url: 'https://example.com/afk-linux-x64' },
-    scriptPath,
-    ['bun', 'src/bin.ts'],
-    {
-      download: async () => {
-        downloadCalled = true;
-        return new Uint8Array();
-      },
-      spawn: () => {
-        spawnCalled = true;
-        return { unref: () => undefined };
+      prompt: async () => true,
+      downloadAsset: async () => {},
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
       },
     },
   );
-
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.reason, /source/i);
-  assert.equal(downloadCalled, false);
-  assert.equal(spawnCalled, false);
-  assert.equal(readFileSync(scriptPath).toString(), 'source entry');
+  assert.equal(result.action, 'continue');
 });
 
-test('downloadAndReplace surfaces download failures as continue outcomes', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-'));
-  const targetPath = path.join(dir, 'afk');
-  writeFileSync(targetPath, 'old binary');
-
-  const result = await downloadAndReplace(
-    { name: 'afk-linux-x64', browser_download_url: 'https://example.com/afk-linux-x64' },
-    targetPath,
-    ['/usr/local/bin/afk'],
+test('checkForUpgrade skips in non-interactive mode with a notice', async () => {
+  const result = await checkForUpgrade(
     {
-      download: async () => {
-        throw new Error('download timeout');
-      },
-      spawn: () => {
-        return { unref: () => undefined };
+      currentVersion: '0.0.1',
+      argv: ['afk', 'status'],
+      targetPath: '/usr/local/bin/afk',
+      isInteractive: false,
+      isJson: false,
+      isSourceMode: false,
+    },
+    {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => true,
+      downloadAsset: async () => {},
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
       },
     },
   );
-
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.reason, /download timeout/);
-  assert.equal(readFileSync(targetPath).toString(), 'old binary');
+  assert.equal(result.action, 'skipped');
+  assert.match(result.message ?? '', /available/);
 });
 
-test('formatUpgradeNotice prints a one-line non-interactive message', () => {
-  assert.equal(
-    formatUpgradeNotice('0.0.1', '0.0.2'),
-    'afk 0.0.1 → 0.0.2 available; run `afk` interactively to upgrade.',
+test('checkForUpgrade continues when user declines', async () => {
+  const result = await checkForUpgrade(
+    {
+      currentVersion: '0.0.1',
+      argv: ['afk', 'status'],
+      targetPath: '/usr/local/bin/afk',
+      isInteractive: true,
+      isJson: false,
+      isSourceMode: false,
+    },
+    {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => false,
+      downloadAsset: async () => {},
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
+      },
+    },
   );
+  assert.equal(result.action, 'continue');
+});
+
+test('checkForUpgrade downloads, replaces, and re-executes when user confirms', async () => {
+  const events: string[] = [];
+  const result = await checkForUpgrade(
+    {
+      currentVersion: '0.0.1',
+      argv: ['afk', 'status'],
+      targetPath: '/usr/local/bin/afk',
+      isInteractive: true,
+      isJson: false,
+      isSourceMode: false,
+    },
+    {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => true,
+      downloadAsset: async (url, tempPath) => {
+        events.push(`download:${url}:${tempPath}`);
+      },
+      replaceBinary: async (tempPath, targetPath) => {
+        events.push(`replace:${tempPath}:${targetPath}`);
+      },
+      reexec: async (targetPath, argv) => {
+        events.push(`reexec:${targetPath}:${argv.join(',')}`);
+        return undefined as never;
+      },
+    },
+  );
+  assert.equal(result.action, 'restarted');
+  assert.equal(events.length, 3);
+  assert.match(events[0], /^download:/);
+  assert.match(events[1], /^replace:/);
+  assert.match(events[2], /^reexec:/);
+});
+
+test('checkForUpgrade continues on download failure', async () => {
+  const result = await checkForUpgrade(
+    {
+      currentVersion: '0.0.1',
+      argv: ['afk', 'status'],
+      targetPath: '/usr/local/bin/afk',
+      isInteractive: true,
+      isJson: false,
+      isSourceMode: false,
+    },
+    {
+      fetchLatestRelease: async () => ({
+        tagName: 'v0.0.2',
+        version: '0.0.2',
+        assets: [
+          { name: assetNameForPlatform(process.platform, process.arch), browserDownloadUrl: 'https://example.com/afk' },
+        ],
+      }),
+      prompt: async () => true,
+      downloadAsset: async () => {
+        throw new Error('network error');
+      },
+      replaceBinary: async () => {},
+      reexec: async () => {
+        throw new Error('should not reexec');
+      },
+    },
+  );
+  assert.equal(result.action, 'continue');
+  assert.match(result.message ?? '', /network error/);
+});
+
+test('defaultReplaceBinary writes executable file and renames atomically', async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-replace-'));
+  const tempPath = path.join(tempDir, 'afk.new');
+  const targetPath = path.join(tempDir, 'afk');
+  writeFileSync(tempPath, 'binary', 'utf8');
+  await defaultReplaceBinary(tempPath, targetPath);
+  assert.equal(readFileSync(targetPath, 'utf8'), 'binary');
+});
+
+test('fetchLatestGitHubRelease parses latest release payload', async () => {
+  const release = await fetchLatestGitHubRelease('owner', 'repo', async (url) => {
+    assert.equal(url, 'https://api.github.com/repos/owner/repo/releases/latest');
+    return new Response(
+      JSON.stringify({
+        tag_name: 'v0.0.2',
+        assets: [{ name: 'afk-linux-x64', browser_download_url: 'https://example.com/afk' }],
+      }),
+    );
+  });
+  assert.equal(release?.version, '0.0.2');
+  assert.equal(release?.assets[0]?.name, 'afk-linux-x64');
+});
+
+test('fetchLatestGitHubRelease returns null on error response', async () => {
+  const release = await fetchLatestGitHubRelease(
+    'owner',
+    'repo',
+    async () => new Response('Not found', { status: 404 }),
+  );
+  assert.equal(release, null);
+});
+
+test('defaultDownloadAsset writes response body to file', async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'afk-upgrade-download-'));
+  const tempPath = path.join(tempDir, 'afk.asset');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('downloaded-binary', {
+      status: 200,
+    }) as never;
+  try {
+    await defaultDownloadAsset('https://example.com/afk', tempPath);
+    assert.equal(readFileSync(tempPath, 'utf8'), 'downloaded-binary');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

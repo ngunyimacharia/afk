@@ -72,6 +72,7 @@ function isKnownCommand(arg: string | undefined): arg is string {
 function normalizeCommand(command: string): string {
   if (command === 'summary' || command === 'afk-summary') return 'afk-summary';
   if (command === 'cleanup' || command === 'afk-cleanup') return 'afk-cleanup';
+  if (command === 'version' || command === '--version' || command === '-V') return 'version';
   return command;
 }
 
