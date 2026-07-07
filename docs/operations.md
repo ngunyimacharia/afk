@@ -112,6 +112,19 @@ No-sandbox launches intentionally bypass Docker-specific validation and continue
 The Docker runtime contract does not copy secrets, create temporary credential volumes, silently fall back to
 no-sandbox, or support alternate image registries in v1.
 
+### Docker E2E acceptance evidence
+
+Before marking Docker-mode harness verification complete, operators must run one real Docker-isolated ticket for each
+supported harness (`OpenCode`, `Claude`, `Codex`, and `PI`) in an environment with Docker, `afk-runtime:latest`, and the
+provider credentials/config mounts listed above. For each verified run, retain evidence that:
+
+- AFK selected `sandbox: docker` and did not fall back to no-sandbox.
+- The run created a Docker container and completed implementation/review phases.
+- Runtime cleanup removed the container or recorded the cleanup command for any leftover container.
+- `afk summary` reports `sandbox: docker` plus the container name or id for the run.
+
+Do not treat prerequisite-validation tests as a substitute for this live E2E matrix.
+
 ## Asset Sync
 
 Asset sync is implemented under `src/sync/`.
