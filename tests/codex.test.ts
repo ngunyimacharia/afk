@@ -366,6 +366,30 @@ describe('CodexSessionExecutor', () => {
     assert.equal(thread.signals[0]?.aborted, true);
     assert.equal(result.terminalError, 'run killed');
   });
+
+  test('pre-aborted signal stops Codex before starting a turn', async () => {
+    const client = new FakeCodexClient({
+      startThread: new FakeCodexThread('thread-preabort', [{ hang: true }]),
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const executor = new CodexSessionExecutor(() => client);
+
+    const result = await executor.run({
+      model: { id: 'codex/default' },
+      prompt: 'run',
+      title: 'afk: feat/01',
+      signal: controller.signal,
+    });
+
+    assert.equal(client.startedOptions.length, 1);
+    assert.deepEqual(client.startedOptions[0], {
+      approvalPolicy: 'never',
+      networkAccessEnabled: false,
+      sandboxMode: 'workspace-write',
+    });
+    assert.equal(result.terminalError, 'run killed');
+  });
 });
 
 function sleep(ms: number): Promise<void> {
