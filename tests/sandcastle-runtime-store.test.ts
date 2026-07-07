@@ -158,8 +158,12 @@ test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
     pi.docker.mounts.map((mount) => mount.source),
     ['/home/runner/.pi'],
   );
-  assert.equal(pi.noSandbox.enabled, true);
+  assert.equal(pi.docker.mounts[0]?.target, AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi);
+  assert.equal(pi.noSandbox?.enabled, true);
   assert.equal(pi.model, undefined);
+
+  const dockerPi = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' }, 'docker');
+  assert.equal(dockerPi.noSandbox, undefined);
 });
 
 test('validates AFK runtime image capability through a Sandcastle image client', async () => {

@@ -7,6 +7,8 @@ import {
   type SandboxRunResult,
 } from '@ai-hero/sandcastle';
 import { type DockerOptions, docker } from '@ai-hero/sandcastle/sandboxes/docker';
+import { parsePiEvent } from './pi.js';
+import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 
 export interface AfkSandcastleMount {
   hostPath: string;
@@ -90,6 +92,44 @@ interface SandcastlePackageFacade {
 }
 
 const sandcastlePackage: SandcastlePackageFacade = { createSandbox, docker };
+
+export function createAfkSandcastleAgentProvider(selection: SandcastleAgentProviderSelection): AgentProvider {
+  if (selection.provider === 'pi') return createPiSandcastleAgentProvider(selection);
+  return {
+    name: selection.provider,
+    env: {},
+    captureSessions: true,
+    buildPrintCommand: () => ({
+      command: selection.provider,
+      args: selection.model ? ['--model', selection.model] : [],
+    }),
+    parseStreamLine: () => [],
+  };
+}
+
+function createPiSandcastleAgentProvider(selection: SandcastleAgentProviderSelection): AgentProvider {
+  return {
+    name: 'pi',
+    env: { HOME: '/home/sandbox' },
+    captureSessions: true,
+    buildPrintCommand: (prompt?: string) => ({
+      command: 'pi',
+      args: [
+        ...(selection.model ? ['--model', selection.model] : []),
+        ...(prompt ? ['--print', prompt] : ['--print']),
+        '--json',
+      ],
+    }),
+    parseStreamLine: (line: string) => {
+      try {
+        const event = parsePiEvent(JSON.parse(line));
+        return event ? [event] : [];
+      } catch {
+        return line.trim() ? [{ message: line.trim() }] : [];
+      }
+    },
+  };
+}
 
 export async function createAfkSandcastleDockerRuntime(
   input: AfkSandcastleDockerRuntimeInput,
