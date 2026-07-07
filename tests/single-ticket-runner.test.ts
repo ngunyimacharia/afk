@@ -12,9 +12,24 @@ import { resolveSandcastleAgentProvider } from '../src/sandcastle-provider.js';
 import { AFK_RUNTIME_IMAGE, AFK_RUNTIME_WORKTREE_PATH } from '../src/sandcastle-runtime-image-contract.js';
 import { SandcastleRuntimeStore } from '../src/sandcastle-runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
-import { SingleTicketRunner } from '../src/single-ticket-runner.js';
+import { collectSandcastleDockerMounts, SingleTicketRunner } from '../src/single-ticket-runner.js';
 
 const GIT_PATH = resolveExecutable('git');
+
+test('collects PI Docker auth mount as writable for session persistence', () => {
+  const mounts = collectSandcastleDockerMounts({
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' }, 'docker'),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider(
+      'Codex',
+      { id: 'codex/default' },
+      { homeDir: '/home/runner' },
+      'docker',
+    ),
+  } as never);
+
+  assert.equal(mounts.find((mount) => mount.sandboxPath === '/home/sandbox/.pi')?.readonly, false);
+  assert.equal(mounts.find((mount) => mount.sandboxPath === '/home/sandbox/.codex')?.readonly, true);
+});
 
 function git(repoRoot: string, args: string[]): string {
   return execFileSync(GIT_PATH, args, { cwd: repoRoot, encoding: 'utf8' }).trim();

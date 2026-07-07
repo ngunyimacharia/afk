@@ -16,6 +16,7 @@ import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js'
 import {
   AFK_RUNTIME_IMAGE,
   AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+  AFK_RUNTIME_PROVIDER_CONFIG_TARGETS,
   AFK_RUNTIME_WORKTREE_PATH,
   DockerSandcastleRuntimeImageClient,
   type SandcastleRuntimeImageValidationResult,
@@ -182,10 +183,14 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
   }
 }
 
-function collectSandcastleDockerMounts(plan: LaunchPlan) {
+export function collectSandcastleDockerMounts(plan: LaunchPlan) {
   const mounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
     .flatMap((provider) => provider?.docker.mounts ?? [])
-    .map((mount) => ({ hostPath: mount.source, sandboxPath: mount.target, readonly: true }));
+    .map((mount) => ({
+      hostPath: mount.source,
+      sandboxPath: mount.target,
+      readonly: mount.target !== AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi,
+    }));
   return Array.from(new Map(mounts.map((mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount])).values());
 }
 
