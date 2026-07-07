@@ -61,6 +61,10 @@ test('classifies Codex stale, auth, rate-limit, and context failures', () => {
   assert.equal(classifyProviderFailure('Codex error: context overflow')?.kind, 'context-overflow');
 });
 
+test('classifies PI stale sessions', () => {
+  assert.equal(classifyProviderFailure('pi session stale after 3 recovery attempts')?.kind, 'pi-session-stale');
+});
+
 test('detects Codex provider failures from output', () => {
   assert.equal(detectCodexFailure(['working', 'Codex error: rate limit exceeded']), 'Codex error: rate limit exceeded');
 });
