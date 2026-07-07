@@ -9,6 +9,7 @@ import { resolveExecutable } from '../src/executable-resolution.js';
 import { resolveReviewerPromptTemplate } from '../src/reviewer-prompt-catalog.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { resolveSandcastleAgentProvider } from '../src/sandcastle-provider.js';
+import { AFK_RUNTIME_IMAGE, AFK_RUNTIME_WORKTREE_PATH } from '../src/sandcastle-runtime-image-contract.js';
 import { SandcastleRuntimeStore } from '../src/sandcastle-runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
 import { SingleTicketRunner } from '../src/single-ticket-runner.js';
@@ -766,6 +767,88 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
     ['passed', 'passed', 'passed', 'passed', 'passed'],
   );
   assert.equal(sandcastleRecord.terminal.status, 'completed');
+});
+
+test('blocks Docker Sandcastle launch when runtime image validation fails', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-sandcastle-missing-image-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'docker.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nDocker run\n');
+  let createCalled = false;
+  let providerCalled = false;
+  const runner = new SingleTicketRunner(
+    store,
+    {
+      execute: async () => {
+        providerCalled = true;
+        return { status: 'completed' };
+      },
+    },
+    {},
+    undefined,
+    undefined,
+    {
+      validateRuntimeImage: async () => ({
+        ok: false,
+        failure: {
+          kind: 'missing-image',
+          image: AFK_RUNTIME_IMAGE,
+          message: `Sandcastle Docker runtime image ${AFK_RUNTIME_IMAGE} is not available.`,
+        },
+      }),
+      create: async () => {
+        createCalled = true;
+        return { run: async () => ({ status: 'completed' }) };
+      },
+    },
+  );
+  const plan = {
+    repoRoot,
+    harness: 'Codex',
+    model: { id: 'model-1' },
+    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
+    reviewerHarness: 'Claude',
+    reviewerModel: { id: 'review-model' },
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    sandboxMode: 'docker',
+    tickets: [{ path: ticketPath, feature: 'feat', issueName: 'docker', label: 'feat/docker', executorAfk: true }],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'afk/feat/docker',
+      branchNameSource: 'fallback',
+      worktreePath: repoRoot,
+    },
+  };
+
+  const result = await runner.launch(plan as never, { runId: 'run-docker-missing' });
+
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(createCalled, false);
+  assert.equal(providerCalled, false);
+  const metadata = JSON.parse(
+    readFileSync(path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-docker.json'), 'utf8'),
+  );
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.FAILURE_KIND, 'missing-image');
+  assert.equal(metadata.SANDCASTLE_RUNTIME_IMAGE, AFK_RUNTIME_IMAGE);
+  assert.equal(metadata.SANDCASTLE_CONTAINER_WORKTREE_PATH, AFK_RUNTIME_WORKTREE_PATH);
+  const sandcastleRecord = new SandcastleRuntimeStore({ repoRoot }).readRun(
+    path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', 'run-docker-missing', 'record.json'),
+  );
+  assert.equal(sandcastleRecord.sandbox.mode, 'docker');
+  assert.equal(sandcastleRecord.sandbox.mode === 'docker' ? sandcastleRecord.sandbox.image : '', AFK_RUNTIME_IMAGE);
+  assert.equal(
+    sandcastleRecord.sandbox.mode === 'docker' ? sandcastleRecord.sandbox.worktreePath : '',
+    AFK_RUNTIME_WORKTREE_PATH,
+  );
+  assert.equal(sandcastleRecord.terminal.status, 'blocked');
+  assert.equal(sandcastleRecord.phases[0]?.status, 'blocked');
 });
 
 test('blocks before provider execution when launch context mismatches', async () => {

@@ -39,7 +39,12 @@ function writeRun(repoRoot: string, overrides: Record<string, unknown> = {}): st
     },
     trackerSource: 'scratch',
     provider: { provider: 'opencode', model: 'openai/gpt-5.5' },
-    sandbox: { mode: 'docker', image: 'afk-runtime:latest', containerName: 'afk-run-1' },
+    sandbox: {
+      mode: 'docker',
+      image: 'afk-runtime:latest',
+      worktreePath: '/workspace/afk-worktree',
+      containerName: 'afk-run-1',
+    },
     branch: 'afk/feat/01',
     worktreePath: path.join(repoRoot, '.worktree', 'feat-01'),
     phases: [

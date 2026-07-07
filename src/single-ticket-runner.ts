@@ -12,6 +12,14 @@ import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
+import {
+  AFK_RUNTIME_IMAGE,
+  AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+  AFK_RUNTIME_WORKTREE_PATH,
+  DockerSandcastleRuntimeImageClient,
+  type SandcastleRuntimeImageValidationResult,
+  validateSandcastleRuntimeImage,
+} from './sandcastle-runtime-image-contract.js';
 import { type SandcastlePhaseName, SandcastleRuntimeStore } from './sandcastle-runtime-store.js';
 import type {
   AfkStateSnapshot,
@@ -81,6 +89,7 @@ export interface WarmSandcastleSandboxHandle {
 }
 
 export interface WarmSandcastleSandboxFactory {
+  validateRuntimeImage?(plan: LaunchPlan): Promise<SandcastleRuntimeImageValidationResult>;
   create(plan: LaunchPlan): Promise<WarmSandcastleSandboxHandle>;
 }
 
@@ -153,7 +162,10 @@ export class SingleTicketRunner {
               reviewerProvider: plan.reviewerSandcastleProvider?.provider,
               reviewerModel: plan.reviewerSandcastleProvider?.model ?? plan.reviewerModel?.id,
             },
-            sandbox: plan.sandboxMode === 'docker' ? { mode: 'docker' } : { mode: 'none' },
+            sandbox:
+              plan.sandboxMode === 'docker'
+                ? { mode: 'docker', image: AFK_RUNTIME_IMAGE, worktreePath: AFK_RUNTIME_WORKTREE_PATH }
+                : { mode: 'none' },
             location: {
               branch: plan.checkout.effectiveBranchName,
               worktreePath: plan.checkout.worktreePath,
@@ -161,13 +173,45 @@ export class SingleTicketRunner {
             logs: { run: record.logPath },
           })
         : null;
-    const warmSandbox = sandcastleRuntime
-      ? await (
-          this.sandcastleSandboxFactory ?? {
-            create: async () => new ProviderBackedWarmSandcastleSandbox(this.provider),
-          }
-        ).create(plan)
-      : null;
+    const sandcastleSandboxFactory = this.sandcastleSandboxFactory ?? {
+      create: async () => new ProviderBackedWarmSandcastleSandbox(this.provider),
+    };
+    if (sandcastleRuntime && sandcastleRuntimeStore && plan.sandboxMode === 'docker') {
+      const validation = sandcastleSandboxFactory.validateRuntimeImage
+        ? await sandcastleSandboxFactory.validateRuntimeImage(plan)
+        : await validateSandcastleRuntimeImage(new DockerSandcastleRuntimeImageClient(), AFK_RUNTIME_IMAGE);
+      if (!validation.ok) {
+        const reason = validation.failure.message;
+        this.runtimeStore.updateMetadata(record.metadataPath, {
+          STATUS: 'blocked',
+          UNSAFE_REASON: reason,
+          RUN_STATUS: 'blocked',
+          FAILURE_KIND: validation.failure.kind,
+          SANDCASTLE_RUNTIME_IMAGE: validation.failure.image,
+          SANDCASTLE_CONTAINER_WORKTREE_PATH: AFK_RUNTIME_WORKTREE_PATH,
+          SANDCASTLE_PHASE_EXECUTOR_CAPABILITY: AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+        });
+        this.runtimeStore.markFailed(record, reason);
+        this.runtimeStore.appendLog(record.logPath, reason);
+        sandcastleRuntimeStore.recordPhase(sandcastleRuntime.recordPath, {
+          phase: 'implementation',
+          status: 'blocked',
+          outcome: reason,
+        });
+        sandcastleRuntimeStore.updateTerminal(sandcastleRuntime.recordPath, {
+          status: 'blocked',
+          handoffReason: reason,
+        });
+        this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel: ticket.label, message: reason });
+        return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
+      }
+      this.runtimeStore.updateMetadata(record.metadataPath, {
+        SANDCASTLE_RUNTIME_IMAGE: validation.image,
+        SANDCASTLE_CONTAINER_WORKTREE_PATH: AFK_RUNTIME_WORKTREE_PATH,
+        SANDCASTLE_PHASE_EXECUTOR_CAPABILITY: validation.capability,
+      });
+    }
+    const warmSandbox = sandcastleRuntime ? await sandcastleSandboxFactory.create(plan) : null;
     const runAgentPhase = async (
       phase: SandcastlePhaseName,
       attempt: number,

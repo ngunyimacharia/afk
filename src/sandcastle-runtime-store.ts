@@ -41,7 +41,8 @@ export interface SandcastleProviderIdentity {
 export type SandcastleSandbox =
   | {
       mode: 'docker';
-      image?: string;
+      image: string;
+      worktreePath: string;
       containerName?: string;
     }
   | {

@@ -275,6 +275,9 @@ export interface RuntimeMetadataRecord {
   SANDBOX_MODE?: SandboxMode;
   EXECUTION_MODEL_ID?: string;
   SANDCASTLE_SANDBOX_MODE?: SandcastleSandboxMode;
+  SANDCASTLE_RUNTIME_IMAGE?: string;
+  SANDCASTLE_CONTAINER_WORKTREE_PATH?: string;
+  SANDCASTLE_PHASE_EXECUTOR_CAPABILITY?: string;
   SANDCASTLE_BRANCH?: string;
   SANDCASTLE_WORKTREE_PATH?: string;
   SANDCASTLE_PROVIDER?: string;
