@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { SummaryReporter } from '../src/summary-reporter.js';
@@ -8,8 +8,12 @@ import type { SandcastleRuntimeRecord } from '../src/sandcastle-runtime-store.js
 const REQUIRED_PROVIDERS = ['opencode', 'claude', 'codex', 'pi'] as const;
 const REQUIRED_RUNTIME_IMAGE = 'afk-runtime:latest';
 
+function runtimeRunsRoot(repoRoot: string): string {
+  return path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs');
+}
+
 function readRuntimeRecords(repoRoot: string): SandcastleRuntimeRecord[] {
-  const runsRoot = path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs');
+  const runsRoot = runtimeRunsRoot(repoRoot);
   try {
     return readdirSync(runsRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -33,9 +37,12 @@ function dockerRuntimeImageAvailable(): boolean {
 }
 
 const repoRoot = process.argv[2] ? path.resolve(process.argv[2]) : process.cwd();
+const recordsRoot = runtimeRunsRoot(repoRoot);
 const records = readRuntimeRecords(repoRoot);
 const summary = await new SummaryReporter({ repoRoot }).summarize();
 const missing: string[] = [];
+
+if (!existsSync(recordsRoot)) missing.push(`runtime records path ${path.relative(repoRoot, recordsRoot)}`);
 const verified: Record<string, string> = {};
 
 for (const provider of REQUIRED_PROVIDERS) {
