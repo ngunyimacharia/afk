@@ -113,7 +113,8 @@ describe('PiSessionExecutor', () => {
     assert.ok(resolvePiToolAllowlist('reviewer').includes('ls'));
     assert.ok(!resolvePiToolAllowlist('reviewer').includes('bash'));
     assert.ok(!resolvePiToolAllowlist('pull-request').includes('write'));
-    assert.ok(resolvePiToolAllowlist('pull-request').includes('bash'));
+    assert.ok(!resolvePiToolAllowlist('pull-request').includes('bash'));
+    assert.ok(resolvePiToolAllowlist('pull-request').includes('grep'));
   });
 
   test('starts a new PI session and returns the session id from the stream', async () => {

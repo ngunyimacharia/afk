@@ -25,7 +25,11 @@ const EXECUTION_TOOL_ALLOWLIST = ['read', 'bash', 'edit', 'write', 'grep', 'find
 
 const REVIEWER_TOOL_ALLOWLIST = ['read', 'grep', 'find', 'ls'];
 
-const PULL_REQUEST_TOOL_ALLOWLIST = ['read', 'bash', 'grep', 'find', 'ls'];
+// PI's SDK exposes bash as an unrestricted shell tool. AFK cannot apply its
+// per-command pull-request policy inside PI sessions, so PR mode must not enable
+// bash; otherwise the agent could mutate the workspace or git state outside the
+// allowed git-push/GitHub-PR operations.
+const PULL_REQUEST_TOOL_ALLOWLIST = ['read', 'grep', 'find', 'ls'];
 
 export function resolvePiToolAllowlist(mode?: AgentInvocationMode): string[] {
   if (mode === 'reviewer') return REVIEWER_TOOL_ALLOWLIST;
