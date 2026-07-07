@@ -211,6 +211,7 @@ export type ReviewTerminalOutcome = 'approved' | 'needs-human';
 
 export type ReviewOutcomeClassification =
   | 'clean-approval'
+  | 'state-approval'
   | 'minor-risk-approval'
   | 'real-finding-loop'
   | 'real-finding-handoff'
@@ -300,6 +301,7 @@ export interface RuntimeMetadataRecord {
   FINAL_REVIEW_MALFORMED?: boolean | null;
   FINAL_REVIEW_FINDINGS?: ReviewFindingSnapshot[];
   FINAL_REVIEW_MALFORMED_OUTPUT_SNIPPET?: string | null;
+  STATE_APPROVAL_FALLBACK?: string | null;
   PROVIDER_SESSION_ID: string | null;
   PROVIDER_SESSION_REMOVABLE: boolean;
   INSPECTION_PROVIDER: string | null;
