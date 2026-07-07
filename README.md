@@ -37,6 +37,16 @@ bun run build
 
 AFK expects tickets to live under `.scratch/<feature-slug>/issues/`. Create `.scratch/` locally if it does not already exist; runtime logs and metadata are also written there.
 
+### Codex Setup
+
+Codex uses the OpenAI Codex SDK. Before launching a Codex ticket:
+
+1. Install the Codex CLI/SDK and authenticate it with `OPENAI_API_KEY` set in your environment.
+2. Run `afk` interactively; the launch wizard shows Codex only when model discovery returns at least one usable launch model.
+3. Codex always appears with the built-in `codex/default` model, which lets Codex use its configured default model.
+4. Optionally set `AFK_CODEX_MODELS` to a comma-separated list of explicit Codex model names to add more launch choices (for example, `AFK_CODEX_MODELS="gpt-5.1-codex,gpt-5.1-codex-mini"`). AFK prefixes each entry with `codex/` in the picker and sends only the suffix to Codex.
+5. Override sandbox, approval, and network defaults only when the repo and ticket require it. See [Codex Configuration](#codex-configuration) for the available environment overrides.
+
 ## Usage
 
 Build and install a local executable into a user PATH directory:
