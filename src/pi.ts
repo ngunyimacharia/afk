@@ -1,3 +1,16 @@
+import { randomUUID } from 'node:crypto';
+import { createReadStream, existsSync, readdirSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
+import * as readline from 'node:readline';
+import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import {
+  AuthStorage,
+  createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
+  ModelRegistry,
+  SessionManager,
+} from '@earendil-works/pi-coding-agent';
 import type { AgentInvocationMode } from './agent-execution-provider.js';
 import type { OpenCodeSessionExecutor, OpenCodeSessionProgressEvent } from './opencode.js';
 import { buildStaleRecoveryPrompt } from './opencode.js';
@@ -195,11 +208,7 @@ export class PiSessionExecutor implements OpenCodeSessionExecutor {
       });
       return { sessionId, output, terminalError, finalMessageText };
     } catch (error) {
-      const reason = input.signal?.aborted
-        ? 'run killed'
-        : error instanceof Error
-          ? error.message
-          : 'pi execution failed';
+      const reason = input.signal?.aborted ? 'run killed' : (extractErrorMessage(error) ?? 'pi execution failed');
       return { sessionId, output, terminalError: reason, finalMessageText };
     }
   }
@@ -302,6 +311,7 @@ export function parsePiEvent(event: PiEventLike, sessionId?: string | null): Ope
   if (type === 'session.resumed') return { message: 'pi session resumed', sessionId };
   if (type === 'turn.started') return { message: 'pi turn started', sessionId };
   if (type === 'turn.completed') return { message: 'pi turn completed', sessionId };
+  if (type === 'turn.ended') return { message: 'pi turn ended', sessionId };
   if (type === 'turn.failed' || type === 'error') {
     return { message: extractTerminalFailure(event) ?? 'pi turn failed', sessionId };
   }
@@ -442,16 +452,241 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
+function extractErrorMessage(error: unknown): string | null {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
+  if (typeof error === 'string') return error;
+  return null;
+}
+
 async function createDefaultPiClient(): Promise<PiClientLike> {
-  const dynamicImport = new Function('specifier', 'return import(specifier)') as (
-    specifier: string,
-  ) => Promise<unknown>;
-  const mod = (await dynamicImport('@earendil-works/pi-coding-agent')) as {
-    PiAgent?: new () => PiClientLike;
-    Pi?: new () => PiClientLike;
-    default?: new () => PiClientLike;
-  };
-  const Constructor = mod.PiAgent ?? mod.Pi ?? mod.default;
-  if (!Constructor) throw new Error('PI SDK is unavailable');
-  return new Constructor();
+  return new PiSdkClient();
+}
+
+class PiSdkClient implements PiClientLike {
+  startSession(options?: PiSessionOptions): PiSessionLike {
+    return new PiSdkSession(options ?? {}, false);
+  }
+
+  resumeSession(id: string, options?: PiSessionOptions): PiSessionLike {
+    return new PiSdkSession(options ?? {}, true, id);
+  }
+}
+
+class PiSdkSession implements PiSessionLike {
+  readonly id: string;
+
+  constructor(
+    private readonly options: PiSessionOptions,
+    private readonly resume: boolean,
+    id?: string,
+  ) {
+    this.id = id ?? randomUUID();
+  }
+
+  async run(input: { prompt: string; signal?: AbortSignal }): Promise<{ events: AsyncIterable<PiEventLike> }> {
+    const events = this.streamEvents(input.prompt, input.signal);
+    return { events };
+  }
+
+  private async *streamEvents(prompt: string, signal?: AbortSignal): AsyncGenerator<PiEventLike> {
+    const cwd = this.options.workingDirectory ?? process.cwd();
+    const authStorage = AuthStorage.create();
+    const modelRegistry = ModelRegistry.create(authStorage);
+    const model = this.options.model ? resolvePiModel(modelRegistry, this.options.model) : undefined;
+    const sessionManager = this.resume
+      ? await openPiSessionManager(cwd, this.id)
+      : SessionManager.create(cwd, undefined, { id: this.id });
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir: getAgentDir(),
+      noContextFiles: true,
+    });
+    await resourceLoader.reload();
+
+    const { session } = await createAgentSession({
+      cwd,
+      model,
+      modelRegistry,
+      authStorage,
+      sessionManager,
+      tools: this.options.toolAllowlist,
+      resourceLoader,
+    });
+
+    if (this.options.title) {
+      try {
+        session.sessionManager.appendSessionInfo(this.options.title);
+      } catch {
+        // ignore naming failures
+      }
+    }
+
+    yield { type: 'session.started', session_id: session.sessionManager.getSessionId() };
+
+    const queue: PiEventLike[] = [];
+    let done = false;
+    let runError: unknown;
+    const unsubscribe = session.subscribe((event) => {
+      const mapped = mapSdkEvent(event);
+      if (mapped) queue.push(mapped);
+    });
+
+    const runPromise = session.prompt(prompt).then(
+      () => {
+        done = true;
+      },
+      (error: unknown) => {
+        runError = error;
+        done = true;
+      },
+    );
+
+    try {
+      while (!done || queue.length > 0) {
+        if (queue.length > 0) {
+          const nextEvent = queue.shift();
+          if (nextEvent) yield nextEvent;
+          continue;
+        }
+        if (signal?.aborted) {
+          await session.abort();
+          return;
+        }
+        await Promise.race([runPromise, delay(50)]);
+      }
+
+      if (runError) {
+        const message = extractErrorMessage(runError) ?? 'pi execution failed';
+        yield { type: 'error', message };
+      }
+    } finally {
+      unsubscribe();
+    }
+  }
+}
+
+function resolvePiModel(modelRegistry: ModelRegistry, modelSpec: string) {
+  const slashIndex = modelSpec.indexOf('/');
+  if (slashIndex < 0) {
+    throw new Error(`Invalid PI model id: ${modelSpec}`);
+  }
+  const provider = modelSpec.slice(0, slashIndex);
+  const modelId = modelSpec.slice(slashIndex + 1);
+  const model = modelRegistry.find(provider, modelId);
+  if (!model) {
+    throw new Error(`PI model not found: ${modelSpec}`);
+  }
+  return model;
+}
+
+async function openPiSessionManager(cwd: string, sessionId: string): Promise<SessionManager> {
+  const filePath = await findSessionFile(cwd, sessionId);
+  if (filePath) {
+    return SessionManager.open(filePath);
+  }
+  // If no file exists yet (e.g. process restarted before first run), start fresh with the same id.
+  return SessionManager.create(cwd, undefined, { id: sessionId });
+}
+
+async function findSessionFile(cwd: string, sessionId: string): Promise<string | null> {
+  const dir = getDefaultPiSessionDir(cwd);
+  if (!existsSync(dir)) return null;
+  const entries = readdirSync(dir);
+  for (const entry of entries) {
+    if (entry.endsWith(`_${sessionId}.jsonl`)) {
+      return join(dir, entry);
+    }
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith('.jsonl')) continue;
+    const file = join(dir, entry);
+    const firstLine = await readFirstLine(file);
+    if (!firstLine) continue;
+    try {
+      const header = JSON.parse(firstLine) as { type?: unknown; id?: unknown };
+      if (header.type === 'session' && header.id === sessionId) {
+        return file;
+      }
+    } catch {
+      // ignore malformed headers
+    }
+  }
+  return null;
+}
+
+function getDefaultPiSessionDir(cwd: string): string {
+  const resolved = resolvePath(cwd);
+  const safePath = `--${resolved.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
+  return join(getAgentDir(), 'sessions', safePath);
+}
+
+async function readFirstLine(file: string): Promise<string | null> {
+  const stream = createReadStream(file, { encoding: 'utf8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      return line;
+    }
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+  return null;
+}
+
+function mapSdkEvent(event: AgentSessionEvent): PiEventLike | null {
+  if (typeof event !== 'object' || event === null) return null;
+  switch (event.type) {
+    case 'agent_start':
+    case 'turn_start':
+      return { type: 'turn.started' };
+    case 'turn_end':
+      return { type: 'turn.ended' };
+    case 'agent_end':
+      return { type: 'turn.completed' };
+    case 'message_end': {
+      const message = (event as { message?: unknown }).message as Record<string, unknown> | undefined;
+      if (!message || String(message.role) !== 'assistant') return null;
+      const text = extractTextFromAgentMessage(message);
+      return text ? { type: 'message', role: 'assistant', content: text } : null;
+    }
+    case 'tool_execution_start': {
+      const e = event as { toolName?: unknown; args?: unknown };
+      return {
+        type: 'tool_call',
+        name: String(e.toolName ?? 'tool'),
+        status: 'running',
+        arguments: e.args ? JSON.stringify(e.args) : '',
+      };
+    }
+    case 'tool_execution_end': {
+      const e = event as { toolName?: unknown; isError?: unknown };
+      return {
+        type: 'tool_call',
+        name: String(e.toolName ?? 'tool'),
+        status: e.isError === true ? 'failed' : 'completed',
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function extractTextFromAgentMessage(message: Record<string, unknown>): string | null {
+  const content = message.content;
+  if (typeof content === 'string' && content.trim()) return content.trim();
+  if (!Array.isArray(content)) return null;
+  const texts: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    if ((part as Record<string, unknown>).type === 'text') {
+      const text = stringValue((part as Record<string, unknown>).text);
+      if (text) texts.push(text);
+    }
+  }
+  return texts.join('') || null;
 }
