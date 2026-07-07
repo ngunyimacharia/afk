@@ -45,6 +45,14 @@ test('Codex discovery makes Codex available to launch', async () => {
   );
 });
 
+test('Codex is omitted from selectable harnesses when discovery returns no usable models', async () => {
+  const discovery = await discoverAvailableHarnesses(async (harness) =>
+    harness === 'Codex' ? [] : await discoverHarnessModels(harness),
+  );
+  assert.equal(discovery.availableHarnesses.includes('Codex'), false);
+  assert.equal(discovery.harnessModelCache.Codex, undefined);
+});
+
 test('PI discovery makes PI available to launch', async () => {
   const models = await discoverHarnessModels('PI');
   assert.deepEqual(
