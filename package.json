@@ -7,6 +7,7 @@
     "test": "bun test tests/*.test.ts",
     "build": "tsc -p tsconfig.json",
     "build:exe": "bun run scripts/build-executable.ts",
+    "prepare:docker-e2e": "bun run scripts/prepare-docker-e2e-evidence.ts",
     "verify:docker-e2e": "bun run scripts/verify-docker-e2e.ts",
     "install:local": "bun run scripts/install-local.ts",
     "lint": "biome check .",
