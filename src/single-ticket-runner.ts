@@ -12,6 +12,7 @@ import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
+import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 import {
   AFK_RUNTIME_IMAGE,
   AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
@@ -101,6 +102,104 @@ class ProviderBackedWarmSandcastleSandbox implements WarmSandcastleSandboxHandle
   }
 }
 
+interface PackageRuntimeAdapter {
+  runPhase(input: {
+    phase: string;
+    agent: unknown;
+    prompt: string;
+    signal?: AbortSignal;
+  }): Promise<{ stdout: string; sessionId?: string }>;
+}
+
+class PackageWarmSandcastleSandbox implements WarmSandcastleSandboxHandle {
+  constructor(
+    private readonly adapter: PackageRuntimeAdapter,
+    private readonly createAgentProvider: (selection: SandcastleAgentProviderSelection) => unknown,
+  ) {}
+
+  async run(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    const selection =
+      request.invocationMode === 'reviewer' ? request.plan.reviewerSandcastleProvider : request.plan.sandcastleProvider;
+    if (!selection) {
+      return {
+        status: 'blocked',
+        sessionId: request.sessionId ?? null,
+        removable: false,
+        unsafeReason: `Sandcastle ${request.invocationMode ?? 'execution'} provider is not configured`,
+      };
+    }
+
+    const result = await this.adapter.runPhase({
+      phase: request.invocationMode ?? 'execution',
+      agent: this.createAgentProvider(selection),
+      prompt: request.prompt,
+      signal: request.signal,
+    });
+
+    return {
+      status: 'completed',
+      sessionId: result.sessionId ?? request.sessionId ?? null,
+      removable: true,
+      unsafeReason: null,
+      output: result.stdout ? [result.stdout] : [],
+    };
+  }
+}
+
+class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactory {
+  constructor(private readonly fallbackProvider: AgentExecutionProvider) {}
+
+  validateRuntimeImage(_plan: LaunchPlan): Promise<SandcastleRuntimeImageValidationResult> {
+    return validateSandcastleRuntimeImage(new DockerSandcastleRuntimeImageClient(), AFK_RUNTIME_IMAGE);
+  }
+
+  async create(plan: LaunchPlan): Promise<WarmSandcastleSandboxHandle> {
+    if (plan.sandboxMode !== 'docker' || !plan.sandcastleProvider) {
+      return new ProviderBackedWarmSandcastleSandbox(this.fallbackProvider);
+    }
+
+    const packageRuntime = await import('./sandcastle-package-runtime.js');
+    const runtime = await packageRuntime.createAfkSandcastleDockerRuntime({
+      repoRoot: plan.repoRoot,
+      branch: plan.checkout.effectiveBranchName,
+      imageName: AFK_RUNTIME_IMAGE,
+      mounts: collectSandcastleDockerMounts(plan),
+      env: collectSandcastleDockerEnv(plan),
+    });
+    if (runtime.status === 'blocked') {
+      return {
+        run: async () => ({
+          status: 'blocked',
+          sessionId: null,
+          removable: false,
+          unsafeReason: runtime.reason,
+          output: [runtime.reason],
+        }),
+      };
+    }
+
+    return new PackageWarmSandcastleSandbox(runtime.adapter, packageRuntime.createAfkSandcastleAgentProvider);
+  }
+}
+
+function collectSandcastleDockerMounts(plan: LaunchPlan) {
+  const mounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
+    .flatMap((provider) => provider?.docker.mounts ?? [])
+    .map((mount) => ({ hostPath: mount.source, sandboxPath: mount.target, readonly: true }));
+  return Array.from(new Map(mounts.map((mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount])).values());
+}
+
+function collectSandcastleDockerEnv(plan: LaunchPlan) {
+  const names = [plan.sandcastleProvider, plan.reviewerSandcastleProvider].flatMap(
+    (provider) => provider?.docker.env ?? [],
+  );
+  return Object.fromEntries(
+    Array.from(new Set(names))
+      .map((name) => [name, process.env[name]])
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
+  );
+}
+
 export class SingleTicketRunner {
   private readonly linearSyncer?: LinearRunSyncer;
   private readonly sandcastleSandboxFactory?: WarmSandcastleSandboxFactory;
@@ -173,9 +272,8 @@ export class SingleTicketRunner {
             logs: { run: record.logPath },
           })
         : null;
-    const sandcastleSandboxFactory = this.sandcastleSandboxFactory ?? {
-      create: async () => new ProviderBackedWarmSandcastleSandbox(this.provider),
-    };
+    const sandcastleSandboxFactory =
+      this.sandcastleSandboxFactory ?? new DefaultWarmSandcastleSandboxFactory(this.provider);
     if (sandcastleRuntime && sandcastleRuntimeStore && plan.sandboxMode === 'docker') {
       const validation = sandcastleSandboxFactory.validateRuntimeImage
         ? await sandcastleSandboxFactory.validateRuntimeImage(plan)
