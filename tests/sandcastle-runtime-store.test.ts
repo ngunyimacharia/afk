@@ -74,6 +74,7 @@ test('maps AFK harness selections to Sandcastle agent providers', () => {
     'claudeCode',
   );
   assert.equal(resolveSandcastleAgentProvider('Codex', { id: 'codex/gpt-5.1-codex' }, { homeDir }).provider, 'codex');
+  assert.equal(resolveSandcastleAgentProvider('PI', { id: 'pi/openai/gpt-5.1' }, { homeDir }).provider, 'pi');
 });
 
 test('launch plans carry Sandcastle provider selections for runtime orchestration', () => {
@@ -123,7 +124,14 @@ test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
   assert.deepEqual(resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.env, [
     'OPENAI_API_KEY',
   ]);
-  assert.equal(opencode.noSandbox.enabled, true);
+  const pi = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' });
+  assert.deepEqual(pi.docker.env, ['PI_API_KEY']);
+  assert.deepEqual(
+    pi.docker.mounts.map((mount) => mount.source),
+    ['/home/runner/.pi'],
+  );
+  assert.equal(pi.noSandbox.enabled, true);
+  assert.equal(pi.model, undefined);
 });
 
 test('reports missing provider Docker auth clearly', () => {

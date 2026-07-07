@@ -11,6 +11,7 @@ export type ProviderFailureKind =
   | 'opencode-session-stale'
   | 'claude-session-stale'
   | 'codex-session-stale'
+  | 'pi-session-stale'
   | 'tool-failed'
   | 'unknown';
 
@@ -33,6 +34,7 @@ const DETERMINISTIC_FAILURE_KINDS: Set<ProviderFailureKind> = new Set([
   'opencode-session-stale',
   'claude-session-stale',
   'codex-session-stale',
+  'pi-session-stale',
 ]);
 
 export function isDeterministicFailureKind(kind: ProviderFailureKind): boolean {
@@ -93,6 +95,8 @@ export function classifyProviderFailure(reason: string | null | undefined): Prov
     return { kind: 'claude-session-stale', reason: normalizedReason, availableModels: [] };
   if (lower.includes('codex session stale'))
     return { kind: 'codex-session-stale', reason: normalizedReason, availableModels: [] };
+  if (lower.includes('pi session stale'))
+    return { kind: 'pi-session-stale', reason: normalizedReason, availableModels: [] };
   if (isDependencyMissing(lower)) return { kind: 'dependency-missing', reason: normalizedReason, availableModels: [] };
   if (isPatchContextMismatch(lower))
     return { kind: 'patch-context-mismatch', reason: normalizedReason, availableModels: [] };
