@@ -105,6 +105,33 @@ Outcome: completed
   assert.match(report.message, /- none/);
 });
 
+test('reports Docker sandbox mode and container identity from Sandcastle runtime record', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: completed\n---\n\n## AFK Summary\nOutcome: completed\n');
+  writeSandcastleRecord(repoRoot, {
+    runId: 'run-feat-01',
+    ticket: {
+      featureSlug: 'feat',
+      issueName: '01',
+      label: 'feat/01',
+      ticketPath: path.join(issuesDir, '01.md'),
+    },
+    sandbox: {
+      mode: 'docker',
+      image: 'afk-runtime:latest',
+      worktreePath: '/workspace',
+      containerName: 'afk-runtime-run-feat-01',
+    },
+    terminal: { status: 'completed' },
+  });
+
+  const report = await new SummaryReporter({ repoRoot }).summarize();
+  assert.match(report.message, /sandbox: docker/);
+  assert.match(report.message, /container: afk-runtime-run-feat-01/);
+});
+
 test('reports Linear-backed run identity from Sandcastle runtime record', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const mirrorPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'linear-mirrors', 'eng-1-eng-2.md');

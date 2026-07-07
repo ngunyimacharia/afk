@@ -253,6 +253,9 @@ function formatAttempt(item: SummaryGroupItem): string {
     runtime?.provider.provider ? `execution provider: ${runtime.provider.provider}` : null,
     runtime?.provider.model ? `model: ${runtime.provider.model}` : null,
     runtime?.sandbox.mode ? `sandbox: ${runtime.sandbox.mode}` : null,
+    runtime?.sandbox.mode === 'docker' && 'containerName' in runtime.sandbox && runtime.sandbox.containerName
+      ? `container: ${runtime.sandbox.containerName}`
+      : null,
     runtime?.branch ? `branch: ${runtime.branch}` : null,
     runtime?.worktreePath ? `worktree: ${runtime.worktreePath}` : null,
     runtime?.terminal.status ? `terminal: ${runtime.terminal.status}` : null,
