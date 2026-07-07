@@ -21,6 +21,7 @@ function readRuntimeRecords(repoRoot: string): SandcastleRuntimeRecord[] {
 function containerIdentity(record: SandcastleRuntimeRecord): string | undefined {
   if (record.sandbox.mode !== 'docker') return undefined;
   if (record.sandbox.containerName) return record.sandbox.containerName;
+  if (record.sandbox.containerId) return record.sandbox.containerId;
   return undefined;
 }
 

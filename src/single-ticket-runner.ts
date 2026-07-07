@@ -87,6 +87,7 @@ export interface LinearRunSyncer {
 }
 
 export interface WarmSandcastleSandboxHandle {
+  readonly containerIdentity?: { containerName?: string; containerId?: string };
   run(request: AgentExecutionRequest): Promise<AgentExecutionResult>;
 }
 
@@ -104,6 +105,7 @@ class ProviderBackedWarmSandcastleSandbox implements WarmSandcastleSandboxHandle
 }
 
 interface PackageRuntimeAdapter {
+  identifyContainer(): Promise<{ id: string }>;
   runPhase(input: {
     phase: string;
     agent: unknown;
@@ -113,10 +115,15 @@ interface PackageRuntimeAdapter {
 }
 
 class PackageWarmSandcastleSandbox implements WarmSandcastleSandboxHandle {
+  readonly containerIdentity?: { containerName?: string; containerId?: string };
+
   constructor(
     private readonly adapter: PackageRuntimeAdapter,
     private readonly createAgentProvider: (selection: SandcastleAgentProviderSelection) => unknown,
-  ) {}
+    containerIdentity?: { containerName?: string; containerId?: string },
+  ) {
+    this.containerIdentity = containerIdentity;
+  }
 
   async run(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
     const selection =
@@ -179,7 +186,30 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
       };
     }
 
-    return new PackageWarmSandcastleSandbox(runtime.adapter, packageRuntime.createAfkSandcastleAgentProvider);
+    let containerIdentity: { containerName?: string; containerId?: string } | undefined;
+    try {
+      const identity = await runtime.adapter.identifyContainer();
+      containerIdentity = { containerId: identity.id, containerName: identity.id };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Sandcastle Docker identity probe failed';
+      await runtime.adapter.cleanup();
+      return {
+        containerIdentity: undefined,
+        run: async () => ({
+          status: 'blocked',
+          sessionId: null,
+          removable: false,
+          unsafeReason: reason,
+          output: [reason],
+        }),
+      };
+    }
+
+    return new PackageWarmSandcastleSandbox(
+      runtime.adapter,
+      packageRuntime.createAfkSandcastleAgentProvider,
+      containerIdentity,
+    );
   }
 }
 
@@ -315,6 +345,9 @@ export class SingleTicketRunner {
       });
     }
     const warmSandbox = sandcastleRuntime ? await sandcastleSandboxFactory.create(plan) : null;
+    if (warmSandbox?.containerIdentity && sandcastleRuntimeStore && sandcastleRuntime) {
+      sandcastleRuntimeStore.updateDockerContainerIdentity(sandcastleRuntime.recordPath, warmSandbox.containerIdentity);
+    }
     const runAgentPhase = async (
       phase: SandcastlePhaseName,
       attempt: number,

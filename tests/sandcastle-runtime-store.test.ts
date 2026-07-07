@@ -239,6 +239,18 @@ test('represents no-sandbox runs', () => {
   assert.deepEqual(record.sandbox, { mode: 'none' });
 });
 
+
+test('updates Docker container identity on runtime records', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-sandcastle-runtime-identity-'));
+  const store = new SandcastleRuntimeStore({ repoRoot, now: () => 0 });
+  const handle = store.createRun(createInput());
+
+  const record = store.updateDockerContainerIdentity(handle.recordPath, { containerId: 'abc123' });
+
+  assert.equal(record.sandbox.mode, 'docker');
+  if (record.sandbox.mode === 'docker') assert.equal(record.sandbox.containerId, 'abc123');
+});
+
 test('records implementation, review, and fixup phase attempts', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-sandcastle-runtime-phases-'));
   let tick = 0;

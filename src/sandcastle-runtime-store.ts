@@ -44,6 +44,7 @@ export type SandcastleSandbox =
       image: string;
       worktreePath: string;
       containerName?: string;
+      containerId?: string;
     }
   | {
       mode: 'none';
@@ -224,6 +225,23 @@ export class SandcastleRuntimeStore {
   readRun(recordPath: string): SandcastleRuntimeRecord {
     this.assertManagedPath(recordPath, 'Sandcastle runtime record');
     return JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
+  }
+
+  updateDockerContainerIdentity(
+    recordPath: string,
+    identity: { containerName?: string; containerId?: string },
+  ): SandcastleRuntimeRecord {
+    const current = this.readRun(recordPath);
+    if (current.sandbox.mode !== 'docker') return current;
+    return this.writeRecordAndReturn(recordPath, {
+      ...current,
+      updatedAt: isoFromEpoch(this.now()),
+      sandbox: {
+        ...current.sandbox,
+        ...(identity.containerName ? { containerName: identity.containerName } : {}),
+        ...(identity.containerId ? { containerId: identity.containerId } : {}),
+      },
+    });
   }
 
   recordPhase(recordPath: string, input: SandcastlePhaseUpdateInput): SandcastleRuntimeRecord {

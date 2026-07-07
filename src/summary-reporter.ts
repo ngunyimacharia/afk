@@ -255,7 +255,9 @@ function formatAttempt(item: SummaryGroupItem): string {
     runtime?.sandbox.mode ? `sandbox: ${runtime.sandbox.mode}` : null,
     runtime?.sandbox.mode === 'docker' && 'containerName' in runtime.sandbox && runtime.sandbox.containerName
       ? `container: ${runtime.sandbox.containerName}`
-      : null,
+      : runtime?.sandbox.mode === 'docker' && 'containerId' in runtime.sandbox && runtime.sandbox.containerId
+        ? `container: ${runtime.sandbox.containerId}`
+        : null,
     runtime?.branch ? `branch: ${runtime.branch}` : null,
     runtime?.worktreePath ? `worktree: ${runtime.worktreePath}` : null,
     runtime?.terminal.status ? `terminal: ${runtime.terminal.status}` : null,
