@@ -93,6 +93,8 @@ export interface LinearRunSyncer {
 
 export interface WarmSandcastleSandboxHandle {
   run(request: AgentExecutionRequest): Promise<AgentExecutionResult>;
+  identifyContainer?(): Promise<DockerContainerIdentity>;
+  cleanup?(): Promise<{ status?: string; message?: string } | undefined>;
 }
 
 export interface WarmSandcastleSandboxFactory {
@@ -153,7 +155,7 @@ export class SingleTicketRunner {
       plan.sandboxMode === 'docker'
         ? `afk-${ticket.feature}-${ticket.issueName}-${options.runId ?? Date.now()}`
         : undefined;
-    const dockerIdentity: DockerContainerIdentity | undefined =
+    let dockerIdentity: DockerContainerIdentity | undefined =
       plan.sandboxMode === 'docker' ? { image: AFK_RUNTIME_IMAGE, containerName: dockerContainerName } : undefined;
     const sandcastleRuntime =
       sandcastleRuntimeStore && sandcastleProvider
@@ -191,14 +193,17 @@ export class SingleTicketRunner {
             logs: { run: record.logPath },
           })
         : null;
-    if (sandcastleRuntimeStore && sandcastleRuntime && dockerIdentity) {
+    let warmSandbox: WarmSandcastleSandboxHandle | null = null;
+    const recordDockerCleanupResource = () => {
+      if (!sandcastleRuntimeStore || !sandcastleRuntime || !dockerIdentity) return;
       sandcastleRuntimeStore.recordCleanupResource(sandcastleRuntime.recordPath, {
         type: 'docker-container',
         id: dockerContainerResourceId(dockerIdentity),
         path: dockerIdentity.image,
         cleanupCommand: dockerCleanupCommand(dockerIdentity),
       });
-    }
+    };
+    recordDockerCleanupResource();
     const completeSandcastleRun = async (
       status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
       handoffReason?: string,
@@ -211,13 +216,24 @@ export class SingleTicketRunner {
         .readRun(sandcastleRuntime.recordPath)
         .cleanupResults?.find((item) => item.resourceId === resourceId && item.resourceType === 'docker-container');
       if (existingResult) return;
-      const outcome = await getDefaultSandcastleDockerCleanup().removeContainer(dockerIdentity);
+      const outcome: { status: 'succeeded' | 'skipped' | 'failed'; message?: string } = warmSandbox?.cleanup
+        ? await warmSandbox
+            .cleanup()
+            .then((result) => ({
+              status: result?.status === 'skipped' ? ('skipped' as const) : ('succeeded' as const),
+              message: result?.message,
+            }))
+            .catch((error) => ({
+              status: 'failed' as const,
+              message: error instanceof Error ? error.message : 'Sandcastle package Docker cleanup failed',
+            }))
+        : await getDefaultSandcastleDockerCleanup().removeContainer(dockerIdentity);
       sandcastleRuntimeStore.recordCleanupResult(
         sandcastleRuntime.recordPath,
         toCleanupResult(dockerIdentity, outcome),
       );
     };
-    const sandcastleSandboxFactory = this.sandcastleSandboxFactory ?? {
+    const sandcastleSandboxFactory: WarmSandcastleSandboxFactory = this.sandcastleSandboxFactory ?? {
       create: async () => new ProviderBackedWarmSandcastleSandbox(this.provider),
     };
     if (sandcastleRuntime && sandcastleRuntimeStore && plan.sandboxMode === 'docker') {
@@ -252,7 +268,23 @@ export class SingleTicketRunner {
         SANDCASTLE_PHASE_EXECUTOR_CAPABILITY: validation.capability,
       });
     }
-    const warmSandbox = sandcastleRuntime ? await sandcastleSandboxFactory.create(plan) : null;
+    warmSandbox = sandcastleRuntime ? await sandcastleSandboxFactory.create(plan) : null;
+    if (warmSandbox?.identifyContainer && sandcastleRuntimeStore && sandcastleRuntime && dockerIdentity) {
+      const actualIdentity = await warmSandbox.identifyContainer();
+      dockerIdentity = {
+        image: actualIdentity.image ?? dockerIdentity.image,
+        containerName: actualIdentity.containerName,
+        containerId: actualIdentity.containerId,
+      };
+      sandcastleRuntimeStore.updateSandbox(sandcastleRuntime.recordPath, {
+        mode: 'docker',
+        image: dockerIdentity.image,
+        worktreePath: AFK_RUNTIME_WORKTREE_PATH,
+        containerName: dockerIdentity.containerName,
+        containerId: dockerIdentity.containerId,
+      });
+      recordDockerCleanupResource();
+    }
     const runAgentPhase = async (
       phase: SandcastlePhaseName,
       attempt: number,

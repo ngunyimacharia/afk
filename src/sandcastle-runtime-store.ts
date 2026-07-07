@@ -268,12 +268,28 @@ export class SandcastleRuntimeStore {
     });
   }
 
-  recordCleanupResource(recordPath: string, resource: SandcastleCleanupResource): SandcastleRuntimeRecord {
+  updateSandbox(recordPath: string, sandbox: SandcastleSandbox): SandcastleRuntimeRecord {
     const current = this.readRun(recordPath);
     return this.writeRecordAndReturn(recordPath, {
       ...current,
       updatedAt: isoFromEpoch(this.now()),
-      cleanupResources: [...current.cleanupResources, resource],
+      sandbox,
+    });
+  }
+
+  recordCleanupResource(recordPath: string, resource: SandcastleCleanupResource): SandcastleRuntimeRecord {
+    const current = this.readRun(recordPath);
+    const cleanupResources = [
+      ...current.cleanupResources.filter((existing) => {
+        if (existing.type === 'docker-container' && resource.type === 'docker-container') return false;
+        return existing.type !== resource.type || existing.id !== resource.id;
+      }),
+      resource,
+    ];
+    return this.writeRecordAndReturn(recordPath, {
+      ...current,
+      updatedAt: isoFromEpoch(this.now()),
+      cleanupResources,
     });
   }
 

@@ -1,4 +1,8 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { SandcastleCleanupResult } from './sandcastle-runtime-store.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface DockerContainerIdentity {
   image: string;
@@ -13,16 +17,20 @@ export interface SandcastleDockerCleanup {
   }>;
 }
 
-function defaultSkippedMessage(identity: DockerContainerIdentity): string {
-  const target = identity.containerName ?? identity.containerId ?? identity.image;
-  return `Docker container ${target} cleanup skipped: @ai-hero/sandcastle is not configured`;
-}
-
 class DefaultSandcastleDockerCleanup implements SandcastleDockerCleanup {
   async removeContainer(
     identity: DockerContainerIdentity,
   ): Promise<{ status: 'succeeded' | 'skipped' | 'failed'; message?: string }> {
-    return { status: 'skipped', message: defaultSkippedMessage(identity) };
+    const target = identity.containerId ?? identity.containerName;
+    if (!target)
+      return { status: 'skipped', message: `Docker cleanup skipped: no container identity for ${identity.image}` };
+    try {
+      await execFileAsync('docker', ['rm', '-f', target]);
+      return { status: 'succeeded', message: `Removed Docker container ${target}` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `Failed to remove Docker container ${target}`;
+      return { status: 'failed', message };
+    }
   }
 }
 

@@ -686,6 +686,7 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
   let executionCalls = 0;
   let sandboxCreateCount = 0;
   const cleanupCalls: string[] = [];
+  let packageCleanupCalls = 0;
   setDefaultSandcastleDockerCleanup({
     removeContainer: async (identity) => {
       cleanupCalls.push(identity.containerName ?? identity.containerId ?? identity.image);
@@ -693,6 +694,11 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
     },
   });
   const sandboxHandle = {
+    identifyContainer: async () => ({ image: AFK_RUNTIME_IMAGE, containerId: 'real-container-id' }),
+    cleanup: async () => {
+      packageCleanupCalls += 1;
+      return { status: 'succeeded' };
+    },
     run: async ({ invocationMode, prompt }: { invocationMode?: string; prompt: string }) => {
       modes.push(invocationMode);
       if (invocationMode === 'reviewer') {
@@ -786,12 +792,17 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
   );
   assert.equal(sandcastleRecord.terminal.status, 'completed');
   assert.equal(sandcastleRecord.sandbox.mode, 'docker');
-  assert.ok(sandcastleRecord.sandbox.mode === 'docker' && sandcastleRecord.sandbox.containerName);
+  assert.equal(
+    sandcastleRecord.sandbox.mode === 'docker' ? sandcastleRecord.sandbox.containerId : '',
+    'real-container-id',
+  );
   assert.deepEqual(
     sandcastleRecord.cleanupResources.map((resource) => resource.type),
     ['docker-container'],
   );
-  assert.deepEqual(cleanupCalls, [sandcastleRecord.cleanupResources[0]?.id]);
+  assert.deepEqual(cleanupCalls, []);
+  assert.equal(packageCleanupCalls, 1);
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.resourceId, 'real-container-id');
   assert.equal(sandcastleRecord.cleanupResults?.[0]?.status, 'succeeded');
 });
 
