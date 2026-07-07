@@ -88,6 +88,17 @@ import type { TrackerProvider } from './tracker-contract.js';
 import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
 import type { FeatureCompletionAction, LaunchModel, LaunchPreferences, SandboxMode, TicketRecord } from './types.js';
 import {
+  checkForUpgrade,
+  defaultDownloadAsset,
+  defaultReexec,
+  defaultReplaceBinary,
+  fetchLatestGitHubRelease,
+  isSourceMode,
+  resolveTargetPath,
+  type UpgradeDependencies,
+} from './upgrade.js';
+import { VERSION } from './version.js';
+import {
   orderSelectedFeaturesByWaves,
   refreshWorkspaceExecutionGraph,
   type WorkspaceExecutionGraph,
@@ -262,32 +273,45 @@ function jsonError(command: string, code: string, message: string, details?: Rec
   return JSON.stringify(output, null, 2);
 }
 
-export async function runAfk(
-  repoRoot = process.cwd(),
-  runtime: {
-    argv?: string[];
-    io?: PromptIO;
-    env?: NodeJS.ProcessEnv;
-    spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
-    trackerProvider?: TrackerProvider;
-    inlineLaunch?: boolean;
-    stopTimeoutMs?: number;
-    stopPollIntervalMs?: number;
-    linearProvider?: LinearProvider;
-    linearManifest?: LinearPlanManifest;
-    discoverAvailableHarnesses?: (
-      discoverModels?: (harness: SelectableHarnessId, repoRoot?: string) => Promise<LaunchModel[]>,
-      repoRoot?: string,
-    ) => Promise<{
-      availableHarnesses: SelectableHarnessId[];
-      harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
-    }>;
-  } = {},
-): Promise<CliResult> {
+export interface RunAfkRuntime {
+  argv?: string[];
+  io?: PromptIO;
+  env?: NodeJS.ProcessEnv;
+  spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
+  trackerProvider?: TrackerProvider;
+  inlineLaunch?: boolean;
+  stopTimeoutMs?: number;
+  stopPollIntervalMs?: number;
+  linearProvider?: LinearProvider;
+  linearManifest?: LinearPlanManifest;
+  discoverAvailableHarnesses?: (
+    discoverModels?: (harness: SelectableHarnessId, repoRoot?: string) => Promise<LaunchModel[]>,
+    repoRoot?: string,
+  ) => Promise<{
+    availableHarnesses: SelectableHarnessId[];
+    harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
+  }>;
+  upgradeDependencies?: UpgradeDependencies;
+  skipUpgradeCheck?: boolean;
+}
+
+export async function runAfk(repoRoot = process.cwd(), runtime: RunAfkRuntime = {}): Promise<CliResult> {
   const argv = runtime.argv ?? process.argv;
   const parsed = parseCliArgs(argv);
   const command = parsed.command;
   const isJson = parsed.flags.json;
+
+  if (parsed.flags.version || command === 'version') {
+    if (isJson) {
+      return formatJsonSuccessWithData('version', { version: VERSION });
+    }
+    return { code: 0, message: VERSION };
+  }
+
+  const upgradeResult = await maybeCheckForUpgrade(argv, parsed, runtime);
+  if (upgradeResult) {
+    return upgradeResult;
+  }
 
   const incompleteCommands = new Set(['plan', 'events']);
   if (command && incompleteCommands.has(command)) {
@@ -321,29 +345,60 @@ export async function runAfk(
   }
 }
 
-async function runAfkInternal(
-  repoRoot: string,
-  runtime: {
-    argv?: string[];
-    io?: PromptIO;
-    env?: NodeJS.ProcessEnv;
-    spawnDaemon?: (context: DaemonLaunchContext) => SpawnDaemonHandle;
-    trackerProvider?: TrackerProvider;
-    inlineLaunch?: boolean;
-    stopTimeoutMs?: number;
-    stopPollIntervalMs?: number;
-    linearProvider?: LinearProvider;
-    linearManifest?: LinearPlanManifest;
-    discoverAvailableHarnesses?: (
-      discoverModels?: (harness: SelectableHarnessId, repoRoot?: string) => Promise<LaunchModel[]>,
-      repoRoot?: string,
-    ) => Promise<{
-      availableHarnesses: SelectableHarnessId[];
-      harnessModelCache: Partial<Record<SelectableHarnessId, LaunchModel[]>>;
-    }>;
-  },
+async function maybeCheckForUpgrade(
+  argv: string[],
   parsed: ParsedCliArgs,
-): Promise<CliResult> {
+  runtime: RunAfkRuntime,
+): Promise<CliResult | undefined> {
+  if (runtime.skipUpgradeCheck) return undefined;
+
+  const env = runtime.env ?? process.env;
+  const io = runtime.io ?? { stdin: process.stdin, stdout: process.stdout };
+  const targetPath = resolveTargetPath(argv);
+  const isInteractive = !!io.stdin.isTTY && !!io.stdout.isTTY && !env.CI;
+
+  const dependencies = runtime.upgradeDependencies ?? {
+    fetchLatestRelease: () => fetchLatestGitHubRelease('ngunyimacharia', 'afk'),
+    prompt: async (message: string) => {
+      const prompts = (await import('prompts')).default;
+      const result = await prompts({
+        type: 'confirm',
+        name: 'value',
+        message,
+        initial: true,
+      });
+      return result.value === true;
+    },
+    downloadAsset: defaultDownloadAsset,
+    replaceBinary: defaultReplaceBinary,
+    reexec: defaultReexec,
+  };
+
+  const upgrade = await checkForUpgrade(
+    {
+      currentVersion: VERSION,
+      argv,
+      targetPath,
+      isInteractive,
+      isJson: parsed.flags.json,
+      isSourceMode: isSourceMode(targetPath),
+    },
+    dependencies,
+  );
+
+  if (upgrade.action === 'restarted') {
+    // `reexec` never resolves; this path is only reached in tests with a stub.
+    return { code: 0, message: '' };
+  }
+
+  if (upgrade.message && upgrade.action === 'skipped') {
+    io.stdout.write(`${upgrade.message}\n`);
+  }
+
+  return undefined;
+}
+
+async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: ParsedCliArgs): Promise<CliResult> {
   const io = runtime.io ?? { stdin: process.stdin, stdout: process.stdout };
   const env = runtime.env ?? process.env;
   const command = parsed.command;

@@ -10,6 +10,7 @@ export interface CliFlags {
   json: boolean;
   dryRun: boolean;
   verbose: boolean;
+  version: boolean;
   manifest?: string;
   harness?: string;
   model?: string;
@@ -44,6 +45,7 @@ const KNOWN_COMMANDS = new Set([
   'resume',
   'plan',
   'events',
+  'version',
 ]);
 
 const VALID_COMMANDS = new Set([
@@ -60,6 +62,7 @@ const VALID_COMMANDS = new Set([
   'resume',
   'plan',
   'events',
+  'version',
 ]);
 
 function isKnownCommand(arg: string | undefined): arg is string {
@@ -69,6 +72,7 @@ function isKnownCommand(arg: string | undefined): arg is string {
 function normalizeCommand(command: string): string {
   if (command === 'summary' || command === 'afk-summary') return 'afk-summary';
   if (command === 'cleanup' || command === 'afk-cleanup') return 'afk-cleanup';
+  if (command === 'version' || command === '--version' || command === '-V') return 'version';
   return command;
 }
 
@@ -132,7 +136,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
 
   const argsToParse = argv.slice(flagStartIndex);
 
-  const flags: CliFlags = { json: false, dryRun: false, verbose: false };
+  const flags: CliFlags = { json: false, dryRun: false, verbose: false, version: false };
   const positionals: string[] = [];
 
   for (let i = 0; i < argsToParse.length; i++) {
@@ -158,6 +162,10 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
       case '--verbose':
       case '-v':
         flags.verbose = true;
+        break;
+      case '--version':
+      case '-V':
+        flags.version = true;
         break;
       case '--manifest':
         flags.manifest = value ?? argsToParse[++i];
