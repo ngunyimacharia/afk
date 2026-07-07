@@ -8,8 +8,13 @@ import { FakeAgentExecutionProvider } from '../src/agent-execution-provider.js';
 import { resolveExecutable } from '../src/executable-resolution.js';
 import { resolveReviewerPromptTemplate } from '../src/reviewer-prompt-catalog.js';
 import { RuntimeStore } from '../src/runtime-store.js';
+import { resetDefaultSandcastleDockerCleanup, setDefaultSandcastleDockerCleanup } from '../src/sandcastle-cleanup.js';
 import { resolveSandcastleAgentProvider } from '../src/sandcastle-provider.js';
-import { AFK_RUNTIME_IMAGE, AFK_RUNTIME_WORKTREE_PATH } from '../src/sandcastle-runtime-image-contract.js';
+import {
+  AFK_RUNTIME_IMAGE,
+  AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+  AFK_RUNTIME_WORKTREE_PATH,
+} from '../src/sandcastle-runtime-image-contract.js';
 import { SandcastleRuntimeStore } from '../src/sandcastle-runtime-store.js';
 import { Scheduler } from '../src/scheduler.js';
 import { SingleTicketRunner } from '../src/single-ticket-runner.js';
@@ -680,6 +685,13 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
   let reviewerCalls = 0;
   let executionCalls = 0;
   let sandboxCreateCount = 0;
+  const cleanupCalls: string[] = [];
+  setDefaultSandcastleDockerCleanup({
+    removeContainer: async (identity) => {
+      cleanupCalls.push(identity.containerName ?? identity.containerId ?? identity.image);
+      return { status: 'succeeded' };
+    },
+  });
   const sandboxHandle = {
     run: async ({ invocationMode, prompt }: { invocationMode?: string; prompt: string }) => {
       modes.push(invocationMode);
@@ -721,6 +733,11 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
     undefined,
     undefined,
     {
+      validateRuntimeImage: async () => ({
+        ok: true,
+        image: AFK_RUNTIME_IMAGE,
+        capability: AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+      }),
       create: async () => {
         sandboxCreateCount += 1;
         return sandboxHandle;
@@ -736,7 +753,7 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
     reviewerModel: { id: 'review-model' },
     reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
-    sandboxMode: 'no-sandbox',
+    sandboxMode: 'docker',
     tickets: [{ path: ticketPath, feature: 'feat', issueName: 'warm', label: 'feat/warm', executorAfk: true }],
     gitContext: { commits: [] },
     checkout: {
@@ -751,6 +768,7 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
   };
 
   const result = await runner.launch(plan as never, { runId: 'run-warm' });
+  resetDefaultSandcastleDockerCleanup();
 
   assert.equal(result.outcome, 'completed');
   assert.equal(sandboxCreateCount, 1);
@@ -767,6 +785,14 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
     ['passed', 'passed', 'passed', 'passed', 'passed'],
   );
   assert.equal(sandcastleRecord.terminal.status, 'completed');
+  assert.equal(sandcastleRecord.sandbox.mode, 'docker');
+  assert.ok(sandcastleRecord.sandbox.mode === 'docker' && sandcastleRecord.sandbox.containerName);
+  assert.deepEqual(
+    sandcastleRecord.cleanupResources.map((resource) => resource.type),
+    ['docker-container'],
+  );
+  assert.deepEqual(cleanupCalls, [sandcastleRecord.cleanupResources[0]?.id]);
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.status, 'succeeded');
 });
 
 test('blocks Docker Sandcastle launch when runtime image validation fails', async () => {
@@ -777,6 +803,9 @@ test('blocks Docker Sandcastle launch when runtime image validation fails', asyn
   writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nDocker run\n');
   let createCalled = false;
   let providerCalled = false;
+  setDefaultSandcastleDockerCleanup({
+    removeContainer: async () => ({ status: 'failed', message: 'docker daemon unavailable' }),
+  });
   const runner = new SingleTicketRunner(
     store,
     {
@@ -827,6 +856,7 @@ test('blocks Docker Sandcastle launch when runtime image validation fails', asyn
   };
 
   const result = await runner.launch(plan as never, { runId: 'run-docker-missing' });
+  resetDefaultSandcastleDockerCleanup();
 
   assert.equal(result.outcome, 'blocked');
   assert.equal(createCalled, false);
@@ -849,6 +879,12 @@ test('blocks Docker Sandcastle launch when runtime image validation fails', asyn
   );
   assert.equal(sandcastleRecord.terminal.status, 'blocked');
   assert.equal(sandcastleRecord.phases[0]?.status, 'blocked');
+  assert.deepEqual(
+    sandcastleRecord.cleanupResources.map((resource) => resource.type),
+    ['docker-container'],
+  );
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.status, 'failed');
+  assert.match(sandcastleRecord.cleanupResults?.[0]?.message ?? '', /docker daemon unavailable/);
 });
 
 test('blocks before provider execution when launch context mismatches', async () => {

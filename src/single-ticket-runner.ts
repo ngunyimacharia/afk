@@ -13,6 +13,13 @@ import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
 import {
+  type DockerContainerIdentity,
+  dockerCleanupCommand,
+  dockerContainerResourceId,
+  getDefaultSandcastleDockerCleanup,
+  toCleanupResult,
+} from './sandcastle-cleanup.js';
+import {
   AFK_RUNTIME_IMAGE,
   AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
   AFK_RUNTIME_WORKTREE_PATH,
@@ -142,6 +149,12 @@ export class SingleTicketRunner {
     this.runtimeStore.appendLog(record.logPath, `ticket start: ${ticket.label}`);
     const sandcastleProvider = plan.sandcastleProvider;
     const sandcastleRuntimeStore = sandcastleProvider ? new SandcastleRuntimeStore({ repoRoot: plan.repoRoot }) : null;
+    const dockerContainerName =
+      plan.sandboxMode === 'docker'
+        ? `afk-${ticket.feature}-${ticket.issueName}-${options.runId ?? Date.now()}`
+        : undefined;
+    const dockerIdentity: DockerContainerIdentity | undefined =
+      plan.sandboxMode === 'docker' ? { image: AFK_RUNTIME_IMAGE, containerName: dockerContainerName } : undefined;
     const sandcastleRuntime =
       sandcastleRuntimeStore && sandcastleProvider
         ? sandcastleRuntimeStore.createRun({
@@ -164,7 +177,12 @@ export class SingleTicketRunner {
             },
             sandbox:
               plan.sandboxMode === 'docker'
-                ? { mode: 'docker', image: AFK_RUNTIME_IMAGE, worktreePath: AFK_RUNTIME_WORKTREE_PATH }
+                ? {
+                    mode: 'docker',
+                    image: AFK_RUNTIME_IMAGE,
+                    worktreePath: AFK_RUNTIME_WORKTREE_PATH,
+                    containerName: dockerContainerName,
+                  }
                 : { mode: 'none' },
             location: {
               branch: plan.checkout.effectiveBranchName,
@@ -173,6 +191,32 @@ export class SingleTicketRunner {
             logs: { run: record.logPath },
           })
         : null;
+    if (sandcastleRuntimeStore && sandcastleRuntime && dockerIdentity) {
+      sandcastleRuntimeStore.recordCleanupResource(sandcastleRuntime.recordPath, {
+        type: 'docker-container',
+        id: dockerContainerResourceId(dockerIdentity),
+        path: dockerIdentity.image,
+        cleanupCommand: dockerCleanupCommand(dockerIdentity),
+      });
+    }
+    const completeSandcastleRun = async (
+      status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
+      handoffReason?: string,
+    ) => {
+      if (!sandcastleRuntimeStore || !sandcastleRuntime) return;
+      sandcastleRuntimeStore.updateTerminal(sandcastleRuntime.recordPath, { status, handoffReason });
+      if (!dockerIdentity) return;
+      const resourceId = dockerContainerResourceId(dockerIdentity);
+      const existingResult = sandcastleRuntimeStore
+        .readRun(sandcastleRuntime.recordPath)
+        .cleanupResults?.find((item) => item.resourceId === resourceId && item.resourceType === 'docker-container');
+      if (existingResult) return;
+      const outcome = await getDefaultSandcastleDockerCleanup().removeContainer(dockerIdentity);
+      sandcastleRuntimeStore.recordCleanupResult(
+        sandcastleRuntime.recordPath,
+        toCleanupResult(dockerIdentity, outcome),
+      );
+    };
     const sandcastleSandboxFactory = this.sandcastleSandboxFactory ?? {
       create: async () => new ProviderBackedWarmSandcastleSandbox(this.provider),
     };
@@ -198,10 +242,7 @@ export class SingleTicketRunner {
           status: 'blocked',
           outcome: reason,
         });
-        sandcastleRuntimeStore.updateTerminal(sandcastleRuntime.recordPath, {
-          status: 'blocked',
-          handoffReason: reason,
-        });
+        await completeSandcastleRun('blocked', reason);
         this.emitProgress(record.metadataPath, options.onProgress, { ticketLabel: ticket.label, message: reason });
         return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'blocked' };
       }
@@ -246,10 +287,6 @@ export class SingleTicketRunner {
         throw error;
       }
     };
-    const completeSandcastleRun = (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => {
-      if (!sandcastleRuntimeStore || !sandcastleRuntime) return;
-      sandcastleRuntimeStore.updateTerminal(sandcastleRuntime.recordPath, { status, handoffReason });
-    };
     await this.syncLinearStarted(ticket, record);
     this.runtimeStore.appendLog(record.logPath, `model: ${plan.model.id}`);
     if (!plan.reviewerModel || !plan.reviewerPrompt) {
@@ -261,6 +298,7 @@ export class SingleTicketRunner {
       });
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, reason);
+      await completeSandcastleRun('blocked', reason);
       await this.syncLinearTerminal(ticket, record, 'blocked', {
         nextAction: 'configure reviewer model and prompt',
         reviewerNotes: reason,
@@ -348,6 +386,7 @@ export class SingleTicketRunner {
             message: 'run killed',
             sessionId,
           });
+          await completeSandcastleRun('interrupted');
           return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
         }
         const ticketBudget = this.checkTicketBudget(budgets, ticketStartEpoch, reviewCycle + 1);
@@ -403,6 +442,7 @@ export class SingleTicketRunner {
                   RUN_STATUS: executionResult.status === 'blocked' ? 'blocked' : 'failed',
                 });
                 this.runtimeStore.markFailed(record, executionResult.status);
+                await completeSandcastleRun(executionResult.status === 'blocked' ? 'blocked' : 'failed');
                 this.runtimeStore.appendLog(record.logPath, `run ${executionResult.status}`);
                 await this.syncLinearTerminal(
                   ticket,
@@ -439,6 +479,7 @@ export class SingleTicketRunner {
                 message: 'run killed',
                 sessionId,
               });
+              await completeSandcastleRun('interrupted');
               return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
             }
             providerFailureCount += 1;
@@ -477,6 +518,7 @@ export class SingleTicketRunner {
               return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
                 this.runtimeStore.markFailed(record, 'failed');
                 this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+                await completeSandcastleRun('failed');
                 await this.syncLinearTerminal(ticket, record, 'failed', {
                   nextAction: 'investigate failed run',
                   reviewerNotes: message,
@@ -512,6 +554,7 @@ export class SingleTicketRunner {
               });
               this.runtimeStore.markFailed(record, 'failed');
               this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+              await completeSandcastleRun('failed');
               await this.syncLinearTerminal(ticket, record, 'failed', {
                 nextAction: 'investigate failed run',
                 reviewerNotes: message,
@@ -530,7 +573,7 @@ export class SingleTicketRunner {
         const executionForReview = latestExecutionResult;
         const updatedTicketContent = this.readRunResultContent(ticket, latestExecutionResult);
         if (updatedTicketContent === null) {
-          return this.handoffForTicketReadFailure(ticket, record, options, sessionId);
+          return this.handoffForTicketReadFailure(ticket, record, options, sessionId, completeSandcastleRun);
         }
 
         const reviewResult = await this.runtimeStore.runPhase(
@@ -628,7 +671,7 @@ export class SingleTicketRunner {
               }),
             );
             return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
-              completeSandcastleRun('handoff', message);
+              await completeSandcastleRun('handoff', message);
               this.runtimeStore.markHandoff(record, `reviewer provider failure: ${classification?.kind ?? 'unknown'}`);
               this.runtimeStore.appendLog(
                 record.logPath,
@@ -660,7 +703,7 @@ export class SingleTicketRunner {
             continue;
           }
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
-            completeSandcastleRun('handoff', message);
+            await completeSandcastleRun('handoff', message);
             this.runtimeStore.updateMetadata(record.metadataPath, {
               STATUS: 'blocked',
               REVIEW_STATUS: 'failed',
@@ -744,7 +787,7 @@ export class SingleTicketRunner {
 
         if (decision.decision === 'approve') {
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
-            completeSandcastleRun('completed');
+            await completeSandcastleRun('completed');
             const classification: ReviewOutcomeClassification = 'clean-approval';
             this.runtimeStore.recordFinalReviewOutcome(
               record.metadataPath,
@@ -836,7 +879,7 @@ export class SingleTicketRunner {
             }),
           );
           return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
-            completeSandcastleRun('handoff', decision.reason);
+            await completeSandcastleRun('handoff', decision.reason);
             this.runtimeStore.markFailed(record, 'needs-human handoff required');
             this.runtimeStore.appendLog(record.logPath, `needs-human handoff: ${decision.reason}`);
             this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -881,6 +924,7 @@ export class SingleTicketRunner {
           ticketLabel: ticket.label,
           message: 'run killed',
         });
+        await completeSandcastleRun('interrupted');
         return { scheduled: false, message: 'Run killed', outcome: 'not-scheduled' };
       }
       const message = error instanceof Error ? error.message : 'provider execution failed';
@@ -897,6 +941,7 @@ export class SingleTicketRunner {
       });
       this.runtimeStore.markFailed(record, 'failed');
       this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+      await completeSandcastleRun('failed');
       await this.syncLinearTerminal(ticket, record, 'failed', {
         nextAction: 'investigate failed run',
         reviewerNotes: message,
@@ -964,7 +1009,10 @@ export class SingleTicketRunner {
     options: { onProgress?: AgentExecutionProgressCallback },
     event: BudgetExceededEvent,
     sessionId: string | null,
-    completeSandcastleRun?: (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void,
+    completeSandcastleRun?: (
+      status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
+      handoffReason?: string,
+    ) => Promise<void> | void,
   ): Promise<SingleTicketRunResult> {
     this.runtimeStore.recordBudgetExceeded(record.metadataPath, record.logPath, event);
     const reason = `budget exceeded: ${event.budgetName} (limit=${event.limit}, observed=${event.observed}, phase=${event.phase}, cycle=${event.cycle})`;
@@ -988,7 +1036,7 @@ export class SingleTicketRunner {
       }),
     );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
-      completeSandcastleRun?.(implementationCompleted ? 'handoff' : 'blocked', reason);
+      await completeSandcastleRun?.(implementationCompleted ? 'handoff' : 'blocked', reason);
       if (implementationCompleted) {
         this.runtimeStore.markHandoff(record, reason);
       } else {
@@ -1020,7 +1068,10 @@ export class SingleTicketRunner {
     raw: string,
     cycle: number,
     sessionId: string | null,
-    completeSandcastleRun?: (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void,
+    completeSandcastleRun?: (
+      status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
+      handoffReason?: string,
+    ) => Promise<void> | void,
   ): Promise<SingleTicketRunResult> {
     const malformedHandoffReason = 'Malformed reviewer output repeated after format-repair retry';
     const malformedOutputSnippet = this.boundSnippet(raw);
@@ -1054,7 +1105,7 @@ export class SingleTicketRunner {
       }),
     );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
-      completeSandcastleRun?.('handoff', malformedHandoffReason);
+      await completeSandcastleRun?.('handoff', malformedHandoffReason);
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'malformed reviewer output handoff: reviewer-output-malformed');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -1077,7 +1128,10 @@ export class SingleTicketRunner {
     options: { onProgress?: AgentExecutionProgressCallback },
     cycle: number,
     sessionId: string | null,
-    completeSandcastleRun?: (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void,
+    completeSandcastleRun?: (
+      status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
+      handoffReason?: string,
+    ) => Promise<void> | void,
   ): Promise<SingleTicketRunResult> {
     const reason = 'Reviewer returned empty output after format-repair retry';
     this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -1110,7 +1164,7 @@ export class SingleTicketRunner {
       }),
     );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
-      completeSandcastleRun?.('handoff', reason);
+      await completeSandcastleRun?.('handoff', reason);
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'empty reviewer output handoff: reviewer-empty-output');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -1212,6 +1266,10 @@ export class SingleTicketRunner {
     record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     sessionId: string | null,
+    completeSandcastleRun?: (
+      status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
+      handoffReason?: string,
+    ) => Promise<void> | void,
   ): Promise<SingleTicketRunResult> {
     const reason = 'updated ticket context could not be read before review';
     this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -1221,6 +1279,7 @@ export class SingleTicketRunner {
       RUN_STATUS: 'blocked',
     });
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+      await completeSandcastleRun?.('handoff', reason);
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, `ticket read failure: ${reason}`);
       await this.syncLinearTerminal(ticket, record, 'blocked', {

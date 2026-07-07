@@ -190,7 +190,7 @@ test('preserves running Sandcastle runs', () => {
   assert.equal(plan.preservedIssues[0], runningPath);
 });
 
-test('preserves handoff Sandcastle runs', () => {
+test('treats handoff Sandcastle runs as terminal cleanup targets', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
   mkdirSync(issuesDir, { recursive: true });
@@ -207,9 +207,8 @@ test('preserves handoff Sandcastle runs', () => {
     }),
   );
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  assert.equal(plan.terminalTargets.length, 0);
-  assert.equal(plan.preservedIssues.length, 1);
-  assert.equal(plan.preservedIssues[0], handoffPath);
+  assert.equal(plan.terminalTargets.length, 1);
+  assert.equal(plan.terminalTargets[0]?.issuePath, handoffPath);
 });
 
 test('treats failed, blocked, and interrupted as terminal', () => {

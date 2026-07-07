@@ -44,6 +44,7 @@ export type SandcastleSandbox =
       image: string;
       worktreePath: string;
       containerName?: string;
+      containerId?: string;
     }
   | {
       mode: 'none';
@@ -273,6 +274,22 @@ export class SandcastleRuntimeStore {
       ...current,
       updatedAt: isoFromEpoch(this.now()),
       cleanupResources: [...current.cleanupResources, resource],
+    });
+  }
+
+  recordCleanupResult(recordPath: string, result: SandcastleCleanupResult): SandcastleRuntimeRecord {
+    const current = this.readRun(recordPath);
+    const updatedAt = isoFromEpoch(this.now());
+    const cleanupResults = [
+      ...(current.cleanupResults ?? []).filter(
+        (existing) => existing.resourceId !== result.resourceId || existing.resourceType !== result.resourceType,
+      ),
+      { ...result, updatedAt: result.updatedAt ?? updatedAt },
+    ];
+    return this.writeRecordAndReturn(recordPath, {
+      ...current,
+      updatedAt,
+      cleanupResults,
     });
   }
 
