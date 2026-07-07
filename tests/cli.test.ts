@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { displayNameForProvider, readRunMetadata, runAfk } from '../src/cli.js';
 import { parseCliArgs } from '../src/cli-flags.js';
 import { formatJsonError, formatJsonSuccess, formatJsonSuccessWithData } from '../src/cli-response.js';
+
+const packageVersion = (JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as { version: string }).version;
 
 class FakeLinearProvider {
   readonly issues: Array<{ title: string; parentId?: string }> = [];
@@ -106,6 +108,51 @@ test('parseCliArgs does not interfere with existing boolean flags', () => {
   assert.equal(parsed.command, 'afk-cleanup');
   assert.equal(parsed.flags.dryRun, true);
   assert.equal(parsed.flags.verbose, true);
+});
+
+test('parseCliArgs recognizes --version / -V flags and the version command', () => {
+  const flagParsed = parseCliArgs(['bun', 'src/bin.ts', '--version']);
+  assert.equal(flagParsed.command, undefined);
+  assert.equal(flagParsed.flags.version, true);
+
+  const shorthandParsed = parseCliArgs(['bun', 'src/bin.ts', '-V']);
+  assert.equal(shorthandParsed.flags.version, true);
+
+  const commandParsed = parseCliArgs(['bun', 'src/bin.ts', 'version']);
+  assert.equal(commandParsed.command, 'version');
+  assert.equal(commandParsed.flags.version, false);
+});
+
+test('parseCliArgs recognizes version command from compiled binary invocation', () => {
+  const parsed = parseCliArgs(['afk', 'version']);
+  assert.equal(parsed.command, 'version');
+});
+
+test('version command prints package version', async () => {
+  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', 'version'] });
+  assert.equal(result.code, 0);
+  assert.equal(result.message, packageVersion);
+});
+
+test('--version flag prints package version', async () => {
+  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', '--version'] });
+  assert.equal(result.code, 0);
+  assert.equal(result.message, packageVersion);
+});
+
+test('-V flag prints package version', async () => {
+  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', '-V'] });
+  assert.equal(result.code, 0);
+  assert.equal(result.message, packageVersion);
+});
+
+test('version command prints JSON envelope with --json', async () => {
+  const result = await runAfk(process.cwd(), { argv: ['bun', 'src/bin.ts', 'version', '--json'] });
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.message) as { ok: true; command: string; data: { version: string } };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.command, 'version');
+  assert.equal(parsed.data.version, packageVersion);
 });
 
 test('formatJsonSuccess omits empty message field', () => {

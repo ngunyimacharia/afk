@@ -87,6 +87,7 @@ import { runSync } from './sync/runner.js';
 import type { TrackerProvider } from './tracker-contract.js';
 import { trackerWorkItemToTicketRecord } from './tracker-contract.js';
 import type { FeatureCompletionAction, LaunchModel, LaunchPreferences, SandboxMode, TicketRecord } from './types.js';
+import { VERSION } from './version.js';
 import {
   orderSelectedFeaturesByWaves,
   refreshWorkspaceExecutionGraph,
@@ -288,6 +289,13 @@ export async function runAfk(
   const parsed = parseCliArgs(argv);
   const command = parsed.command;
   const isJson = parsed.flags.json;
+
+  if (parsed.flags.version || command === 'version') {
+    if (isJson) {
+      return formatJsonSuccessWithData('version', { version: VERSION });
+    }
+    return { code: 0, message: VERSION };
+  }
 
   const incompleteCommands = new Set(['plan', 'events']);
   if (command && incompleteCommands.has(command)) {
