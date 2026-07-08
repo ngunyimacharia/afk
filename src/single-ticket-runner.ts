@@ -237,14 +237,23 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
 }
 
 export function collectSandcastleDockerMounts(plan: LaunchPlan) {
-  const mounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
+  const providerMounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
     .flatMap((provider) => provider?.docker.mounts ?? [])
     .map((mount) => ({
       hostPath: mount.source,
       sandboxPath: mount.target,
       readonly: mount.target !== AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi,
     }));
-  return Array.from(new Map(mounts.map((mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount])).values());
+  // Mount .scratch/ directory so the agent can read/write ticket files
+  // and scratch artifacts from inside the Docker container.
+  const scratchDir = path.join(plan.repoRoot, '.scratch');
+  return Array.from(
+    new Map(
+      [...providerMounts, { hostPath: scratchDir, sandboxPath: scratchDir, readonly: false }].map(
+        (mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount],
+      ),
+    ).values(),
+  );
 }
 
 function collectSandcastleDockerEnv(plan: LaunchPlan) {
