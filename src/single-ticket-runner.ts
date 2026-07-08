@@ -237,25 +237,14 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
 }
 
 export function collectSandcastleDockerMounts(plan: LaunchPlan) {
-  const providerMounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
+  const mounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
     .flatMap((provider) => provider?.docker.mounts ?? [])
     .map((mount) => ({
       hostPath: mount.source,
       sandboxPath: mount.target,
       readonly: mount.target !== AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi,
     }));
-  // Mount the repo's .git directory so worktree .git file references
-  // resolve inside the Docker container. The host's absolute .git path is
-  // mounted at the same location inside the container.
-  const gitDir = plan.repoRoot ? path.join(plan.repoRoot, '.git') : null;
-  const mounts = gitDir
-    ? [...providerMounts, { hostPath: gitDir, sandboxPath: gitDir, readonly: true as const }]
-    : providerMounts;
-  return Array.from(
-    new Map(
-      mounts.map((mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount]),
-    ).values(),
-  );
+  return Array.from(new Map(mounts.map((mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount])).values());
 }
 
 function collectSandcastleDockerEnv(plan: LaunchPlan) {
@@ -504,7 +493,12 @@ export class SingleTicketRunner {
       recordDockerCleanupResource();
     }
     if (warmSandbox?.worktreePath) {
-      const updatedCheckout = { ...plan.checkout, worktreePath: warmSandbox.worktreePath };
+      // In Docker mode, the container sees the worktree at
+      // AFK_RUNTIME_WORKTREE_PATH, not the host path. Use the container
+      // path in the prompt so the agent finds the source files.
+      const promptWorktreePath =
+        plan.sandboxMode === 'docker' ? AFK_RUNTIME_WORKTREE_PATH : warmSandbox.worktreePath;
+      const updatedCheckout = { ...plan.checkout, worktreePath: promptWorktreePath };
       const currentSnapshot = plan.snapshots?.[ticket.label];
       plan = {
         ...plan,
@@ -514,7 +508,7 @@ export class SingleTicketRunner {
               ...plan.snapshots,
               [ticket.label]: {
                 ...currentSnapshot,
-                worktreePath: warmSandbox.worktreePath,
+                worktreePath: promptWorktreePath,
                 worktreeName: path.basename(warmSandbox.worktreePath),
               },
             }
