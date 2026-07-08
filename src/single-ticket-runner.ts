@@ -680,7 +680,15 @@ export class SingleTicketRunner {
                 sessionId,
                 completeSandcastleRun,
               )
-            : this.handoffForEmptyReview(ticket, record, options, reviewCycle + 1, sessionId, completeSandcastleRun);
+            : this.handoffForEmptyReview(
+                ticket,
+                record,
+                options,
+                reviewCycle + 1,
+                sessionId,
+                completeSandcastleRun,
+                plan.checkout.worktreePath,
+              );
         }
 
         malformedAttempts = 0;
@@ -1033,15 +1041,77 @@ export class SingleTicketRunner {
     options: { onProgress?: AgentExecutionProgressCallback },
     cycle: number,
     sessionId: string | null,
-    completeSandcastleRun?: (status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void,
+    completeSandcastleRun:
+      | ((status: 'completed' | 'handoff' | 'failed' | 'blocked', handoffReason?: string) => void)
+      | undefined,
+    worktreePath: string,
   ): Promise<SingleTicketRunResult> {
     const reason = 'Reviewer returned empty output after format-repair retry';
+    const ticketPath = ticket.provider?.materializedFiles?.ticketPath ?? ticket.path;
+    const stateCheck = this.evaluateTicketStateForApproval(ticketPath, worktreePath);
+
+    if (stateCheck.approved) {
+      const approvalReason = 'empty reviewer output, but ticket state indicates approval; finalizing';
+      const classification: ReviewOutcomeClassification = 'state-approval';
+      this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, {
+        cycle,
+        outcome: 'approve',
+        reason: approvalReason,
+        malformed: true,
+        findings: [],
+        classification,
+        malformedOutputSnippet: '',
+      });
+      this.runtimeStore.recordFinalReviewOutcome(
+        record.metadataPath,
+        record.logPath,
+        this.buildFinalOutcomeRecord({
+          cycle,
+          outcome: 'approved',
+          reason: approvalReason,
+          classification,
+          malformed: true,
+          findings: [],
+          malformedOutputSnippet: '',
+        }),
+      );
+      return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+        completeSandcastleRun?.('completed');
+        this.runtimeStore.updateMetadata(record.metadataPath, {
+          STATUS: 'completed',
+          UNSAFE_REASON: null,
+          FAILURE_KIND: null,
+          REVIEW_STATUS: 'approved',
+          RUN_STATUS: 'completed',
+          STATE_APPROVAL_FALLBACK: approvalReason,
+        });
+        if (ticketPath) {
+          this.ensureTicketStatusDone(ticketPath, record.logPath);
+        }
+        this.runtimeStore.markDone(record);
+        this.runtimeStore.appendLog(record.logPath, approvalReason);
+        this.runtimeStore.appendLog(record.logPath, 'run completed');
+        await this.syncLinearTerminal(ticket, record, 'completed', {
+          nextAction: 'none; AFK run approved via state-based fallback',
+          reviewerNotes: approvalReason,
+          commits: this.recentCommitLines(worktreePath),
+        });
+        this.emitProgress(record.metadataPath, options.onProgress, {
+          ticketLabel: ticket.label,
+          message: 'run completed via state-based fallback',
+          sessionId,
+        });
+        return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'completed' };
+      });
+    }
+
     this.runtimeStore.updateMetadata(record.metadataPath, {
       STATUS: 'blocked',
       UNSAFE_REASON: reason,
       FAILURE_KIND: REVIEWER_EMPTY_OUTPUT_FAILURE_KIND,
       REVIEW_STATUS: 'needs-human',
       RUN_STATUS: 'blocked',
+      STATE_APPROVAL_FALLBACK: `state-based approval skipped: ${stateCheck.reason}`,
     });
     this.runtimeStore.recordReviewCycle(record.metadataPath, record.logPath, {
       cycle,
@@ -1333,6 +1403,51 @@ export class SingleTicketRunner {
       const message = error instanceof Error ? error.message : String(error);
       this.runtimeStore.appendLog(logPath, `ticket finalization commit failed: ${message}`);
     }
+  }
+
+  private evaluateTicketStateForApproval(
+    ticketPath: string | null | undefined,
+    worktreePath: string,
+  ): { approved: boolean; reason: string } {
+    if (!ticketPath) {
+      return { approved: false, reason: 'no ticket path available' };
+    }
+    const content = this.readTicketContent(ticketPath);
+    if (content === null) {
+      return { approved: false, reason: 'ticket file could not be read' };
+    }
+    if (!content.startsWith('---\n')) {
+      return { approved: false, reason: 'ticket has no YAML frontmatter' };
+    }
+    const end = content.indexOf('\n---\n', 4);
+    if (end === -1) {
+      return { approved: false, reason: 'ticket frontmatter is unclosed' };
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = YAML.parse(content.slice(4, end)) as Record<string, unknown>;
+    } catch {
+      return { approved: false, reason: 'ticket frontmatter is invalid YAML' };
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { approved: false, reason: 'ticket frontmatter is not a mapping' };
+    }
+    if (String(parsed.status ?? '').trim() !== 'done') {
+      return { approved: false, reason: 'ticket status is not done' };
+    }
+    if (!/^##\s+AFK\s+Summary\s*$/m.test(content)) {
+      return { approved: false, reason: 'ticket is missing ## AFK Summary' };
+    }
+    if (!/^###\s+Reviewer\s+Notes\s*$/m.test(content)) {
+      return { approved: false, reason: 'ticket is missing ### Reviewer Notes' };
+    }
+    if (this.hasUncommittedChanges(worktreePath)) {
+      return { approved: false, reason: 'worktree has uncommitted changes' };
+    }
+    return {
+      approved: true,
+      reason: 'ticket status is done and summary/reviewer notes are present with clean worktree',
+    };
   }
 
   private readTicketContent(ticketOrPath: TicketRecord | string): string | null {

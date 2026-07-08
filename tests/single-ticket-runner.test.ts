@@ -877,6 +877,213 @@ test('hands off when reviewer output stays empty after retry', async () => {
   assert.match(metadata, /"FAILURE_KIND": "reviewer-empty-output"/);
 });
 
+test('approves via state-based fallback when reviewer output is empty and ticket state is complete', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-state-approval-'));
+  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-state-approval-worktree-'));
+  git(worktreePath, ['init', '-b', 'main']);
+  git(worktreePath, ['config', 'user.name', 'Test']);
+  git(worktreePath, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(worktreePath, 'README.md'), 'base\n');
+  git(worktreePath, ['add', 'README.md']);
+  git(worktreePath, ['commit', '-m', 'init']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'state-approval.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(
+    ticketPath,
+    '---\nstatus: done\n---\n\n## AFK Summary\n\nCompleted.\n\n### Reviewer Notes\n\nApproved via state.\n',
+  );
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'review-empty', output: [] };
+      }
+      return { status: 'completed', sessionId: 'exec', output: ['done'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'state-approval',
+        label: 'feat/state-approval',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath,
+    },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(result.outcome, 'completed');
+  const metadataPath = path.join(
+    repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    'runtime-metadata',
+    'feat-state-approval.json',
+  );
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+  assert.equal(metadata.STATUS, 'completed');
+  assert.equal(metadata.REVIEW_STATUS, 'approved');
+  assert.equal(metadata.RUN_STATUS, 'completed');
+  assert.equal(metadata.FINAL_REVIEW_OUTCOME, 'approved');
+  assert.equal(metadata.FINAL_REVIEW_CLASSIFICATION, 'state-approval');
+  assert.equal(metadata.FAILURE_KIND, null);
+  assert.match(metadata.STATE_APPROVAL_FALLBACK ?? '', /ticket state indicates approval/);
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-state-approval.log');
+  assert.match(readFileSync(logPath, 'utf8'), /empty reviewer output, but ticket state indicates approval; finalizing/);
+});
+
+test('hands off via empty-output fallback when reviewer output is empty and ticket is missing AFK Summary', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-state-approval-missing-summary-'));
+  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-state-approval-missing-summary-worktree-'));
+  git(worktreePath, ['init', '-b', 'main']);
+  git(worktreePath, ['config', 'user.name', 'Test']);
+  git(worktreePath, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(worktreePath, 'README.md'), 'base\n');
+  git(worktreePath, ['add', 'README.md']);
+  git(worktreePath, ['commit', '-m', 'init']);
+
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'missing-summary.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, '---\nstatus: done\n---\n\n### Reviewer Notes\n\nApproved via state.\n');
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'review-empty', output: [] };
+      }
+      return { status: 'completed', sessionId: 'exec', output: ['done'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'missing-summary',
+        label: 'feat/missing-summary',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath,
+    },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(result.outcome, 'blocked');
+  const metadataPath = path.join(
+    repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    'runtime-metadata',
+    'feat-missing-summary.json',
+  );
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.FINAL_REVIEW_OUTCOME, 'needs-human');
+  assert.equal(metadata.FAILURE_KIND, 'reviewer-empty-output');
+  assert.match(metadata.STATE_APPROVAL_FALLBACK ?? '', /missing ## AFK Summary/);
+});
+
+test('hands off via empty-output fallback when reviewer output is empty and worktree is dirty', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-state-approval-dirty-worktree-'));
+  const worktreePath = mkdtempSync(path.join(tmpdir(), 'afk-runner-state-approval-dirty-worktree-worktree-'));
+  git(worktreePath, ['init', '-b', 'main']);
+  git(worktreePath, ['config', 'user.name', 'Test']);
+  git(worktreePath, ['config', 'user.email', 'test@example.com']);
+  writeFileSync(path.join(worktreePath, 'README.md'), 'base\n');
+  git(worktreePath, ['add', 'README.md']);
+  git(worktreePath, ['commit', '-m', 'init']);
+  writeFileSync(path.join(worktreePath, 'dirty.txt'), 'dirty\n');
+
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'dirty-worktree.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(
+    ticketPath,
+    '---\nstatus: done\n---\n\n## AFK Summary\n\nCompleted.\n\n### Reviewer Notes\n\nApproved via state.\n',
+  );
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode }) => {
+      if (invocationMode === 'reviewer') {
+        return { status: 'completed', sessionId: 'review-empty', output: [] };
+      }
+      return { status: 'completed', sessionId: 'exec', output: ['done'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'dirty-worktree',
+        label: 'feat/dirty-worktree',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath,
+    },
+  };
+
+  const result = await runner.launch(plan as never);
+
+  assert.equal(result.outcome, 'blocked');
+  const metadataPath = path.join(
+    repoRoot,
+    '.scratch',
+    '.opencode-afk-logs',
+    'runtime-metadata',
+    'feat-dirty-worktree.json',
+  );
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+  assert.equal(metadata.STATUS, 'blocked');
+  assert.equal(metadata.FINAL_REVIEW_OUTCOME, 'needs-human');
+  assert.equal(metadata.FAILURE_KIND, 'reviewer-empty-output');
+  assert.match(metadata.STATE_APPROVAL_FALLBACK ?? '', /uncommitted changes/);
+});
+
 test('records clean approval metadata when reviewer confirms done with no findings', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-clean-approval-'));
   const store = new RuntimeStore({ repoRoot });
