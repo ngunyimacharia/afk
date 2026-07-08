@@ -502,11 +502,10 @@ export class SingleTicketRunner {
       recordDockerCleanupResource();
     }
     if (warmSandbox?.worktreePath) {
-      // In Docker mode, the container sees the worktree at
-      // AFK_RUNTIME_WORKTREE_PATH, not the host path. Use the container
-      // path in the prompt so the agent finds the source files.
+      // In Docker mode, Sandcastle bind-mounts the worktree at
+      // $SANDBOX_REPO_DIR and sets WORKDIR to /home/agent.
       const promptWorktreePath =
-        plan.sandboxMode === 'docker' ? AFK_RUNTIME_WORKTREE_PATH : warmSandbox.worktreePath;
+        plan.sandboxMode === 'docker' ? '/home/agent' : warmSandbox.worktreePath;
       const updatedCheckout = { ...plan.checkout, worktreePath: promptWorktreePath };
       const currentSnapshot = plan.snapshots?.[ticket.label];
       plan = {
