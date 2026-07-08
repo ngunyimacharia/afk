@@ -119,19 +119,11 @@ function createPiSandcastleAgentProvider(selection: SandcastleAgentProviderSelec
     env: {},
     captureSessions: true,
     buildPrintCommand: (options) => ({
-      command: ['pi', ...(model ? ['--model', model] : []), '--print', '--mode', 'json'].join(' '),
+      command: ['pi', ...(model ? ['--model', model] : []), '--print', '--mode', 'text'].join(' '),
       stdin: options.prompt,
     }),
     parseStreamLine: (line: string) => {
-      try {
-        const parsed = JSON.parse(line);
-        const text = extractPiAssistantText(parsed);
-        if (text) return [{ type: 'text' as const, text }];
-        const event = parsePiEvent(parsed);
-        return event ? toSandcastleStreamEvents(event) : [];
-      } catch {
-        return line.trim() ? [{ type: 'text' as const, text: line.trim() }] : [];
-      }
+      return line.trim() ? [{ type: 'text' as const, text: line.trim() }] : [];
     },
   };
 }
