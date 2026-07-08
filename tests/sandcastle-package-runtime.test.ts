@@ -103,17 +103,18 @@ test('PI Sandcastle agent provider runs pi CLI and normalizes JSON progress even
     },
   });
 
-  const command = agent.buildPrintCommand?.('hello pi');
+  const command = agent.buildPrintCommand?.({ prompt: 'hello pi', dangerouslySkipPermissions: false });
   assert.equal(agent.name, 'pi');
   assert.equal(agent.env?.HOME, '/home/sandbox');
-  assert.equal(command?.command, 'pi');
-  assert.deepEqual(command?.args, ['--model', 'openai/gpt-5.1', '--print', 'hello pi', '--json']);
+  assert.deepEqual(command, {
+    command: 'pi --model openai/gpt-5.1 --print --json',
+    stdin: 'hello pi',
+  });
   assert.deepEqual(agent.parseStreamLine?.('{"type":"session.started","session_id":"pi-session"}'), [
-    { message: 'created pi session pi-session', sessionId: 'pi-session' },
+    { type: 'session_id', sessionId: 'pi-session' },
+    { type: 'text', text: 'created pi session pi-session' },
   ]);
-  assert.deepEqual(agent.parseStreamLine?.('{"type":"message","content":"done"}'), [
-    { kind: 'message', activity: 'assistant', message: 'done', sessionId: undefined },
-  ]);
+  assert.deepEqual(agent.parseStreamLine?.('{"type":"message","content":"done"}'), [{ type: 'text', text: 'done' }]);
 });
 
 test('Sandcastle package capability gate blocks when the sandbox cannot report container identity', async () => {

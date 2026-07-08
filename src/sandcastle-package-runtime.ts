@@ -10,6 +10,11 @@ import { type DockerOptions, docker } from '@ai-hero/sandcastle/sandboxes/docker
 import { parsePiEvent } from './pi.js';
 import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 
+type SandcastleStreamEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool_call'; name: string; args: string }
+  | { type: 'session_id'; sessionId: string };
+
 export interface AfkSandcastleMount {
   hostPath: string;
   sandboxPath: string;
@@ -99,9 +104,9 @@ export function createAfkSandcastleAgentProvider(selection: SandcastleAgentProvi
     name: selection.provider,
     env: {},
     captureSessions: true,
-    buildPrintCommand: () => ({
-      command: selection.provider,
-      args: selection.model ? ['--model', selection.model] : [],
+    buildPrintCommand: (options) => ({
+      command: [selection.provider, ...(selection.model ? ['--model', selection.model] : [])].join(' '),
+      stdin: options.prompt,
     }),
     parseStreamLine: () => [],
   };
@@ -112,23 +117,35 @@ function createPiSandcastleAgentProvider(selection: SandcastleAgentProviderSelec
     name: 'pi',
     env: { HOME: '/home/sandbox' },
     captureSessions: true,
-    buildPrintCommand: (prompt?: string) => ({
-      command: 'pi',
-      args: [
-        ...(selection.model ? ['--model', selection.model] : []),
-        ...(prompt ? ['--print', prompt] : ['--print']),
-        '--json',
-      ],
+    buildPrintCommand: (options) => ({
+      command: ['pi', ...(selection.model ? ['--model', selection.model] : []), '--print', '--json'].join(' '),
+      stdin: options.prompt,
     }),
     parseStreamLine: (line: string) => {
       try {
         const event = parsePiEvent(JSON.parse(line));
-        return event ? [event] : [];
+        return event ? toSandcastleStreamEvents(event) : [];
       } catch {
-        return line.trim() ? [{ message: line.trim() }] : [];
+        return line.trim() ? [{ type: 'text', text: line.trim() }] : [];
       }
     },
   };
+}
+
+function toSandcastleStreamEvents(event: {
+  message: string;
+  sessionId?: string | null;
+  activity?: string | null;
+  toolName?: string | null;
+}): SandcastleStreamEvent[] {
+  const events: SandcastleStreamEvent[] = [];
+  if (event.sessionId) events.push({ type: 'session_id', sessionId: event.sessionId });
+  if (event.activity === 'tool' && event.toolName) {
+    events.push({ type: 'tool_call', name: event.toolName, args: event.message });
+  } else if (event.message) {
+    events.push({ type: 'text', text: event.message });
+  }
+  return events;
 }
 
 export async function createAfkSandcastleDockerRuntime(
