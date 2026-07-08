@@ -37,7 +37,7 @@ test('collects PI Docker auth mount as writable for session persistence', () => 
     ),
   } as never);
 
-  assert.equal(mounts.find((mount) => mount.sandboxPath === '/home/sandbox/.pi')?.readonly, false);
+  assert.equal(mounts.find((mount) => mount.sandboxPath === '/home/agent/.pi')?.readonly, false);
   assert.equal(mounts.find((mount) => mount.sandboxPath === '/home/sandbox/.codex')?.readonly, true);
 });
 
@@ -87,7 +87,7 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   assert.equal(metadata.PROVIDER_SESSION_ID, 'session-1');
   assert.equal(metadata.SANDCASTLE_EXECUTION_PROVIDER, 'codex');
   assert.equal(metadata.SANDCASTLE_EXECUTION_MODEL_ID, 'model-1');
-  assert.deepEqual(metadata.SANDCASTLE_EXECUTION_DOCKER_AUTH.env, ['OPENAI_API_KEY']);
+  assert.deepEqual(metadata.SANDCASTLE_EXECUTION_DOCKER_AUTH.env, []);
   assert.equal(metadata.SANDCASTLE_REVIEWER_PROVIDER, 'claudeCode');
   assert.equal(metadata.SANDCASTLE_REVIEWER_MODEL_ID, 'review-model');
   assert.match(readFileSync(logPath, 'utf8'), /ticket start: feat\/001/);
@@ -138,7 +138,7 @@ test('launches a PI ticket and writes provider-specific runtime metadata', async
   assert.equal(metadata.EXECUTION_PROVIDER, 'pi');
   assert.equal(metadata.SANDCASTLE_EXECUTION_PROVIDER, 'pi');
   assert.equal(metadata.SANDCASTLE_EXECUTION_MODEL_ID, null);
-  assert.deepEqual(metadata.SANDCASTLE_EXECUTION_DOCKER_AUTH.env, ['PI_API_KEY']);
+  assert.deepEqual(metadata.SANDCASTLE_EXECUTION_DOCKER_AUTH.env, []);
   assert.equal(metadata.SANDCASTLE_REVIEWER_PROVIDER, 'claudeCode');
   assert.match(readFileSync(logPath, 'utf8'), /pi worker started/);
   assert.match(readFileSync(logPath, 'utf8'), /reviewer model: review-model/);
@@ -916,6 +916,83 @@ test('blocks Docker Sandcastle launch when runtime image validation fails', asyn
   );
   assert.equal(sandcastleRecord.cleanupResults?.[0]?.status, 'failed');
   assert.match(sandcastleRecord.cleanupResults?.[0]?.message ?? '', /docker daemon unavailable/);
+});
+
+test('records failed Sandcastle runtime when Docker sandbox creation throws', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-docker-create-throws-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'docker-create.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, '---\nstatus: ready-for-agent\n---\n\n## Title\n\nDocker run\n');
+  setDefaultSandcastleDockerCleanup({
+    removeContainer: async () => ({ status: 'skipped', message: 'container never started' }),
+  });
+  const runner = new SingleTicketRunner(
+    store,
+    { execute: async () => ({ status: 'failed', unsafeReason: 'direct provider should not run' }) },
+    {},
+    undefined,
+    undefined,
+    {
+      validateRuntimeImage: async () => ({
+        ok: true,
+        image: AFK_RUNTIME_IMAGE,
+        capability: AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+      }),
+      create: async () => {
+        throw new Error('docker create failed');
+      },
+    },
+  );
+  const plan = {
+    repoRoot,
+    harness: 'Codex',
+    model: { id: 'model-1' },
+    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
+    reviewerHarness: 'Claude',
+    reviewerModel: { id: 'review-model' },
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    sandboxMode: 'docker',
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'docker-create',
+        label: 'feat/docker-create',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'afk/feat/docker-create',
+      branchNameSource: 'fallback',
+      worktreePath: repoRoot,
+    },
+  };
+
+  const result = await runner.launch(plan as never, { runId: 'run-docker-create-throws' });
+  resetDefaultSandcastleDockerCleanup();
+
+  assert.equal(result.outcome, 'failed');
+  const metadata = JSON.parse(
+    readFileSync(
+      path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata', 'feat-docker-create.json'),
+      'utf8',
+    ),
+  );
+  assert.equal(metadata.STATUS, 'failed');
+  assert.match(metadata.UNSAFE_REASON, /docker create failed/);
+  const sandcastleRecord = new SandcastleRuntimeStore({ repoRoot }).readRun(
+    path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', 'run-docker-create-throws', 'record.json'),
+  );
+  assert.equal(sandcastleRecord.terminal.status, 'failed');
+  assert.equal(sandcastleRecord.phases[0]?.status, 'failed');
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.status, 'skipped');
 });
 
 test('blocks before provider execution when launch context mismatches', async () => {

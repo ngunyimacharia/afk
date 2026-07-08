@@ -237,14 +237,25 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
 }
 
 export function collectSandcastleDockerMounts(plan: LaunchPlan) {
-  const mounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
+  const providerMounts = [plan.sandcastleProvider, plan.reviewerSandcastleProvider]
     .flatMap((provider) => provider?.docker.mounts ?? [])
     .map((mount) => ({
       hostPath: mount.source,
       sandboxPath: mount.target,
       readonly: mount.target !== AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi,
     }));
-  return Array.from(new Map(mounts.map((mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount])).values());
+  // Mount the repo's .git directory so worktree .git file references
+  // resolve inside the Docker container. The host's absolute .git path is
+  // mounted at the same location inside the container.
+  const gitDir = plan.repoRoot ? path.join(plan.repoRoot, '.git') : null;
+  const mounts = gitDir
+    ? [...providerMounts, { hostPath: gitDir, sandboxPath: gitDir, readonly: true as const }]
+    : providerMounts;
+  return Array.from(
+    new Map(
+      mounts.map((mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount]),
+    ).values(),
+  );
 }
 
 function collectSandcastleDockerEnv(plan: LaunchPlan) {
