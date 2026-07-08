@@ -97,7 +97,8 @@ jobs:
       - name: Build binary
         run: |
           mkdir -p dist/bin
-          bun build ./src/bin.ts --compile --target ${{ matrix.target }} --outfile dist/bin/${{ matrix.asset }}
+          VERSION=$(node -p "require('./package.json').version")
+          bun build ./src/bin.ts --compile --target ${{ matrix.target }} --outfile dist/bin/${{ matrix.asset }} --define "process.env.AFK_VERSION=$VERSION"
 
       - name: Make binary executable
         run: chmod +x dist/bin/${{ matrix.asset }}
