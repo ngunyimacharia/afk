@@ -2560,6 +2560,68 @@ test('retries malformed reviewer output once before implementation fixup', async
   assert.match(readFileSync(logPath, 'utf8'), /malformed reviewer output retry 1\/2/);
 });
 
+test('uses empty-aware repair prompt after empty reviewer output', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-empty-retry-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, 'ticket.md');
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n\n## Title\n\nImplement the thing\n');
+  let repairPrompt = '';
+  let reviewerCalls = 0;
+  const runner = new SingleTicketRunner(store, {
+    execute: async ({ invocationMode, prompt }) => {
+      if (invocationMode === 'reviewer') {
+        reviewerCalls += 1;
+        if (reviewerCalls === 1) {
+          return { status: 'completed', sessionId: 'session-review', removable: true, output: [] };
+        }
+        repairPrompt = prompt;
+        return {
+          status: 'completed',
+          sessionId: 'session-review',
+          removable: true,
+          output: [JSON.stringify({ done: true, summary: 'Looks good', findings: [] })],
+        };
+      }
+      return { status: 'completed', sessionId: 'session-exec', removable: true, output: ['done'] };
+    },
+  });
+  const plan = {
+    repoRoot,
+    model: { id: 'model-1' },
+    reviewerModel: { id: 'review-model' },
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'empty-retry',
+        label: 'feat/empty-retry',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'feat',
+      branchNameSource: 'fallback',
+      worktreePath: '/tmp/worktree',
+    },
+  };
+
+  await runner.launch(plan as never);
+
+  assert.equal(reviewerCalls, 2);
+  assert.match(repairPrompt, /The previous reviewer response was empty\./);
+  assert.match(repairPrompt, /must still return EXACTLY ONE LINE of raw JSON/);
+  assert.match(repairPrompt, /committing changes.*does not remove the requirement to return JSON/);
+  assert.doesNotMatch(repairPrompt, /previous reviewer response was malformed/);
+  const logPath = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'feat-empty-retry.log');
+  assert.match(readFileSync(logPath, 'utf8'), /empty reviewer output retry 1\/2/);
+});
+
 test('hands off after repeated malformed reviewer output without implementation fixup', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-reviewer-malformed-handoff-'));
   const store = new RuntimeStore({ repoRoot });
