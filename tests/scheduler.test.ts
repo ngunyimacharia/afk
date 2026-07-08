@@ -188,6 +188,45 @@ test('waits for dependency completion before launching dependent ticket', async 
   assert.deepEqual(started, ['feat-a/001', 'feat-a/002']);
 });
 
+test('waits for same-feature full-label dependency before launching dependent ticket', async () => {
+  const started: string[] = [];
+  const scheduler = createScheduler({
+    launch: async (plan: LaunchPlan) => {
+      const ticket = plan.tickets[0];
+      assert.ok(ticket);
+      started.push(ticket.label);
+      return { scheduled: true, message: ticket.label };
+    },
+  });
+
+  const plan = basePlan({
+    tickets: [
+      {
+        path: '/tmp/a-2.md',
+        feature: 'feat-a',
+        issueName: '002',
+        label: 'feat-a/002',
+        executorAfk: true,
+        dependsOn: ['feat-a/001'],
+      },
+      {
+        path: '/tmp/a-1.md',
+        feature: 'feat-a',
+        issueName: '001',
+        label: 'feat-a/001',
+        status: 'done',
+        executorAfk: true,
+      },
+    ],
+  });
+
+  const result = await scheduler.launch(plan as never);
+
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(started, ['feat-a/002']);
+  assert.equal(result.ticketResults.find((entry) => entry.ticket.label === 'feat-a/002')?.outcome, 'completed');
+});
+
 test('treats unselected dependencies as already validated by launch selection', async () => {
   const started: string[] = [];
   const scheduler = createScheduler({

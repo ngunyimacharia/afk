@@ -41,7 +41,7 @@ AFK expects tickets to live under `.scratch/<feature-slug>/issues/`. Create `.sc
 
 Codex uses the OpenAI Codex SDK. Before launching a Codex ticket:
 
-1. Install the Codex CLI/SDK and authenticate it with `OPENAI_API_KEY` set in your environment.
+1. Install the Codex CLI/SDK and authenticate it. Docker runs mount the host `~/.codex` subscription config; `OPENAI_API_KEY` is optional when that config is present.
 2. Run `afk` interactively; the launch wizard shows Codex only when model discovery returns at least one usable launch model.
 3. Codex always appears with the built-in `codex/default` model, which lets Codex use its configured default model.
 4. Optionally set `AFK_CODEX_MODELS` to a comma-separated list of explicit Codex model names to add more launch choices (for example, `AFK_CODEX_MODELS="gpt-5.1-codex,gpt-5.1-codex-mini"`). AFK prefixes each entry with `codex/` in the picker and sends only the suffix to Codex.

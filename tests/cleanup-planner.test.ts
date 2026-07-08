@@ -120,6 +120,114 @@ test('classifies only terminal Sandcastle runs for cleanup', () => {
   assert.equal(plan.preservedIssues[0], humanPath);
 });
 
+test('plans completed scratch feature directories for deletion without Sandcastle records', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const featureDir = path.join(repoRoot, '.scratch', 'feat');
+  const issuesDir = path.join(featureDir, 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  const firstPath = path.join(issuesDir, '001.md');
+  const secondPath = path.join(issuesDir, '002.md');
+  writeFileSync(path.join(featureDir, 'PRD.md'), '---\nstatus: ready-for-agent\n---\n# Feature\n');
+  writeFileSync(firstPath, '---\nstatus: done\n---\n');
+  writeFileSync(secondPath, '---\nstatus: resolved\n---\n');
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+
+  assert.deepEqual(plan.issueDeletionTargets.map((target) => target.issuePath).sort(), [firstPath, secondPath].sort());
+  assert.deepEqual(plan.featureDirectoriesToDelete, [featureDir]);
+});
+
+test('plans missing PRD issues instead of deleting partially represented feature', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const featureDir = path.join(repoRoot, '.scratch', 'feat');
+  const issuesDir = path.join(featureDir, 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(
+    path.join(featureDir, 'PRD.md'),
+    [
+      '# Feature',
+      '',
+      '## Goals',
+      '',
+      '1. Make stale-session detection tolerate long-running tools.',
+      '2. Validate test-environment readiness before launching tickets.',
+      '3. Improve observability so summaries explain slow runs.',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    path.join(issuesDir, '03-stale-detection-recovery.md'),
+    '---\nstatus: done\n---\n\n## Make stale detection tolerate long-running tools\n',
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+
+  assert.deepEqual(plan.featureDirectoriesToDelete, []);
+  assert.equal(plan.prdIssueCreationTargets.length, 2);
+  assert.match(plan.prdIssueCreationTargets[0]?.issuePath ?? '', /04-validate-test-environment-readiness/);
+  assert.match(plan.prdIssueCreationTargets[1]?.issuePath ?? '', /05-improve-observability/);
+});
+
+test('preserves terminal issue when an active issue depends on it', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const featureDir = path.join(repoRoot, '.scratch', 'feat');
+  const issuesDir = path.join(featureDir, 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  const dependencyPath = path.join(issuesDir, '01-foundation.md');
+  writeFileSync(path.join(featureDir, 'PRD.md'), '# Feature\n');
+  writeFileSync(dependencyPath, '---\nstatus: done\n---\n');
+  writeFileSync(
+    path.join(issuesDir, '02-followup.md'),
+    '---\nstatus: ready-for-agent\nDepends-On:\n  - 01-foundation\n---\n',
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+
+  assert.deepEqual(
+    plan.issueDeletionTargets.map((target) => target.issuePath),
+    [],
+  );
+  assert.deepEqual(plan.featureDirectoriesToDelete, []);
+});
+
+test('preserves scratch feature directory when any issue is non-terminal', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const featureDir = path.join(repoRoot, '.scratch', 'feat');
+  const issuesDir = path.join(featureDir, 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  const donePath = path.join(issuesDir, 'done.md');
+  writeFileSync(path.join(featureDir, 'PRD.md'), '# Feature\n');
+  writeFileSync(donePath, '---\nstatus: done\n---\n');
+  writeFileSync(path.join(issuesDir, 'next.md'), '---\nstatus: ready-for-agent\n---\n');
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+
+  assert.deepEqual(
+    plan.issueDeletionTargets.map((target) => target.issuePath),
+    [donePath],
+  );
+  assert.deepEqual(plan.featureDirectoriesToDelete, []);
+});
+
+test('preserves completed scratch feature directory with non-canonical files', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const featureDir = path.join(repoRoot, '.scratch', 'feat');
+  const issuesDir = path.join(featureDir, 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  const donePath = path.join(issuesDir, 'done.md');
+  writeFileSync(path.join(featureDir, 'PRD.md'), '# Feature\n');
+  writeFileSync(path.join(featureDir, 'notes.txt'), 'keep me\n');
+  writeFileSync(donePath, '---\nstatus: done\n---\n');
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+
+  assert.deepEqual(
+    plan.issueDeletionTargets.map((target) => target.issuePath),
+    [donePath],
+  );
+  assert.deepEqual(plan.featureDirectoriesToDelete, []);
+});
+
 test('plans Sandcastle cleanup resources for terminal runs', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');

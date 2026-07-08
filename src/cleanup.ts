@@ -39,6 +39,7 @@ export interface CleanupIssueRecord {
   issueName: string;
   issuePath?: string;
   status?: string;
+  dependsOn?: string[];
 }
 
 export interface CleanupIssueDeletionTarget {
@@ -46,6 +47,14 @@ export interface CleanupIssueDeletionTarget {
   issueName: string;
   issuePath: string;
   reason: string;
+}
+
+export interface PrdIssueCreationTarget {
+  feature: string;
+  issueName: string;
+  issuePath: string;
+  title: string;
+  sourceGoal: string;
 }
 
 export interface RuntimeArtifactCleanupTarget {
@@ -98,6 +107,7 @@ export interface CleanupTarget {
 export interface CleanupPlan {
   terminalTargets: CleanupTarget[];
   issueDeletionTargets: CleanupIssueDeletionTarget[];
+  prdIssueCreationTargets: PrdIssueCreationTarget[];
   runtimeArtifactTargets: RuntimeArtifactCleanupTarget[];
   sandcastleResourceTargets?: SandcastleCleanupResourceTarget[];
   orphanedWorktreeTargets: OrphanedWorktreeCleanupTarget[];
@@ -189,6 +199,182 @@ function parseStatus(content: string, frontmatter: Record<string, unknown>): str
   if (typeof frontmatterStatus === 'string' && frontmatterStatus.trim()) return frontmatterStatus.trim();
   void content;
   return undefined;
+}
+
+function parseCleanupDependsOn(frontmatter: Record<string, unknown>): string[] {
+  const value = frontmatter['Depends-On'] ?? frontmatter.DependsOn ?? frontmatter.dependsOn;
+  if (!value) return [];
+  if (typeof value === 'string' || typeof value === 'number') return [String(value).trim()].filter(Boolean);
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === 'string' || typeof entry === 'number' ? String(entry).trim() : ''))
+    .filter(Boolean);
+}
+
+function normalizeCleanupDependency(feature: string, dependency: string): string {
+  return dependency.includes('/') ? dependency : `${feature}/${dependency}`;
+}
+
+function prdPathForFeature(repoRoot: string, feature: string): string | undefined {
+  const featurePath = scratchFeaturePath(repoRoot, feature);
+  if (!featurePath) return undefined;
+  const prdPath = path.join(featurePath, 'PRD.md');
+  return fileExists(prdPath) ? prdPath : undefined;
+}
+
+function extractNumberedGoalsFromPrd(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  const goals: string[] = [];
+  let inGoals = false;
+  for (const line of lines) {
+    if (/^##\s+/.test(line)) {
+      inGoals = /^##\s+Goals\s*$/i.test(line.trim());
+      continue;
+    }
+    if (!inGoals) continue;
+    const match = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (match?.[1]) goals.push(match[1].trim());
+  }
+  return goals;
+}
+
+const COVERAGE_STOPWORDS = new Set([
+  'about',
+  'after',
+  'against',
+  'agent',
+  'agents',
+  'because',
+  'before',
+  'being',
+  'between',
+  'cleanup',
+  'completed',
+  'feature',
+  'features',
+  'from',
+  'goal',
+  'issue',
+  'issues',
+  'make',
+  'must',
+  'that',
+  'their',
+  'there',
+  'these',
+  'this',
+  'through',
+  'when',
+  'where',
+  'with',
+  'work',
+]);
+
+function normalizeCoverageToken(token: string): string {
+  const normalized = token.replace(/^-+|-+$/g, '');
+  if (normalized === 'recovery') return 'recover';
+  if (normalized.endsWith('ies') && normalized.length > 5) return `${normalized.slice(0, -3)}y`;
+  if (normalized.endsWith('ing') && normalized.length > 6) {
+    const stem = normalized.slice(0, -3);
+    return stem.endsWith('nn') ? stem.slice(0, -1) : stem;
+  }
+  if (normalized.endsWith('s') && normalized.length > 5) return normalized.slice(0, -1);
+  return normalized;
+}
+function coverageTokens(value: string): Set<string> {
+  return new Set(
+    value
+      .toLowerCase()
+      .replace(/-/g, ' ')
+      .match(/[a-z][a-z0-9]{3,}/g)
+      ?.map(normalizeCoverageToken)
+      .filter((token) => token.length >= 4 && !COVERAGE_STOPWORDS.has(token)) ?? [],
+  );
+}
+
+function isGoalCoveredByIssue(goal: string, issueContent: string): boolean {
+  const goalTokens = coverageTokens(goal);
+  if (goalTokens.size === 0) return true;
+  const issueTokens = coverageTokens(issueContent);
+  let overlaps = 0;
+  for (const token of goalTokens) {
+    if (issueTokens.has(token)) overlaps += 1;
+  }
+  return overlaps >= Math.min(3, goalTokens.size) && overlaps / goalTokens.size >= 0.35;
+}
+
+function titleFromGoal(goal: string): string {
+  return goal.replace(/[.;:]$/g, '').trim();
+}
+
+function slugFromTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/g, '');
+}
+
+function nextIssueNumber(existingIssues: CleanupIssueRecord[], offset: number): string {
+  const maxExisting = existingIssues.reduce((max, issue) => {
+    const match = issue.issueName.match(/^(\d+)/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  return String(maxExisting + offset + 1).padStart(2, '0');
+}
+
+function buildMissingPrdIssueTargets(
+  repoRoot: string,
+  feature: string,
+  featureIssues: CleanupIssueRecord[],
+): PrdIssueCreationTarget[] {
+  const prdPath = prdPathForFeature(repoRoot, feature);
+  if (!prdPath) return [];
+  const goals = extractNumberedGoalsFromPrd(readFileSync(prdPath, 'utf8'));
+  if (goals.length === 0) return [];
+  const issueContents = featureIssues.flatMap((issue) => {
+    if (!issue.issuePath || !fileExists(issue.issuePath)) return [];
+    return [readFileSync(issue.issuePath, 'utf8').split(/^## AFK Summary$/m)[0] ?? ''];
+  });
+  const uncoveredGoals = goals.filter((goal) => !issueContents.some((content) => isGoalCoveredByIssue(goal, content)));
+  const issuesDir = path.join(path.dirname(prdPath), 'issues');
+  return uncoveredGoals.map((goal, index) => {
+    const title = titleFromGoal(goal);
+    const issueName = `${nextIssueNumber(featureIssues, index)}-${slugFromTitle(title) || 'prd-goal'}`;
+    return {
+      feature,
+      issueName,
+      issuePath: path.join(issuesDir, `${issueName}.md`),
+      title,
+      sourceGoal: goal,
+    };
+  });
+}
+
+function issueContentFromPrdTarget(target: PrdIssueCreationTarget): string {
+  return [
+    '---',
+    'status: ready-for-agent',
+    '---',
+    '',
+    `## ${target.title}`,
+    '',
+    '## Scope',
+    '',
+    'Includes:',
+    `- Implement the remaining PRD goal: ${target.sourceGoal}`,
+    '',
+    'Excludes:',
+    '- Unrelated PRD goals and opportunistic refactors.',
+    '',
+    '## Acceptance Criteria',
+    '',
+    '1. The behavior described by the PRD goal is implemented and externally observable.',
+    '2. Focused tests or documented verification cover the new behavior.',
+    '3. The AFK Summary and Reviewer Notes are added when the ticket is completed.',
+    '',
+  ].join('\n');
 }
 
 function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
@@ -631,6 +817,86 @@ function _runtimeArtifactTarget(repoRoot: string, feature: string, issueName: st
   };
 }
 
+function scratchFeaturePath(repoRoot: string, feature: string): string | undefined {
+  return resolvePathWithinRoot(path.resolve(repoRoot, '.scratch'), feature);
+}
+
+function isCanonicalScratchFeatureDirectory(repoRoot: string, feature: string): boolean {
+  const featurePath = scratchFeaturePath(repoRoot, feature);
+  if (!featurePath || !exists(featurePath)) return false;
+  const issuesDir = path.join(featurePath, 'issues');
+  if (!exists(issuesDir)) return false;
+
+  for (const entry of readdirSync(featurePath, { withFileTypes: true })) {
+    if (entry.name === 'PRD.md' || entry.name === 'execution.json') continue;
+    if (entry.name === 'issues' && entry.isDirectory()) continue;
+    return false;
+  }
+
+  for (const entry of readdirSync(issuesDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) return false;
+  }
+
+  return true;
+}
+
+function buildScratchIssueCleanupPlan(
+  repoRoot: string,
+  issues: CleanupIssueRecord[],
+  preservedRunFeatures: Set<string>,
+  terminalRunKeys: Set<string>,
+): {
+  issueDeletionTargets: CleanupIssueDeletionTarget[];
+  prdIssueCreationTargets: PrdIssueCreationTarget[];
+  featureDirectoriesToDelete: string[];
+} {
+  const issuesByFeature = new Map<string, CleanupIssueRecord[]>();
+  for (const issue of issues) {
+    const list = issuesByFeature.get(issue.feature) ?? [];
+    list.push(issue);
+    issuesByFeature.set(issue.feature, list);
+  }
+
+  const activeDependencyKeys = new Set(
+    issues
+      .filter((issue) => !TERMINAL_STATUSES.has(normalize(issue.status)))
+      .flatMap((issue) =>
+        (issue.dependsOn ?? []).map((dependency) => normalizeCleanupDependency(issue.feature, dependency)),
+      ),
+  );
+
+  const issueDeletionTargets = issues
+    .filter((issue) => issue.issuePath && TERMINAL_STATUSES.has(normalize(issue.status)))
+    .filter((issue) => !terminalRunKeys.has(`${issue.feature}/${issue.issueName}`))
+    .filter((issue) => !activeDependencyKeys.has(`${issue.feature}/${issue.issueName}`))
+    .map((issue) => ({
+      feature: issue.feature,
+      issueName: issue.issueName,
+      issuePath: issue.issuePath as string,
+      reason: `terminal ticket status: ${normalize(issue.status)}`,
+    }));
+
+  const prdIssueCreationTargets = Array.from(issuesByFeature.entries()).flatMap(([feature, featureIssues]) => {
+    if (preservedRunFeatures.has(feature)) return [];
+    if (featureIssues.length === 0) return [];
+    if (!featureIssues.every((issue) => TERMINAL_STATUSES.has(normalize(issue.status)))) return [];
+    return buildMissingPrdIssueTargets(repoRoot, feature, featureIssues);
+  });
+  const featuresWithMissingPrdIssues = new Set(prdIssueCreationTargets.map((target) => target.feature));
+
+  const featureDirectoriesToDelete = Array.from(issuesByFeature.entries()).flatMap(([feature, featureIssues]) => {
+    if (featuresWithMissingPrdIssues.has(feature)) return [];
+    if (preservedRunFeatures.has(feature)) return [];
+    if (featureIssues.length === 0) return [];
+    if (!featureIssues.every((issue) => TERMINAL_STATUSES.has(normalize(issue.status)))) return [];
+    if (!isCanonicalScratchFeatureDirectory(repoRoot, feature)) return [];
+    const featurePath = scratchFeaturePath(repoRoot, feature);
+    return featurePath ? [featurePath] : [];
+  });
+
+  return { issueDeletionTargets, prdIssueCreationTargets, featureDirectoriesToDelete };
+}
+
 export class ScratchCleanupIssueSource implements CleanupIssueSource {
   constructor(private readonly repoRoot: string) {}
 
@@ -652,6 +918,7 @@ export class ScratchCleanupIssueSource implements CleanupIssueSource {
             issueName: path.basename(file, '.md'),
             issuePath,
             status: parseStatus(content, frontmatter),
+            dependsOn: parseCleanupDependsOn(frontmatter),
           };
         });
     });
@@ -695,6 +962,16 @@ export class CleanupPlanner {
     const terminalKeys = new Set(
       terminalRuns.map(({ record }) => `${record.ticket.featureSlug}/${record.ticket.issueName}`),
     );
+    const preservedRunFeatures = new Set(preservedRuns.map(({ record }) => record.ticket.featureSlug));
+    const scratchIssues = (
+      this.input.issueSource ?? new ScratchCleanupIssueSource(this.input.repoRoot)
+    ).listCleanupIssues();
+    const scratchCleanupPlan = buildScratchIssueCleanupPlan(
+      this.input.repoRoot,
+      scratchIssues,
+      preservedRunFeatures,
+      terminalKeys,
+    );
     const orphanedWorktreeTargets = _buildOrphanedWorktreeTargets(this.input.repoRoot, terminalKeys, sandcastleRuns);
     const sandcastleResourceTargets = terminalRuns.flatMap(({ record, recordPath }) =>
       record.cleanupResources
@@ -719,14 +996,15 @@ export class CleanupPlanner {
     if (sandcastleRuns.length === 0) {
       return {
         terminalTargets: [],
-        issueDeletionTargets: [],
+        issueDeletionTargets: scratchCleanupPlan.issueDeletionTargets,
+        prdIssueCreationTargets: scratchCleanupPlan.prdIssueCreationTargets,
         runtimeArtifactTargets: [],
         sandcastleResourceTargets: [],
         orphanedWorktreeTargets,
         pendingPostMergeCleanupTargets,
         preservedIssues: [],
         preservedArtifacts: [],
-        featureDirectoriesToDelete: [],
+        featureDirectoriesToDelete: scratchCleanupPlan.featureDirectoriesToDelete,
       };
     }
 
@@ -739,7 +1017,8 @@ export class CleanupPlanner {
           issuePath: record.ticket.ticketPath,
           reason: `terminal Sandcastle run: ${record.terminal.status}`,
         })),
-      issueDeletionTargets: [],
+      issueDeletionTargets: scratchCleanupPlan.issueDeletionTargets,
+      prdIssueCreationTargets: scratchCleanupPlan.prdIssueCreationTargets,
       runtimeArtifactTargets: [],
       sandcastleResourceTargets,
       orphanedWorktreeTargets,
@@ -748,7 +1027,7 @@ export class CleanupPlanner {
         .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
         .map(({ record }) => record.ticket.ticketPath),
       preservedArtifacts: [],
-      featureDirectoriesToDelete: [],
+      featureDirectoriesToDelete: scratchCleanupPlan.featureDirectoriesToDelete,
     };
   }
 }
@@ -899,13 +1178,22 @@ export class CleanupExecutor {
     repoRoot: string,
   ): Promise<{
     deleted: string[];
+    createdMissingIssues: string[];
     postMergeCleanupResults: PendingPostMergeCleanupResult[];
     orphanedWorktreeResults: OrphanedWorktreeCleanupResult[];
   }> {
     const deleted: string[] = [];
+    const createdMissingIssues: string[] = [];
     const postMergeCleanupResults: PendingPostMergeCleanupResult[] = [];
     const orphanedWorktreeResults: OrphanedWorktreeCleanupResult[] = [];
     const remainingPending: PendingPostMergeCleanupItem[] = [];
+
+    for (const target of plan.prdIssueCreationTargets) {
+      if (fileExists(target.issuePath)) continue;
+      mkdirSync(path.dirname(target.issuePath), { recursive: true });
+      writeFileSync(target.issuePath, issueContentFromPrdTarget(target), 'utf8');
+      createdMissingIssues.push(target.issuePath);
+    }
 
     for (const target of plan.sandcastleResourceTargets ?? []) {
       const { deleted: deletedResource, result } = await cleanupSandcastleResource(repoRoot, target);
@@ -966,6 +1254,6 @@ export class CleanupExecutor {
         deleted.push(plan.workspaceExecutionPath);
       } catch {}
     }
-    return { deleted, postMergeCleanupResults, orphanedWorktreeResults };
+    return { deleted, createdMissingIssues, postMergeCleanupResults, orphanedWorktreeResults };
   }
 }

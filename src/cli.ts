@@ -460,6 +460,11 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
       'Matching logs / metadata to delete',
       ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
       '',
+      'Missing PRD issues to create',
+      ...(plan.prdIssueCreationTargets.length
+        ? plan.prdIssueCreationTargets.map((target) => `- ${target.issuePath} - ${target.title}`)
+        : ['- none']),
+      '',
       'Sandcastle cleanup resources',
       ...(sandcastleTargets.length ? sandcastleTargets : ['- none']),
       '',
@@ -527,9 +532,13 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
           })
         : ['- none']),
     ].join('\n');
+    const createdMissingIssues = [
+      'Created missing PRD issues',
+      ...(result.createdMissingIssues.length ? result.createdMissingIssues.map((item) => `- ${item}`) : ['- none']),
+    ].join('\n');
     return {
       code: 0,
-      message: `${dryRun}\n\n${sandcastleResults}\n\n${retryResults}\n\n${orphanedWorktreeResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
+      message: `${dryRun}\n\n${createdMissingIssues}\n\n${sandcastleResults}\n\n${retryResults}\n\n${orphanedWorktreeResults}\n\nExecuted:\n${result.deleted.map((item) => `- ${item}`).join('\n') || '- none'}`,
     };
   }
   if (command === 'sync') return runSync();

@@ -105,7 +105,7 @@ existing auth env vars and required config mounts:
 
 - OpenCode: `OPENCODE_AUTH` and `$XDG_CONFIG_HOME/opencode` (or `~/.config/opencode`) mounted at `/home/sandbox/.config/opencode`
 - Claude Code: `ANTHROPIC_API_KEY` and `~/.claude` mounted at `/home/sandbox/.claude`
-- Codex: `OPENAI_API_KEY` and `~/.codex` mounted at `/home/sandbox/.codex`
+- Codex: `~/.codex` mounted at `/home/sandbox/.codex`; `OPENAI_API_KEY` is not required when Codex is authenticated through the host subscription config
 - PI: `PI_API_KEY` and `~/.pi` mounted at `/home/sandbox/.pi`
 
 No-sandbox launches intentionally bypass Docker-specific validation and continue to use host provider configuration.

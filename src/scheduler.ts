@@ -444,6 +444,18 @@ function issueNameFromTicketKey(key: string): string {
   return key.slice(key.indexOf('/') + 1);
 }
 
+function dependencyTicketKey(feature: string, dependency: string): string {
+  return dependency.includes('/') ? dependency : `${feature}/${dependency}`;
+}
+
+function sameFeatureDependencyIssueName(feature: string, dependency: string): string | null {
+  if (!dependency.includes('/')) return dependency;
+  const separator = dependency.indexOf('/');
+  const dependencyFeature = dependency.slice(0, separator);
+  if (dependencyFeature !== feature) return null;
+  return dependency.slice(separator + 1);
+}
+
 function isComplete(status?: string): boolean {
   const normalized = status?.trim().toLowerCase();
   return normalized === 'done' || normalized === 'closed' || normalized === 'complete' || normalized === 'resolved';
@@ -458,7 +470,10 @@ function computeWaves(tickets: TicketRecord[]): Map<string, number> {
     if (cachedWave !== undefined) return cachedWave;
     const ticket = byName.get(issueName);
     if (!ticket) return 0;
-    const deps = (ticket.dependsOn ?? []).filter((dep) => byName.has(dep));
+    const deps = (ticket.dependsOn ?? [])
+      .map((dep) => sameFeatureDependencyIssueName(ticket.feature, dep))
+      .filter((dep): dep is string => dep !== null)
+      .filter((dep) => byName.has(dep));
     if (deps.length === 0) {
       waves.set(issueName, 0);
       return 0;
@@ -522,7 +537,7 @@ function isReady(
   }
   if (ticketWave > highestMergedWave + 1) return false;
   return (ticket.dependsOn ?? []).every((dependency) => {
-    const key = `${ticket.feature}/${dependency}`;
+    const key = dependencyTicketKey(ticket.feature, dependency);
     if (!plannedTickets.has(key)) return true;
     return completed.has(key) && !failed.has(key);
   });
@@ -578,7 +593,7 @@ function notReadyReason(
   }
 
   const blockedDeps = (ticket.dependsOn ?? []).filter((dependency) => {
-    const key = `${ticket.feature}/${dependency}`;
+    const key = dependencyTicketKey(ticket.feature, dependency);
     if (!plannedTickets.has(key)) return false;
     return !completed.has(key) || failed.has(key);
   });

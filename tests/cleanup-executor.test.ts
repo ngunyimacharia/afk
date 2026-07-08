@@ -67,6 +67,53 @@ function makeSandcastleRecord(input: {
   };
 }
 
+test('creates missing PRD issues before cleanup deletion', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const featureDir = path.join(repoRoot, '.scratch', 'feat');
+  const issuesDir = path.join(featureDir, 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(
+    path.join(featureDir, 'PRD.md'),
+    [
+      '# Feature',
+      '',
+      '## Goals',
+      '',
+      '1. Implement stale detection recovery.',
+      '2. Add environment readiness checks.',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    path.join(issuesDir, '03-stale-detection-recovery.md'),
+    '---\nstatus: done\n---\n\n## Implement stale detection recovery\n',
+  );
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
+
+  assert.equal(existsSync(featureDir), true);
+  assert.equal(result.createdMissingIssues.length, 1);
+  assert.equal(existsSync(result.createdMissingIssues[0] ?? ''), true);
+  assert.match(readFileSync(result.createdMissingIssues[0] ?? '', 'utf8'), /status: ready-for-agent/);
+});
+
+test('deletes completed scratch feature directories', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
+  const featureDir = path.join(repoRoot, '.scratch', 'feat');
+  const issuesDir = path.join(featureDir, 'issues');
+  mkdirSync(issuesDir, { recursive: true });
+  writeFileSync(path.join(featureDir, 'PRD.md'), '---\nstatus: ready-for-agent\n---\n# Feature\n');
+  writeFileSync(path.join(issuesDir, '001.md'), '---\nstatus: done\n---\n');
+  writeFileSync(path.join(issuesDir, '002.md'), '---\nstatus: complete\n---\n');
+
+  const plan = new CleanupPlanner({ repoRoot }).buildPlan();
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
+
+  assert.equal(existsSync(featureDir), false);
+  assert.ok(result.deleted.some((item) => item === featureDir));
+});
+
 test('deletes Sandcastle log cleanup resources', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
@@ -253,6 +300,7 @@ test('removes planned orphaned issue worktree and branch', async () => {
     {
       terminalTargets: [],
       issueDeletionTargets: [],
+      prdIssueCreationTargets: [],
       runtimeArtifactTargets: [],
       sandcastleResourceTargets: [],
       orphanedWorktreeTargets: [
@@ -290,6 +338,7 @@ test('skips dirty orphaned issue worktree and reports reason', async () => {
     {
       terminalTargets: [],
       issueDeletionTargets: [],
+      prdIssueCreationTargets: [],
       runtimeArtifactTargets: [],
       sandcastleResourceTargets: [],
       orphanedWorktreeTargets: [
