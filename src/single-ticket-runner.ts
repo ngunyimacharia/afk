@@ -44,6 +44,12 @@ const REVIEWER_FORMAT_REPAIR_INSTRUCTIONS = [
   'Return EXACTLY ONE LINE of raw JSON. No markdown fences. No line breaks inside the JSON.',
   'Valid example: {"summary":"One regression found","findings":[{"severity":"major","title":"Pagination bug","detail":"Job dispatches without page parameter."}]}',
 ].join(' ');
+const REVIEWER_EMPTY_REPAIR_INSTRUCTIONS = [
+  'The previous reviewer response was empty.',
+  'You must still return EXACTLY ONE LINE of raw JSON with the required reviewer object.',
+  'Updating the ticket, committing changes, or completing finalization actions does not remove the requirement to return JSON.',
+  'No markdown fences. No prose. No line breaks inside the JSON.',
+].join(' ');
 const MAX_MALFORMED_OUTPUT_SNIPPET_CHARS = 500;
 const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
   malformedReviewerRetries: 2,
@@ -293,6 +299,7 @@ export class SingleTicketRunner {
     let executeBeforeReview = true;
     let nextImplementationPhase: SandcastlePhaseName = 'implementation';
     let useReviewerRepairPrompt = false;
+    let priorMalformedReviewerOutput = '';
     const ticketStartEpoch = Date.now();
 
     try {
@@ -505,6 +512,7 @@ export class SingleTicketRunner {
                     executionForReview,
                     updatedTicketContent,
                     snapshot,
+                    priorMalformedReviewerOutput,
                   )
                 : this.buildReviewerPrompt(
                     ticket.label,
@@ -668,6 +676,7 @@ export class SingleTicketRunner {
             });
             executeBeforeReview = false;
             useReviewerRepairPrompt = true;
+            priorMalformedReviewerOutput = rawReviewOutput;
             continue;
           }
           return rawReviewOutput.trim()
@@ -684,6 +693,7 @@ export class SingleTicketRunner {
         }
 
         malformedAttempts = 0;
+        priorMalformedReviewerOutput = '';
         const decision = decideReviewOutcome(review, {
           cycle: reviewCycle + 1,
           maxCycles: budgets.fixupCycleLimit + 1,
@@ -1509,6 +1519,7 @@ export class SingleTicketRunner {
     executionResult: { status: string; output?: string[] },
     updatedTicketContent: string,
     snapshot?: AfkStateSnapshot,
+    priorRawReviewerOutput = '',
   ): string {
     return [
       this.buildReviewerPrompt(
@@ -1520,7 +1531,7 @@ export class SingleTicketRunner {
         snapshot,
       ),
       '',
-      REVIEWER_FORMAT_REPAIR_INSTRUCTIONS,
+      priorRawReviewerOutput.trim() ? REVIEWER_FORMAT_REPAIR_INSTRUCTIONS : REVIEWER_EMPTY_REPAIR_INSTRUCTIONS,
     ].join('\n');
   }
 
