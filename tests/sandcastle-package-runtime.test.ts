@@ -58,9 +58,9 @@ test('Sandcastle package capability check accepts a warm Docker runtime with mou
             };
           },
           exec: async (command: string) => ({
-            stdout: command === 'hostname' ? 'container-123\n' : '',
+            stdout: command.includes('/etc/hostname') ? 'container-123\n' : '',
             stderr: '',
-            exitCode: 0,
+            exitCode: command.includes('/etc/hostname') ? 0 : 1,
           }),
           close: async () => {
             closeCalls.push('closed');
@@ -93,6 +93,32 @@ test('Sandcastle package capability check accepts a warm Docker runtime with mou
   assert.equal((createOptions[0] as { cwd: string }).cwd, '/repo');
 });
 
+test('Sandcastle package identity probe falls back to /etc/hostname', async () => {
+  const result = await createAfkSandcastleDockerRuntime(createInput(), {
+    docker: () => ({ name: 'docker', env: {}, sandboxHomedir: '/home/agent' }),
+    createSandbox: async () => ({
+      branch: 'afk/feature/001',
+      worktreePath: '/repo/.sandcastle/worktrees/001',
+      run: async () => ({ iterations: [], stdout: '', commits: [] }),
+      exec: async (command: string) => ({
+        stdout: command.includes('/etc/hostname') ? 'fallback-container\n' : '',
+        stderr: '',
+        exitCode: command.includes('/etc/hostname') ? 0 : 1,
+      }),
+      close: async () => ({}),
+      interactive: async () => ({ commits: [], exitCode: 0 }),
+      [Symbol.asyncDispose]: async () => {},
+    }),
+  });
+
+  assert.equal(result.status, 'available');
+  assert.deepEqual(result.status === 'available' ? await result.adapter.identifyContainer() : undefined, {
+    kind: 'docker-container',
+    id: 'fallback-container',
+    source: 'hostname',
+  });
+});
+
 test('PI Sandcastle agent provider runs pi CLI and normalizes JSON progress events', () => {
   const agent = createAfkSandcastleAgentProvider({
     provider: 'pi',
@@ -105,9 +131,9 @@ test('PI Sandcastle agent provider runs pi CLI and normalizes JSON progress even
 
   const command = agent.buildPrintCommand?.({ prompt: 'hello pi', dangerouslySkipPermissions: false });
   assert.equal(agent.name, 'pi');
-  assert.equal(agent.env?.HOME, '/home/sandbox');
+  assert.equal(agent.env?.HOME, undefined);
   assert.deepEqual(command, {
-    command: 'pi --model openai/gpt-5.1 --print --json',
+    command: 'pi --model openai/gpt-5.1 --print --mode json',
     stdin: 'hello pi',
   });
   assert.deepEqual(agent.parseStreamLine?.('{"type":"session.started","session_id":"pi-session"}'), [

@@ -124,13 +124,36 @@ function createPiSandcastleAgentProvider(selection: SandcastleAgentProviderSelec
     }),
     parseStreamLine: (line: string) => {
       try {
-        const event = parsePiEvent(JSON.parse(line));
+        const parsed = JSON.parse(line);
+        const text = extractPiAssistantText(parsed);
+        if (text) return [{ type: 'text' as const, text }];
+        const event = parsePiEvent(parsed);
         return event ? toSandcastleStreamEvents(event) : [];
       } catch {
-        return line.trim() ? [{ type: 'text', text: line.trim() }] : [];
+        return line.trim() ? [{ type: 'text' as const, text: line.trim() }] : [];
       }
     },
   };
+}
+
+function extractPiAssistantText(parsed: Record<string, unknown>): string | null {
+  const type = String(parsed.type ?? '').toLowerCase();
+  // PI assistant messages contain the model's text response
+  if (type === 'message' || type === 'assistant_message' || type === 'user_message') {
+    const content = (parsed as { content?: Array<{ type?: string; text?: string }> }).content;
+    if (Array.isArray(content)) {
+      const parts = content
+        .filter((c): c is { type: string; text: string } => typeof c?.text === 'string')
+        .map((c) => c.text);
+      if (parts.length) return parts.join('\n');
+    }
+    const text = (parsed as { text?: string }).text;
+    if (typeof text === 'string') return text;
+  }
+  // PI tool call items contain command output — skip these for reviewer clarity
+  const item = (parsed as { item?: { type?: string } }).item;
+  if (item?.type === 'tool_call' || item?.type === 'tool_result') return null;
+  return null;
 }
 
 function toSandcastleStreamEvents(event: {
