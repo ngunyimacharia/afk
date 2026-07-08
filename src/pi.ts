@@ -1,16 +1,19 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, readdirSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import * as readline from 'node:readline';
-import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type { AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
+  defineTool,
   getAgentDir,
   ModelRegistry,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
 import type { AgentInvocationMode } from './agent-execution-provider.js';
 import type { OpenCodeSessionExecutor, OpenCodeSessionProgressEvent } from './opencode.js';
 import { buildStaleRecoveryPrompt } from './opencode.js';
@@ -21,22 +24,14 @@ const DEFAULT_STALE_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_ACTIVE_TOOL_STALE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_STALE_RECOVERIES = 5;
 
-const EXECUTION_TOOL_ALLOWLIST = [
-  'read',
-  'diagnostic',
-  'write',
-  'edit',
-  'delete',
-  'git-commit',
-  'git-push',
-  'github-pr',
-  'scratch-write',
-  'bash',
-];
+const EXECUTION_TOOL_ALLOWLIST = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 
-const REVIEWER_TOOL_ALLOWLIST = ['read', 'diagnostic', 'scratch-write', 'git-commit'];
+const REVIEWER_TOOL_ALLOWLIST = ['read', 'grep', 'find', 'ls'];
 
-const PULL_REQUEST_TOOL_ALLOWLIST = ['read', 'diagnostic', 'git-push', 'github-pr'];
+// PI's SDK exposes bash as an unrestricted shell tool. AFK cannot apply its
+// per-command pull-request policy inside PI sessions, so PR mode uses narrow
+// custom tools for the required git-push/GitHub-PR operations instead of bash.
+const PULL_REQUEST_TOOL_ALLOWLIST = ['read', 'grep', 'find', 'ls', 'git_push_branch', 'gh_pr_create'];
 
 export function resolvePiToolAllowlist(mode?: AgentInvocationMode): string[] {
   if (mode === 'reviewer') return REVIEWER_TOOL_ALLOWLIST;
@@ -48,6 +43,7 @@ export interface PiSessionOptions {
   workingDirectory?: string;
   model?: string;
   toolAllowlist?: string[];
+  customTools?: ToolDefinition[];
   title?: string;
 }
 
@@ -293,6 +289,7 @@ export function buildPiSessionOptions(
   const options: PiSessionOptions = {
     toolAllowlist: resolvePiToolAllowlist(invocationMode),
   };
+  if (invocationMode === 'pull-request') options.customTools = createPullRequestTools(workDir);
   const piModel = parsePiModel(model.id);
   if (piModel) options.model = piModel;
   if (workDir) options.workingDirectory = workDir;
@@ -462,6 +459,73 @@ function extractErrorMessage(error: unknown): string | null {
   return null;
 }
 
+function createPullRequestTools(cwd?: string): ToolDefinition[] {
+  return [
+    defineTool({
+      name: 'git_push_branch',
+      label: 'Git Push Branch',
+      description: 'Push one named local branch to the origin remote with no force options.',
+      promptSnippet: 'git_push_branch: push a local branch to origin without force options',
+      parameters: Type.Object({ branch: Type.String({ minLength: 1 }) }),
+      execute: async (_toolCallId, params, signal) =>
+        runSafeCommand('git', ['push', 'origin', params.branch], cwd, signal),
+    }),
+    defineTool({
+      name: 'gh_pr_create',
+      label: 'GitHub PR Create',
+      description: 'Create a GitHub pull request with gh pr create for a head branch and base branch.',
+      promptSnippet: 'gh_pr_create: create a GitHub pull request for an already pushed branch',
+      parameters: Type.Object({
+        head: Type.String({ minLength: 1 }),
+        base: Type.String({ minLength: 1 }),
+        title: Type.String({ minLength: 1 }),
+        body: Type.Optional(Type.String()),
+      }),
+      execute: async (_toolCallId, params, signal) =>
+        runSafeCommand(
+          'gh',
+          [
+            'pr',
+            'create',
+            '--head',
+            params.head,
+            '--base',
+            params.base,
+            '--title',
+            params.title,
+            '--body',
+            params.body ?? '',
+          ],
+          cwd,
+          signal,
+        ),
+    }),
+  ];
+}
+
+async function runSafeCommand(command: string, args: string[], cwd?: string, signal?: AbortSignal) {
+  const result = await new Promise<{ stdout: string; stderr: string; code: number | null; failed: boolean }>(
+    (resolve) => {
+      const child = execFile(command, args, { cwd, signal }, (error, stdout, stderr) => {
+        resolve({
+          stdout,
+          stderr,
+          code:
+            typeof (error as { code?: unknown } | null)?.code === 'number' ? (error as { code: number }).code : null,
+          failed: Boolean(error),
+        });
+      });
+      signal?.addEventListener('abort', () => child.kill(), { once: true });
+    },
+  );
+  const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
+  return {
+    content: [{ type: 'text' as const, text: output || `command completed: ${command} ${args.join(' ')}` }],
+    details: { command, args, exitCode: result.code },
+    isError: result.failed,
+  };
+}
+
 async function createDefaultPiClient(): Promise<PiClientLike> {
   return new PiSdkClient();
 }
@@ -514,6 +578,7 @@ class PiSdkSession implements PiSessionLike {
       authStorage,
       sessionManager,
       tools: this.options.toolAllowlist,
+      customTools: this.options.customTools,
       resourceLoader,
     });
 

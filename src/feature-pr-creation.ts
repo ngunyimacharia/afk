@@ -367,7 +367,7 @@ ${templateSection}
 1. Verify you are operating on the feature worktree at \`${input.worktreePath}\` and that the current branch is \`${input.featureBranch}\`.
 2. Inspect \`git status\`, recent commits, and the diff from \`${input.baseBranch}\` to confirm there is committed work to open a pull request for.
 3. Push the feature branch \`${input.featureBranch}\` to the \`origin\` remote.
-4. Create a GitHub pull request from \`${input.featureBranch}\` into \`${input.baseBranch}\` using \`gh pr create\`. Use the provided pull request template for the body when one is available.
+4. Create a GitHub pull request from \`${input.featureBranch}\` into \`${input.baseBranch}\` using \`gh pr create\` (or the dedicated PI PR creation tool when available). Use the provided pull request template for the body when one is available.
 5. If an open pull request already exists for this branch, report its URL instead of creating a duplicate.
 
 ## Hard Constraints

@@ -214,9 +214,9 @@ AFK_PI_MODELS="openai/gpt-5.1-codex,anthropic/claude-opus" afk
 PI execution uses the host PI configuration under `~/.pi/agent`:
 
 - the prepared worktree path is passed as the PI session working directory
-- execution mode receives the full tool allowlist
-- reviewer mode receives a read-only allowlist (`read`, `diagnostic`, `scratch-write`, `git-commit`)
-- pull-request mode receives a limited allowlist (`read`, `diagnostic`, `git-push`, `github-pr`)
+- execution mode receives the SDK built-in tool allowlist (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`)
+- reviewer mode receives a read-only diagnostic allowlist (`read`, `grep`, `find`, `ls`)
+- pull-request mode receives a limited allowlist (`read`, `bash`, `grep`, `find`, `ls`) so it can push branches and create PRs through shell commands without file mutation tools
 
 PI has no interactive permission prompt, so AFK relies on these SDK tool allowlists to enforce phase boundaries. If PI's SDK does not support a tool allowlist option, the boundaries are enforced only by the prompt instructions and the existing permission coordinator.
 
