@@ -109,7 +109,10 @@ test('reports Docker sandbox mode and container identity from Sandcastle runtime
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
   mkdirSync(issuesDir, { recursive: true });
-  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: completed\n---\n\n## AFK Summary\nOutcome: completed\n');
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    '---\nfeature: feat\nstatus: completed\n---\n\n## AFK Summary\nOutcome: completed\n',
+  );
   writeSandcastleRecord(repoRoot, {
     runId: 'run-feat-01',
     ticket: {
@@ -132,12 +135,14 @@ test('reports Docker sandbox mode and container identity from Sandcastle runtime
   assert.match(report.message, /container: afk-runtime-run-feat-01/);
 });
 
-
 test('reports Docker container id when container name is unavailable', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
   mkdirSync(issuesDir, { recursive: true });
-  writeFileSync(path.join(issuesDir, '01.md'), '---\nfeature: feat\nstatus: completed\n---\n\n## AFK Summary\nOutcome: completed\n');
+  writeFileSync(
+    path.join(issuesDir, '01.md'),
+    '---\nfeature: feat\nstatus: completed\n---\n\n## AFK Summary\nOutcome: completed\n',
+  );
   writeSandcastleRecord(repoRoot, {
     runId: 'run-feat-01',
     ticket: {

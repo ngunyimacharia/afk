@@ -12,7 +12,6 @@ import type { ReadinessCommandExecutor } from './readiness-service.js';
 import { SyncReadinessCommandExecutor } from './readiness-service.js';
 import { decideReviewOutcome, parseReviewerOutput } from './reviewer-output-contract.js';
 import type { RuntimeRecordHandle, RuntimeStore } from './runtime-store.js';
-import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 import {
   type DockerContainerIdentity,
   dockerCleanupCommand,
@@ -20,6 +19,7 @@ import {
   getDefaultSandcastleDockerCleanup,
   toCleanupResult,
 } from './sandcastle-cleanup.js';
+import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 import {
   AFK_RUNTIME_IMAGE,
   AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
