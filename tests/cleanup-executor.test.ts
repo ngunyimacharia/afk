@@ -67,7 +67,7 @@ function makeSandcastleRecord(input: {
   };
 }
 
-test('deletes Sandcastle log cleanup resources', () => {
+test('deletes Sandcastle log cleanup resources', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
   const recordPath = sandcastleRecordPath(repoRoot, 'run-done');
@@ -89,7 +89,7 @@ test('deletes Sandcastle log cleanup resources', () => {
   writeFileSync(logPath, 'log');
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.equal(existsSync(logPath), false);
   assert.ok(result.deleted.some((item) => item === logPath));
   const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
@@ -97,7 +97,7 @@ test('deletes Sandcastle log cleanup resources', () => {
   assert.equal(record.cleanupResults?.[0]?.status, 'succeeded');
 });
 
-test('removes Sandcastle worktree cleanup resources', () => {
+test('removes Sandcastle worktree cleanup resources', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
@@ -125,14 +125,14 @@ test('removes Sandcastle worktree cleanup resources', () => {
   );
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.equal(existsSync(issueWorktreePath), false);
   assert.ok(result.deleted.some((item) => item === issueWorktreePath));
   const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
   assert.equal(record.cleanupResults?.[0]?.status, 'succeeded');
 });
 
-test('removes Sandcastle branch cleanup resources', () => {
+test('removes Sandcastle branch cleanup resources', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
@@ -157,14 +157,14 @@ test('removes Sandcastle branch cleanup resources', () => {
   );
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.equal(git(repoRoot, ['branch', '--list', branchName]), '');
   assert.ok(result.deleted.some((item) => item === `branch ${branchName}`));
   const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
   assert.equal(record.cleanupResults?.[0]?.status, 'succeeded');
 });
 
-test('skips Sandcastle branch cleanup for non-afk branches', () => {
+test('skips Sandcastle branch cleanup for non-afk branches', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   const issuesDir = path.join(repoRoot, '.scratch', 'feat', 'issues');
@@ -188,7 +188,7 @@ test('skips Sandcastle branch cleanup for non-afk branches', () => {
   );
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.ok(!result.deleted.some((item) => item === `branch ${branchName}`));
   assert.ok(result.deleted.some((item) => item === ticketPath));
   const record = JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
@@ -196,7 +196,7 @@ test('skips Sandcastle branch cleanup for non-afk branches', () => {
   assert.match(record.cleanupResults?.[0]?.message ?? '', /not an AFK branch/);
 });
 
-test('retries pending post-merge cleanup and clears successful entries', () => {
+test('retries pending post-merge cleanup and clears successful entries', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
@@ -231,7 +231,7 @@ test('retries pending post-merge cleanup and clears successful entries', () => {
   );
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.equal(result.postMergeCleanupResults.length, 1);
   assert.equal(result.postMergeCleanupResults[0]?.success, true);
   assert.equal(existsSync(issueWorktreePath), false);
@@ -240,7 +240,7 @@ test('retries pending post-merge cleanup and clears successful entries', () => {
   assert.equal(persisted.length, 0);
 });
 
-test('removes planned orphaned issue worktree and branch', () => {
+test('removes planned orphaned issue worktree and branch', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
@@ -249,7 +249,7 @@ test('removes planned orphaned issue worktree and branch', () => {
   const issueWorktreePath = path.join(repoRoot, '.worktree', 'feat-001');
   git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
 
-  const result = new CleanupExecutor().execute(
+  const result = await new CleanupExecutor().execute(
     {
       terminalTargets: [],
       issueDeletionTargets: [],
@@ -276,7 +276,7 @@ test('removes planned orphaned issue worktree and branch', () => {
   assert.ok(result.deleted.some((item) => item === `branch ${branchName}`));
 });
 
-test('skips dirty orphaned issue worktree and reports reason', () => {
+test('skips dirty orphaned issue worktree and reports reason', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
@@ -286,7 +286,7 @@ test('skips dirty orphaned issue worktree and reports reason', () => {
   git(repoRoot, ['worktree', 'add', issueWorktreePath, branchName]);
   writeFileSync(path.join(issueWorktreePath, 'dirty.txt'), 'dirty\n');
 
-  const result = new CleanupExecutor().execute(
+  const result = await new CleanupExecutor().execute(
     {
       terminalTargets: [],
       issueDeletionTargets: [],
@@ -312,7 +312,7 @@ test('skips dirty orphaned issue worktree and reports reason', () => {
   assert.ok(git(repoRoot, ['branch', '--list', branchName]).includes(branchName));
 });
 
-test('retries pending post-merge cleanup and removes extra worktrees using the same branch', () => {
+test('retries pending post-merge cleanup and removes extra worktrees using the same branch', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
@@ -350,7 +350,7 @@ test('retries pending post-merge cleanup and removes extra worktrees using the s
   );
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.equal(result.postMergeCleanupResults.length, 1);
   assert.equal(result.postMergeCleanupResults[0]?.success, true);
   assert.equal(result.postMergeCleanupResults[0]?.deletedWorktree, true);
@@ -362,7 +362,7 @@ test('retries pending post-merge cleanup and removes extra worktrees using the s
   assert.equal(persisted.length, 0);
 });
 
-test('retries pending post-merge cleanup and tolerates unreachable issue tip with warning', () => {
+test('retries pending post-merge cleanup and tolerates unreachable issue tip with warning', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
@@ -398,7 +398,7 @@ test('retries pending post-merge cleanup and tolerates unreachable issue tip wit
   );
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.equal(result.postMergeCleanupResults.length, 1);
   assert.equal(result.postMergeCleanupResults[0]?.success, true);
   assert.equal(result.postMergeCleanupResults[0]?.deletedWorktree, true);
@@ -410,7 +410,7 @@ test('retries pending post-merge cleanup and tolerates unreachable issue tip wit
   assert.equal(persisted.length, 0);
 });
 
-test('retries pending post-merge cleanup and tolerates already-deleted branch', () => {
+test('retries pending post-merge cleanup and tolerates already-deleted branch', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-'));
   initRepo(repoRoot);
   git(repoRoot, ['branch', 'feat']);
@@ -449,7 +449,7 @@ test('retries pending post-merge cleanup and tolerates already-deleted branch', 
   );
 
   const plan = new CleanupPlanner({ repoRoot }).buildPlan();
-  const result = new CleanupExecutor().execute(plan, repoRoot);
+  const result = await new CleanupExecutor().execute(plan, repoRoot);
   assert.equal(result.postMergeCleanupResults.length, 1);
   assert.equal(result.postMergeCleanupResults[0]?.success, true);
   assert.equal(result.postMergeCleanupResults[0]?.deletedWorktree, false);

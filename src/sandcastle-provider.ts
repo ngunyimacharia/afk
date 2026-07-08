@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { SelectableHarnessId } from './harness-registry.js';
+import { AFK_RUNTIME_PROVIDER_CONFIG_TARGETS } from './sandcastle-runtime-image-contract.js';
 import type { LaunchModel } from './types.js';
 
 export type SandcastleAgentProviderName = 'opencode' | 'claudeCode' | 'codex' | 'pi';
@@ -59,7 +60,11 @@ export function resolveSandcastleAgentProvider(
       docker: {
         env: ['OPENCODE_AUTH'],
         mounts: [
-          { source: path.join(configRoot, 'opencode'), target: '/home/sandbox/.config/opencode', required: true },
+          {
+            source: path.join(configRoot, 'opencode'),
+            target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.opencode,
+            required: true,
+          },
         ],
       },
       noSandbox: { enabled: true, reason: 'OpenCode can run on the prepared worktree without container isolation.' },
@@ -72,7 +77,13 @@ export function resolveSandcastleAgentProvider(
       model: modelId,
       docker: {
         env: ['ANTHROPIC_API_KEY'],
-        mounts: [{ source: path.join(homeDir, '.claude'), target: '/home/sandbox/.claude', required: true }],
+        mounts: [
+          {
+            source: path.join(homeDir, '.claude'),
+            target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.claudeCode,
+            required: true,
+          },
+        ],
       },
       noSandbox: {
         enabled: true,
@@ -101,7 +112,9 @@ export function resolveSandcastleAgentProvider(
     model: modelId,
     docker: {
       env: ['OPENAI_API_KEY'],
-      mounts: [{ source: path.join(homeDir, '.codex'), target: '/home/sandbox/.codex', required: true }],
+      mounts: [
+        { source: path.join(homeDir, '.codex'), target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.codex, required: true },
+      ],
     },
     noSandbox: { enabled: true, reason: 'Codex no-sandbox mode uses the host Codex configuration directly.' },
   };

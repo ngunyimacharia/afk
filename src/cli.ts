@@ -484,7 +484,7 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
     ].join('\n');
     if (isDryRun) return { code: 0, message: dryRun };
     const executor = new CleanupExecutor();
-    const result = executor.execute(plan, repoRoot);
+    const result = await executor.execute(plan, repoRoot);
     const retryResults = [
       'Post-merge cleanup retry results',
       ...(result.postMergeCleanupResults.length

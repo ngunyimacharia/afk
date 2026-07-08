@@ -39,7 +39,12 @@ function writeRun(repoRoot: string, overrides: Record<string, unknown> = {}): st
     },
     trackerSource: 'scratch',
     provider: { provider: 'opencode', model: 'openai/gpt-5.5' },
-    sandbox: { mode: 'docker', image: 'afk-runtime:latest', containerName: 'afk-run-1' },
+    sandbox: {
+      mode: 'docker',
+      image: 'afk-runtime:latest',
+      worktreePath: '/workspace/afk-worktree',
+      containerName: 'afk-run-1',
+    },
     branch: 'afk/feat/01',
     worktreePath: path.join(repoRoot, '.worktree', 'feat-01'),
     phases: [
@@ -80,6 +85,8 @@ test('afk summary reports Sandcastle runtime records and ignores legacy metadata
   assert.match(result.message, /feat\/01/);
   assert.match(result.message, /provider: scratch/);
   assert.match(result.message, /sandbox: docker/);
+  assert.match(result.message, /docker image: afk-runtime:latest/);
+  assert.match(result.message, /docker container: afk-run-1/);
   assert.match(result.message, /branch: afk\/feat\/01/);
   assert.match(result.message, /worktree: .*feat-01/);
   assert.match(result.message, /terminal: completed/);
@@ -90,7 +97,21 @@ test('afk summary reports Sandcastle runtime records and ignores legacy metadata
 
 test('afk cleanup dry-run lists exact Sandcastle cleanup resources without deleting', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-sandcastle-cleanup-dry-'));
-  const recordPath = writeRun(repoRoot);
+  const recordPath = writeRun(repoRoot, {
+    cleanupResources: [
+      {
+        type: 'log',
+        id: 'run-log',
+        path: path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', 'run-1', 'run.log'),
+      },
+      {
+        type: 'docker-container',
+        id: 'afk-run-1',
+        path: 'afk-runtime:latest',
+        cleanupCommand: 'docker rm -f afk-run-1',
+      },
+    ],
+  });
   const runLogPath = path.join(path.dirname(recordPath), 'run.log');
   writeFileSync(runLogPath, 'log\n');
 
@@ -103,6 +124,7 @@ test('afk cleanup dry-run lists exact Sandcastle cleanup resources without delet
   assert.equal(result.code, 0);
   assert.match(result.message, /Sandcastle cleanup resources/);
   assert.match(result.message, new RegExp(`log id=run-log path=${runLogPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(result.message, /docker-container id=afk-run-1 path=afk-runtime:latest/);
   assert.match(result.message, /Dry run only\. No files were deleted\./);
   assert.equal(existsSync(runLogPath), true);
 });

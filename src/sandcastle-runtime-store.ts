@@ -41,8 +41,10 @@ export interface SandcastleProviderIdentity {
 export type SandcastleSandbox =
   | {
       mode: 'docker';
-      image?: string;
+      image: string;
+      worktreePath: string;
       containerName?: string;
+      containerId?: string;
     }
   | {
       mode: 'none';
@@ -266,12 +268,44 @@ export class SandcastleRuntimeStore {
     });
   }
 
-  recordCleanupResource(recordPath: string, resource: SandcastleCleanupResource): SandcastleRuntimeRecord {
+  updateSandbox(recordPath: string, sandbox: SandcastleSandbox): SandcastleRuntimeRecord {
     const current = this.readRun(recordPath);
     return this.writeRecordAndReturn(recordPath, {
       ...current,
       updatedAt: isoFromEpoch(this.now()),
-      cleanupResources: [...current.cleanupResources, resource],
+      sandbox,
+    });
+  }
+
+  recordCleanupResource(recordPath: string, resource: SandcastleCleanupResource): SandcastleRuntimeRecord {
+    const current = this.readRun(recordPath);
+    const cleanupResources = [
+      ...current.cleanupResources.filter((existing) => {
+        if (existing.type === 'docker-container' && resource.type === 'docker-container') return false;
+        return existing.type !== resource.type || existing.id !== resource.id;
+      }),
+      resource,
+    ];
+    return this.writeRecordAndReturn(recordPath, {
+      ...current,
+      updatedAt: isoFromEpoch(this.now()),
+      cleanupResources,
+    });
+  }
+
+  recordCleanupResult(recordPath: string, result: SandcastleCleanupResult): SandcastleRuntimeRecord {
+    const current = this.readRun(recordPath);
+    const updatedAt = isoFromEpoch(this.now());
+    const cleanupResults = [
+      ...(current.cleanupResults ?? []).filter(
+        (existing) => existing.resourceId !== result.resourceId || existing.resourceType !== result.resourceType,
+      ),
+      { ...result, updatedAt: result.updatedAt ?? updatedAt },
+    ];
+    return this.writeRecordAndReturn(recordPath, {
+      ...current,
+      updatedAt,
+      cleanupResults,
     });
   }
 

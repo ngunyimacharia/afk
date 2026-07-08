@@ -10,6 +10,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import {
+  type DockerContainerIdentity,
+  getDefaultSandcastleDockerCleanup,
+  toCleanupResult,
+} from './sandcastle-cleanup.js';
 import type {
   SandcastleCleanupResource,
   SandcastleCleanupResult,
@@ -682,7 +687,7 @@ export class CleanupPlanner {
   buildPlan(): CleanupPlan {
     const sandcastleRuns = readSandcastleRuntimeRecords(this.input.repoRoot);
     const pendingPostMergeCleanupTargets = readPendingPostMergeCleanupItems(this.input.repoRoot);
-    const terminalStatuses = new Set(['completed', 'failed', 'blocked', 'interrupted']);
+    const terminalStatuses = new Set(['completed', 'failed', 'blocked', 'handoff', 'interrupted']);
     const terminalRuns = sandcastleRuns.filter(({ record }) => terminalStatuses.has(record.terminal.status));
     const preservedRuns = sandcastleRuns.filter(
       ({ record }) => record.terminal.status === 'running' || record.terminal.status === 'handoff',
@@ -692,13 +697,23 @@ export class CleanupPlanner {
     );
     const orphanedWorktreeTargets = _buildOrphanedWorktreeTargets(this.input.repoRoot, terminalKeys, sandcastleRuns);
     const sandcastleResourceTargets = terminalRuns.flatMap(({ record, recordPath }) =>
-      record.cleanupResources.map((resource) => ({
-        runId: record.runId,
-        recordPath,
-        feature: record.ticket.featureSlug,
-        issueName: record.ticket.issueName,
-        resource,
-      })),
+      record.cleanupResources
+        .filter(
+          (resource) =>
+            !record.cleanupResults?.some(
+              (result) =>
+                result.resourceId === resource.id &&
+                result.resourceType === resource.type &&
+                (result.status === 'succeeded' || result.status === 'skipped'),
+            ),
+        )
+        .map((resource) => ({
+          runId: record.runId,
+          recordPath,
+          feature: record.ticket.featureSlug,
+          issueName: record.ticket.issueName,
+          resource,
+        })),
     );
 
     if (sandcastleRuns.length === 0) {
@@ -796,10 +811,10 @@ function isPathWithinScratch(repoRoot: string, candidatePath: string | undefined
   return isPathWithinRoot(path.resolve(candidatePath), path.resolve(repoRoot, '.scratch'));
 }
 
-function cleanupSandcastleResource(
+async function cleanupSandcastleResource(
   repoRoot: string,
   target: SandcastleCleanupResourceTarget,
-): { deleted?: string; result: SandcastleCleanupResult } {
+): Promise<{ deleted?: string; result: SandcastleCleanupResult }> {
   const updatedAt = new Date().toISOString();
   const base = {
     resourceId: target.resource.id,
@@ -841,6 +856,15 @@ function cleanupSandcastleResource(
       return { deleted: `branch ${branchName}`, result: { ...base, status: 'succeeded' } };
     }
 
+    if (target.resource.type === 'docker-container') {
+      const identity: DockerContainerIdentity = {
+        image: target.resource.path ?? 'afk-runtime:latest',
+        containerName: target.resource.id,
+      };
+      const outcome = await getDefaultSandcastleDockerCleanup().removeContainer(identity);
+      return { result: toCleanupResult(identity, outcome) };
+    }
+
     return {
       result: { ...base, status: 'skipped', message: `${target.resource.type} cleanup is not implemented locally` },
     };
@@ -870,21 +894,21 @@ function persistSandcastleCleanupResult(
 }
 
 export class CleanupExecutor {
-  execute(
+  async execute(
     plan: CleanupPlan,
     repoRoot: string,
-  ): {
+  ): Promise<{
     deleted: string[];
     postMergeCleanupResults: PendingPostMergeCleanupResult[];
     orphanedWorktreeResults: OrphanedWorktreeCleanupResult[];
-  } {
+  }> {
     const deleted: string[] = [];
     const postMergeCleanupResults: PendingPostMergeCleanupResult[] = [];
     const orphanedWorktreeResults: OrphanedWorktreeCleanupResult[] = [];
     const remainingPending: PendingPostMergeCleanupItem[] = [];
 
     for (const target of plan.sandcastleResourceTargets ?? []) {
-      const { deleted: deletedResource, result } = cleanupSandcastleResource(repoRoot, target);
+      const { deleted: deletedResource, result } = await cleanupSandcastleResource(repoRoot, target);
       persistSandcastleCleanupResult(target, result);
       if (deletedResource) deleted.push(deletedResource);
     }

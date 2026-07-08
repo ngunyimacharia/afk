@@ -5,6 +5,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { buildLaunchPlan } from '../src/launch-context-builder.js';
 import { resolveSandcastleAgentProvider, validateSandcastleDockerAuth } from '../src/sandcastle-provider.js';
+import {
+  AFK_RUNTIME_IMAGE,
+  AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+  AFK_RUNTIME_PROVIDER_CONFIG_TARGETS,
+  AFK_RUNTIME_WORKTREE_PATH,
+  type SandcastleRuntimeImageClient,
+  validateSandcastleRuntimeImage,
+} from '../src/sandcastle-runtime-image-contract.js';
 import { type SandcastleRuntimeCreateInput, SandcastleRuntimeStore } from '../src/sandcastle-runtime-store.js';
 
 function createInput(overrides: Partial<SandcastleRuntimeCreateInput> = {}): SandcastleRuntimeCreateInput {
@@ -23,7 +31,12 @@ function createInput(overrides: Partial<SandcastleRuntimeCreateInput> = {}): San
       reviewerProvider: 'claude',
       reviewerModel: 'sonnet',
     },
-    sandbox: { mode: 'docker', image: 'afk-runtime:latest', containerName: 'afk-run-1' },
+    sandbox: {
+      mode: 'docker',
+      image: AFK_RUNTIME_IMAGE,
+      worktreePath: AFK_RUNTIME_WORKTREE_PATH,
+      containerName: 'afk-run-1',
+    },
     location: {
       branch: 'afk/feature-a/001',
       branchNameSource: 'fallback',
@@ -60,6 +73,12 @@ test('creates a Sandcastle runtime record in the new runtime directory', () => {
   assert.equal(record.worktreeName, 'feature-a-001');
   assert.equal(record.worktreePath, '/tmp/worktree');
   assert.equal(record.terminal.status, 'running');
+  assert.deepEqual(record.sandbox, {
+    mode: 'docker',
+    image: AFK_RUNTIME_IMAGE,
+    worktreePath: AFK_RUNTIME_WORKTREE_PATH,
+    containerName: 'afk-run-1',
+  });
   assert.deepEqual(record.providerFailures, []);
   assert.deepEqual(record.phases, []);
   assert.deepEqual(record.cleanupResources, []);
@@ -118,12 +137,21 @@ test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
   assert.equal(claudeDefault.model, undefined);
   assert.equal(codexDefault.model, undefined);
   assert.deepEqual(opencode.docker.env, ['OPENCODE_AUTH']);
+  assert.equal(opencode.docker.mounts[0]?.target, AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.opencode);
   assert.deepEqual(resolveSandcastleAgentProvider('Claude', undefined, { homeDir: '/home/runner' }).docker.env, [
     'ANTHROPIC_API_KEY',
   ]);
+  assert.equal(
+    resolveSandcastleAgentProvider('Claude', undefined, { homeDir: '/home/runner' }).docker.mounts[0]?.target,
+    AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.claudeCode,
+  );
   assert.deepEqual(resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.env, [
     'OPENAI_API_KEY',
   ]);
+  assert.equal(
+    resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.mounts[0]?.target,
+    AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.codex,
+  );
   const pi = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' });
   assert.deepEqual(pi.docker.env, ['PI_API_KEY']);
   assert.deepEqual(
@@ -132,6 +160,47 @@ test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
   );
   assert.equal(pi.noSandbox.enabled, true);
   assert.equal(pi.model, undefined);
+});
+
+test('validates AFK runtime image capability through a Sandcastle image client', async () => {
+  const client: SandcastleRuntimeImageClient = {
+    imageExists: async (image) => image === AFK_RUNTIME_IMAGE,
+    imageExposesCapability: async (_image, capability) => capability === AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+  };
+
+  const result = await validateSandcastleRuntimeImage(client);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.image : '', AFK_RUNTIME_IMAGE);
+  assert.equal(result.ok ? result.capability : '', AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY);
+});
+
+test('reports missing AFK runtime image clearly', async () => {
+  const client: SandcastleRuntimeImageClient = {
+    imageExists: async () => false,
+    imageExposesCapability: async () => {
+      throw new Error('capability check should not run');
+    },
+  };
+
+  const result = await validateSandcastleRuntimeImage(client);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? '' : result.failure.kind, 'missing-image');
+  assert.match(result.ok ? '' : result.failure.message, /afk-runtime:latest is not available/);
+});
+
+test('reports AFK runtime images without the phase executor capability', async () => {
+  const client: SandcastleRuntimeImageClient = {
+    imageExists: async () => true,
+    imageExposesCapability: async () => false,
+  };
+
+  const result = await validateSandcastleRuntimeImage(client);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? '' : result.failure.kind, 'missing-phase-executor');
+  assert.match(result.ok ? '' : result.failure.message, /does not expose required capability/);
 });
 
 test('reports missing provider Docker auth clearly', () => {

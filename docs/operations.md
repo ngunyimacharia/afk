@@ -66,6 +66,40 @@ Runtime metadata currently records:
 - provider session identifiers
 - unsafe or incomplete capture reasons when applicable
 
+## Sandcastle Docker Runtime Image
+
+Docker-isolated Sandcastle runs use the v1 runtime image contract named `afk-runtime:latest`. AFK does not build,
+pull, or publish this image during launch in v1; operators are responsible for making that image available to the
+local Docker daemon before selecting Docker isolation.
+
+The image must contain:
+
+- the AFK code or installed AFK runtime needed to execute ticket phases
+- Node or Bun support for the installed AFK runtime
+- Git and standard shell tools used by AFK prompts and readiness commands
+- OpenCode, Claude Code, and Codex execution dependencies when those providers are selectable
+- an executable phase capability probe at `afk-sandcastle-executor capabilities`
+
+The capability probe must print the token `afk.phase-executor.v1` on stdout. AFK validates Docker-mode launches by
+checking that `afk-runtime:latest` exists and that running:
+
+```bash
+docker run --rm afk-runtime:latest afk-sandcastle-executor capabilities
+```
+
+returns that capability token. A missing image blocks the run with `missing-image`; an image without the required
+capability blocks the run with `missing-phase-executor`.
+
+The v1 container path contract is stable:
+
+- worktree mount target: `/workspace/afk-worktree`
+- OpenCode config target: `/home/sandbox/.config/opencode`
+- Claude Code config target: `/home/sandbox/.claude`
+- Codex config target: `/home/sandbox/.codex`
+
+Provider config sources remain host-managed by AFK provider selection. The Docker runtime contract does not copy
+secrets, create temporary credential volumes, or support alternate image registries in v1.
+
 ## Asset Sync
 
 Asset sync is implemented under `src/sync/`.
