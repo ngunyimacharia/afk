@@ -506,6 +506,7 @@ export class SingleTicketRunner {
       // $SANDBOX_REPO_DIR and sets WORKDIR to /home/agent.
       const promptWorktreePath =
         plan.sandboxMode === 'docker' ? '/home/agent' : warmSandbox.worktreePath;
+      const promptRepoRoot = plan.sandboxMode === 'docker' ? '/home/agent' : plan.repoRoot;
       const updatedCheckout = { ...plan.checkout, worktreePath: promptWorktreePath };
       const currentSnapshot = plan.snapshots?.[ticket.label];
       plan = {
@@ -516,6 +517,7 @@ export class SingleTicketRunner {
               ...plan.snapshots,
               [ticket.label]: {
                 ...currentSnapshot,
+                repoRoot: promptRepoRoot,
                 worktreePath: promptWorktreePath,
                 worktreeName: path.basename(warmSandbox.worktreePath),
               },
