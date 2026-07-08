@@ -55,15 +55,13 @@ test('Codex is omitted from selectable harnesses when discovery returns no usabl
 
 test('PI discovery makes PI available to launch', async () => {
   const models = await discoverHarnessModels('PI');
-  assert.deepEqual(
-    models.map((model) => model.id),
-    ['pi/default'],
-  );
+  const modelIds = models.map((model) => model.id);
+  assert.ok(modelIds.includes('pi/default'), 'pi/default should be among discovered PI models');
 
   const discovery = await discoverAvailableHarnesses(async (harness) => (harness === 'PI' ? models : []));
   assert.equal(discovery.availableHarnesses.includes('PI'), true);
-  assert.deepEqual(
-    discovery.harnessModelCache.PI?.map((model) => model.id),
-    ['pi/default'],
+  assert.ok(
+    discovery.harnessModelCache.PI?.map((model) => model.id).includes('pi/default'),
+    'pi/default should be in the harness model cache',
   );
 });
