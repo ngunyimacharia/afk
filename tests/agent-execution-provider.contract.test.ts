@@ -93,6 +93,62 @@ test('sandcastle provider hands current phase to Sandcastle execution client', a
   assert.deepEqual(seen, ['reviewer:claudeCode']);
 });
 
+test('sandcastle provider dispatches PI execution plans to pi provider', async () => {
+  const seen: string[] = [];
+  const provider = new SandcastleAgentExecutionProvider({
+    execute: async ({ request, provider: sel }) => {
+      seen.push(`${request.invocationMode ?? 'execution'}:${sel?.provider ?? 'missing'}`);
+      return { status: 'completed', sessionId: 'pi-exec-run', removable: true };
+    },
+  });
+
+  await provider.execute({
+    plan: {
+      tickets: [{ label: 'feature/pi-01' }],
+      sandcastleProvider: {
+        provider: 'pi',
+        docker: { env: [], mounts: [] },
+        noSandbox: { enabled: true, reason: 'test' },
+      },
+    } as never,
+    ticketIndex: 0,
+    prompt: 'implement',
+  });
+
+  assert.deepEqual(seen, ['execution:pi']);
+});
+
+test('sandcastle provider routes PI reviewer invocations to pi provider independently', async () => {
+  const seen: string[] = [];
+  const provider = new SandcastleAgentExecutionProvider({
+    execute: async ({ request, provider: sel }) => {
+      seen.push(`${request.invocationMode ?? 'execution'}:${sel?.provider ?? 'missing'}`);
+      return { status: 'completed', sessionId: 'pi-review-run', removable: true };
+    },
+  });
+
+  await provider.execute({
+    plan: {
+      tickets: [{ label: 'feature/pi-02' }],
+      sandcastleProvider: {
+        provider: 'codex',
+        docker: { env: [], mounts: [] },
+        noSandbox: { enabled: true, reason: 'test' },
+      },
+      reviewerSandcastleProvider: {
+        provider: 'pi',
+        docker: { env: [], mounts: [] },
+        noSandbox: { enabled: true, reason: 'test' },
+      },
+    } as never,
+    ticketIndex: 0,
+    prompt: 'review',
+    invocationMode: 'reviewer',
+  });
+
+  assert.deepEqual(seen, ['reviewer:pi']);
+});
+
 test('sandcastle provider blocks clearly when no execution client is configured', async () => {
   const provider = new SandcastleAgentExecutionProvider();
 

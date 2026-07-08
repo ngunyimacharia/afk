@@ -91,6 +91,7 @@ test('displayNameForProvider maps current provider names', () => {
   assert.equal(displayNameForProvider('opencode'), 'OpenCode');
   assert.equal(displayNameForProvider('claude'), 'Claude');
   assert.equal(displayNameForProvider('codex'), 'Codex');
+  assert.equal(displayNameForProvider('pi'), 'PI');
   assert.equal(displayNameForProvider('unknown'), 'unknown');
 });
 

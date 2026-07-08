@@ -239,7 +239,6 @@ test('represents no-sandbox runs', () => {
   assert.deepEqual(record.sandbox, { mode: 'none' });
 });
 
-
 test('updates Docker container identity on runtime records', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-sandcastle-runtime-identity-'));
   const store = new SandcastleRuntimeStore({ repoRoot, now: () => 0 });

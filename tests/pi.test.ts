@@ -133,6 +133,46 @@ describe('PiSessionExecutor', () => {
     );
   });
 
+  test('PI reviewer mode excludes write/bash/edit tools', () => {
+    const reviewerTools = resolvePiToolAllowlist('reviewer');
+    const executionTools = resolvePiToolAllowlist('execution');
+
+    // Reviewer tools are a strict subset of execution tools
+    assert.ok(reviewerTools.length < executionTools.length);
+
+    // Reviewer must NOT include write-capable tools
+    assert.ok(!reviewerTools.includes('write'));
+    assert.ok(!reviewerTools.includes('edit'));
+    assert.ok(!reviewerTools.includes('bash'));
+
+    // Reviewer keeps read/diagnostic tools
+    assert.ok(reviewerTools.includes('read'));
+    assert.ok(reviewerTools.includes('grep'));
+    assert.ok(reviewerTools.includes('find'));
+    assert.ok(reviewerTools.includes('ls'));
+  });
+
+  test('PI pull-request mode limits to read/diagnostic/git-push/GitHub PR tools', () => {
+    const prTools = resolvePiToolAllowlist('pull-request');
+
+    // Pull-request must NOT include write/bash/edit
+    assert.ok(!prTools.includes('write'));
+    assert.ok(!prTools.includes('edit'));
+    assert.ok(!prTools.includes('bash'));
+
+    // Pull-request keeps read/diagnostic tools
+    assert.deepEqual(prTools.filter((t) => !['git_push_branch', 'gh_pr_create'].includes(t)).sort(), [
+      'find',
+      'grep',
+      'ls',
+      'read',
+    ]);
+
+    // Pull-request has narrow git/GitHub PR tools
+    assert.ok(prTools.includes('git_push_branch'));
+    assert.ok(prTools.includes('gh_pr_create'));
+  });
+
   test('starts a new PI session and returns the session id from the stream', async () => {
     const client = new FakePiClient({
       startSession: new FakePiSession('session-late', [
