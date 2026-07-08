@@ -98,7 +98,7 @@ export function resolveSandcastleAgentProvider(
       provider: 'pi',
       model: modelId,
       docker: {
-        env: ['PI_API_KEY'],
+        env: [],
         mounts: [{ source: path.join(homeDir, '.pi'), target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi, required: true }],
       },
       ...(sandboxMode === 'docker'
@@ -116,7 +116,7 @@ export function resolveSandcastleAgentProvider(
     provider: 'codex',
     model: modelId,
     docker: {
-      env: ['OPENAI_API_KEY'],
+      env: [],
       mounts: [
         { source: path.join(homeDir, '.codex'), target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.codex, required: true },
       ],

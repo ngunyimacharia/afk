@@ -145,15 +145,13 @@ test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
     resolveSandcastleAgentProvider('Claude', undefined, { homeDir: '/home/runner' }).docker.mounts[0]?.target,
     AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.claudeCode,
   );
-  assert.deepEqual(resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.env, [
-    'OPENAI_API_KEY',
-  ]);
+  assert.deepEqual(resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.env, []);
   assert.equal(
     resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.mounts[0]?.target,
     AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.codex,
   );
   const pi = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' });
-  assert.deepEqual(pi.docker.env, ['PI_API_KEY']);
+  assert.deepEqual(pi.docker.env, []);
   assert.deepEqual(
     pi.docker.mounts.map((mount) => mount.source),
     ['/home/runner/.pi'],

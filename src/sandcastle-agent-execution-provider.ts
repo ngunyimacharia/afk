@@ -56,7 +56,7 @@ class DefaultSandcastleExecutionClient implements SandcastlePhaseExecutionClient
       model: input.provider.model ? { ...model, id: input.provider.model } : model,
       prompt: request.prompt,
       title: ticket?.label ?? 'AFK ticket',
-      agent: request.invocationMode === 'reviewer' ? 'review' : undefined,
+      agent: undefined,
       sessionId: request.sessionId,
       workDir: request.plan.checkout.worktreePath,
       repoRoot: request.plan.repoRoot,

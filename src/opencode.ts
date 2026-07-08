@@ -247,6 +247,19 @@ export class SDKOpenCodeSessionExecutor implements OpenCodeSessionExecutor {
           }
           break;
         }
+        if (typeof promptResult === 'object' && promptResult.status === 'error') {
+          const sessionOutput = sessionId
+            ? await readSessionOutput(sdk.client, sessionId)
+            : { lines: [], terminalError: null, finalMessageText: null };
+          const terminalError = `opencode prompt failed: ${promptResult.message}`;
+          onProgress({ message: terminalError, sessionId: sessionId || null });
+          return {
+            sessionId: sessionId || null,
+            output: sessionOutput.lines,
+            terminalError,
+            finalMessageText: null,
+          };
+        }
         staleRecoveries += 1;
         const currentActiveTool = activeTool as OpenCodeActiveToolState | null;
         const staleWhile = currentActiveTool?.toolName ? ` stale while: ${currentActiveTool.toolName};` : '';
@@ -338,8 +351,13 @@ async function waitForPromptOrStale(input: {
   getLastMeaningfulProgressAt: () => number;
   getActiveTool: () => OpenCodeActiveToolState | null;
   signal?: AbortSignal;
-}): Promise<'completed' | { status: 'stale'; message: string } | { status: 'aborted'; message: string }> {
-  const prompt = input.prompt.then(() => 'completed' as const).catch(() => 'completed' as const);
+}): Promise<'completed' | { status: 'stale'; message: string } | { status: 'aborted'; message: string } | { status: 'error'; message: string }> {
+  const prompt = input.prompt
+    .then(() => 'completed' as const)
+    .catch((error: unknown) => ({
+      status: 'error' as const,
+      message: error instanceof Error ? error.message : String(error),
+    }));
   while (true) {
     if (input.signal?.aborted) {
       return { status: 'aborted', message: 'run killed' };

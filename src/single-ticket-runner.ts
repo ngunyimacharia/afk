@@ -101,6 +101,7 @@ export interface LinearRunSyncer {
 
 export interface WarmSandcastleSandboxHandle {
   readonly containerIdentity?: { containerName?: string; containerId?: string };
+  readonly worktreePath?: string;
   run(request: AgentExecutionRequest): Promise<AgentExecutionResult>;
   identifyContainer?(): Promise<DockerContainerIdentity>;
   cleanup?(): Promise<{ status?: string; message?: string } | undefined>;
@@ -120,6 +121,7 @@ class ProviderBackedWarmSandcastleSandbox implements WarmSandcastleSandboxHandle
 }
 
 interface PackageRuntimeAdapter {
+  readonly worktreePath: string;
   identifyContainer(): Promise<{ id: string }>;
   runPhase(input: {
     phase: string;
@@ -131,6 +133,10 @@ interface PackageRuntimeAdapter {
 
 class PackageWarmSandcastleSandbox implements WarmSandcastleSandboxHandle {
   readonly containerIdentity?: { containerName?: string; containerId?: string };
+
+  get worktreePath(): string {
+    return this.adapter.worktreePath;
+  }
 
   constructor(
     private readonly adapter: PackageRuntimeAdapter,
@@ -182,6 +188,19 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
     }
 
     const packageRuntime = await import('./sandcastle-package-runtime.js');
+    const preparedWorktreeReleaseBlock = releasePreparedWorktreeForSandcastle(plan);
+    if (preparedWorktreeReleaseBlock) {
+      return {
+        run: async () => ({
+          status: 'blocked',
+          sessionId: null,
+          removable: false,
+          unsafeReason: preparedWorktreeReleaseBlock,
+          output: [preparedWorktreeReleaseBlock],
+        }),
+      };
+    }
+
     const runtime = await packageRuntime.createAfkSandcastleDockerRuntime({
       repoRoot: plan.repoRoot,
       branch: plan.checkout.effectiveBranchName,
@@ -205,19 +224,8 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
     try {
       const identity = await runtime.adapter.identifyContainer();
       containerIdentity = { containerId: identity.id, containerName: identity.id };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Sandcastle Docker identity probe failed';
-      await runtime.adapter.cleanup();
-      return {
-        containerIdentity: undefined,
-        run: async () => ({
-          status: 'blocked',
-          sessionId: null,
-          removable: false,
-          unsafeReason: reason,
-          output: [reason],
-        }),
-      };
+    } catch {
+      containerIdentity = undefined;
     }
 
     return new PackageWarmSandcastleSandbox(
@@ -248,6 +256,26 @@ function collectSandcastleDockerEnv(plan: LaunchPlan) {
       .map((name) => [name, process.env[name]])
       .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
   );
+}
+
+function releasePreparedWorktreeForSandcastle(plan: LaunchPlan): string | null {
+  if (plan.sandboxMode !== 'docker' || !plan.sandcastleProvider) return null;
+  const worktreePath = plan.checkout.worktreePath;
+  try {
+    const registered = runGit(plan.repoRoot, ['worktree', 'list', '--porcelain'])
+      .split('\n')
+      .some((line) => line === `worktree ${worktreePath}`);
+    if (!registered) return null;
+    const status = runGit(worktreePath, ['status', '--porcelain']);
+    if (status.trim()) {
+      return `Prepared worktree has uncommitted changes and cannot be released for Sandcastle: ${worktreePath}`;
+    }
+    runGit(plan.repoRoot, ['worktree', 'remove', worktreePath]);
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'failed to release prepared worktree for Sandcastle';
+    return `Prepared worktree could not be released for Sandcastle: ${message}`;
+  }
 }
 
 export class SingleTicketRunner {
@@ -407,7 +435,39 @@ export class SingleTicketRunner {
         SANDCASTLE_PHASE_EXECUTOR_CAPABILITY: validation.capability,
       });
     }
-    warmSandbox = sandcastleRuntime ? await sandcastleSandboxFactory.create(plan) : null;
+    try {
+      warmSandbox = sandcastleRuntime ? await sandcastleSandboxFactory.create(plan) : null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Sandcastle sandbox creation failed';
+      const source = 'agent-thrown' as const;
+      const classification = classifyProviderFailureFromSource(message, source);
+      this.runtimeStore.updateMetadata(record.metadataPath, {
+        STATUS: 'failed',
+        IMPLEMENTATION_STATUS: 'failed',
+        REVIEW_STATUS: 'unknown',
+        RUN_STATUS: 'failed',
+        FAILURE_KIND: classification?.kind ?? 'unknown',
+        PROVIDER_FAILURE_KIND: classification?.kind ?? 'unknown',
+        PROVIDER_FAILURE_SOURCE: classification?.source ?? source,
+        PROVIDER_FAILURE_EVIDENCE: classification?.matchedEvidence ?? message,
+        UNSAFE_REASON: message,
+      });
+      this.runtimeStore.markFailed(record, 'failed');
+      this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+      if (sandcastleRuntimeStore && sandcastleRuntime) {
+        sandcastleRuntimeStore.recordPhase(sandcastleRuntime.recordPath, {
+          phase: 'implementation',
+          status: 'failed',
+          outcome: message,
+        });
+      }
+      await completeSandcastleRun('failed');
+      this.emitProgress(record.metadataPath, options.onProgress, {
+        ticketLabel: ticket.label,
+        message: `run failed: ${message}`,
+      });
+      return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'failed' };
+    }
     if (warmSandbox?.containerIdentity && sandcastleRuntimeStore && sandcastleRuntime && dockerIdentity) {
       dockerIdentity = {
         image: dockerIdentity.image,
@@ -432,6 +492,25 @@ export class SingleTicketRunner {
       });
       recordDockerCleanupResource();
     }
+    if (warmSandbox?.worktreePath) {
+      const updatedCheckout = { ...plan.checkout, worktreePath: warmSandbox.worktreePath };
+      const currentSnapshot = plan.snapshots?.[ticket.label];
+      plan = {
+        ...plan,
+        checkout: updatedCheckout,
+        snapshots: currentSnapshot
+          ? {
+              ...plan.snapshots,
+              [ticket.label]: {
+                ...currentSnapshot,
+                worktreePath: warmSandbox.worktreePath,
+                worktreeName: path.basename(warmSandbox.worktreePath),
+              },
+            }
+          : plan.snapshots,
+      };
+    }
+
     const runAgentPhase = async (
       phase: SandcastlePhaseName,
       attempt: number,
@@ -784,7 +863,7 @@ export class SingleTicketRunner {
                     snapshot,
                   ),
               invocationMode: 'reviewer',
-              sessionId,
+              sessionId: null,
               onProgress: this.progressLogger(record.metadataPath, record.logPath, options.onProgress),
               signal: options.signal,
             }),
