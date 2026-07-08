@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { SelectableHarnessId } from './harness-registry.js';
 import { AFK_RUNTIME_PROVIDER_CONFIG_TARGETS } from './sandcastle-runtime-image-contract.js';
-import type { LaunchModel } from './types.js';
+import type { LaunchModel, SandboxMode } from './types.js';
 
 export type SandcastleAgentProviderName = 'opencode' | 'claudeCode' | 'codex' | 'pi';
 export type SandcastleProviderFailureKind = 'missing-auth' | 'invalid-provider' | 'runtime-error';
@@ -22,7 +22,7 @@ export interface SandcastleAgentProviderSelection {
   provider: SandcastleAgentProviderName;
   model?: string;
   docker: SandcastleAuthRequirement;
-  noSandbox: {
+  noSandbox?: {
     enabled: true;
     reason: string;
   };
@@ -48,6 +48,7 @@ export function resolveSandcastleAgentProvider(
   harness: SelectableHarnessId,
   model?: LaunchModel,
   input: SandcastleProviderAuthInput = {},
+  sandboxMode?: SandboxMode,
 ): SandcastleAgentProviderSelection {
   const homeDir = input.homeDir ?? os.homedir();
   const configRoot = input.env?.XDG_CONFIG_HOME?.trim() || path.join(homeDir, '.config');
@@ -98,12 +99,16 @@ export function resolveSandcastleAgentProvider(
       model: modelId,
       docker: {
         env: ['PI_API_KEY'],
-        mounts: [{ source: path.join(homeDir, '.pi'), target: '/home/sandbox/.pi', required: true }],
+        mounts: [{ source: path.join(homeDir, '.pi'), target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi, required: true }],
       },
-      noSandbox: {
-        enabled: true,
-        reason: 'PI no-sandbox mode uses the host PI configuration under ~/.pi.',
-      },
+      ...(sandboxMode === 'docker'
+        ? {}
+        : {
+            noSandbox: {
+              enabled: true as const,
+              reason: 'PI no-sandbox mode uses the host PI configuration under ~/.pi.',
+            },
+          }),
     };
   }
 

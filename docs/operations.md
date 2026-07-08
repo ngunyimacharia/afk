@@ -77,7 +77,7 @@ The image must contain:
 - the AFK code or installed AFK runtime needed to execute ticket phases
 - Node or Bun support for the installed AFK runtime
 - Git and standard shell tools used by AFK prompts and readiness commands
-- OpenCode, Claude Code, and Codex execution dependencies when those providers are selectable
+- OpenCode, Claude Code, Codex, and PI execution dependencies when those providers are selectable
 - an executable phase capability probe at `afk-sandcastle-executor capabilities`
 
 The capability probe must print the token `afk.phase-executor.v1` on stdout. AFK validates Docker-mode launches by
@@ -96,9 +96,39 @@ The v1 container path contract is stable:
 - OpenCode config target: `/home/sandbox/.config/opencode`
 - Claude Code config target: `/home/sandbox/.claude`
 - Codex config target: `/home/sandbox/.codex`
+- PI config target: `/home/sandbox/.pi`
 
-Provider config sources remain host-managed by AFK provider selection. The Docker runtime contract does not copy
-secrets, create temporary credential volumes, or support alternate image registries in v1.
+Before any Docker-mode worktree execution starts, AFK fails closed if Docker is unavailable, `afk-runtime:latest` is
+missing, the image lacks `afk.phase-executor.v1`, or the selected implementation/reviewer provider credentials are not
+available. Provider credentials remain host-managed by AFK provider selection and are passed into the container only via
+existing auth env vars and required config mounts:
+
+- OpenCode: `OPENCODE_AUTH` and `$XDG_CONFIG_HOME/opencode` (or `~/.config/opencode`) mounted at `/home/sandbox/.config/opencode`
+- Claude Code: `ANTHROPIC_API_KEY` and `~/.claude` mounted at `/home/sandbox/.claude`
+- Codex: `OPENAI_API_KEY` and `~/.codex` mounted at `/home/sandbox/.codex`
+- PI: `PI_API_KEY` and `~/.pi` mounted at `/home/sandbox/.pi`
+
+No-sandbox launches intentionally bypass Docker-specific validation and continue to use host provider configuration.
+The Docker runtime contract does not copy secrets, create temporary credential volumes, silently fall back to
+no-sandbox, or support alternate image registries in v1.
+
+### Docker E2E acceptance evidence
+
+Before marking Docker-mode harness verification complete, operators must run one real Docker-isolated ticket for each
+supported harness (`OpenCode`, `Claude`, `Codex`, and `PI`) in an environment with Docker, `afk-runtime:latest`, and the
+provider credentials/config mounts listed above. For each verified run, retain evidence that:
+
+- AFK selected `sandbox: docker` and did not fall back to no-sandbox.
+- The run created a Docker container and completed implementation/review phases.
+- Runtime cleanup removed the container or recorded the cleanup command for any leftover container.
+- `afk summary` reports `sandbox: docker` plus the container name or id for the run.
+
+Do not treat prerequisite-validation tests as a substitute for this live E2E matrix.
+
+After the four live runs complete, record the operator-run evidence in the ticket summary or reviewer notes.
+Include the command used to launch each harness, the resulting run id, the container name or id, and the relevant
+`afk summary` excerpt showing `sandbox: docker`. AC6/AC7 remain incomplete until a human has reviewed that manual
+evidence for all four supported harnesses.
 
 ## Asset Sync
 

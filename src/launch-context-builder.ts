@@ -189,11 +189,13 @@ export function buildLaunchPlan(
     harness,
     sandboxMode,
     model,
-    ...(harness ? { sandcastleProvider: resolveSandcastleAgentProvider(harness, model) } : {}),
+    ...(harness ? { sandcastleProvider: resolveSandcastleAgentProvider(harness, model, {}, sandboxMode) } : {}),
     reviewerHarness: reviewer?.harness,
     reviewerModel: reviewer?.model,
     ...(reviewer?.harness
-      ? { reviewerSandcastleProvider: resolveSandcastleAgentProvider(reviewer.harness, reviewer.model) }
+      ? {
+          reviewerSandcastleProvider: resolveSandcastleAgentProvider(reviewer.harness, reviewer.model, {}, sandboxMode),
+        }
       : {}),
     reviewerPrompt: reviewer?.prompt,
     tickets,

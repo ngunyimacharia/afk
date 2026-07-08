@@ -227,6 +227,23 @@ export class SandcastleRuntimeStore {
     return JSON.parse(readFileSync(recordPath, 'utf8')) as SandcastleRuntimeRecord;
   }
 
+  updateDockerContainerIdentity(
+    recordPath: string,
+    identity: { containerName?: string; containerId?: string },
+  ): SandcastleRuntimeRecord {
+    const current = this.readRun(recordPath);
+    if (current.sandbox.mode !== 'docker') return current;
+    return this.writeRecordAndReturn(recordPath, {
+      ...current,
+      updatedAt: isoFromEpoch(this.now()),
+      sandbox: {
+        ...current.sandbox,
+        ...(identity.containerName ? { containerName: identity.containerName } : {}),
+        ...(identity.containerId ? { containerId: identity.containerId } : {}),
+      },
+    });
+  }
+
   recordPhase(recordPath: string, input: SandcastlePhaseUpdateInput): SandcastleRuntimeRecord {
     const current = this.readRun(recordPath);
     const updatedAt = isoFromEpoch(this.now());

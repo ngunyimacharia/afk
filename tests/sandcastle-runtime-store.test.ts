@@ -158,8 +158,12 @@ test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
     pi.docker.mounts.map((mount) => mount.source),
     ['/home/runner/.pi'],
   );
-  assert.equal(pi.noSandbox.enabled, true);
+  assert.equal(pi.docker.mounts[0]?.target, AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi);
+  assert.equal(pi.noSandbox?.enabled, true);
   assert.equal(pi.model, undefined);
+
+  const dockerPi = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' }, 'docker');
+  assert.equal(dockerPi.noSandbox, undefined);
 });
 
 test('validates AFK runtime image capability through a Sandcastle image client', async () => {
@@ -233,6 +237,18 @@ test('represents no-sandbox runs', () => {
 
   const record = store.readRun(handle.recordPath);
   assert.deepEqual(record.sandbox, { mode: 'none' });
+});
+
+
+test('updates Docker container identity on runtime records', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-sandcastle-runtime-identity-'));
+  const store = new SandcastleRuntimeStore({ repoRoot, now: () => 0 });
+  const handle = store.createRun(createInput());
+
+  const record = store.updateDockerContainerIdentity(handle.recordPath, { containerId: 'abc123' });
+
+  assert.equal(record.sandbox.mode, 'docker');
+  if (record.sandbox.mode === 'docker') assert.equal(record.sandbox.containerId, 'abc123');
 });
 
 test('records implementation, review, and fixup phase attempts', () => {

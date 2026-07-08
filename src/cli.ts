@@ -77,6 +77,12 @@ import { resolveReviewerPromptTemplate } from './reviewer-prompt-catalog.js';
 import { RuntimeStore } from './runtime-store.js';
 import { detectDockerAvailable } from './sandbox-selection.js';
 import { SandcastleAgentExecutionProvider } from './sandcastle-agent-execution-provider.js';
+import { resolveSandcastleAgentProvider, validateSandcastleDockerAuth } from './sandcastle-provider.js';
+import {
+  AFK_RUNTIME_IMAGE,
+  DockerSandcastleRuntimeImageClient,
+  validateSandcastleRuntimeImage,
+} from './sandcastle-runtime-image-contract.js';
 import { SandcastleWorktreeService } from './sandcastle-worktree-service.js';
 import { Scheduler, type SchedulerTicketResult } from './scheduler.js';
 import { createDefaultTrackerProvider } from './scratch-tracker-provider.js';
@@ -293,6 +299,9 @@ export interface RunAfkRuntime {
   }>;
   upgradeDependencies?: UpgradeDependencies;
   skipUpgradeCheck?: boolean;
+  detectDockerAvailable?: () => boolean;
+  validateSandcastleRuntimeImage?: typeof validateSandcastleRuntimeImage;
+  dockerAuthPathExists?: (path: string) => boolean;
 }
 
 export async function runAfk(repoRoot = process.cwd(), runtime: RunAfkRuntime = {}): Promise<CliResult> {
@@ -830,6 +839,19 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
     if (!model) return { code: 0, message: 'Launch cancelled' };
     if (!reviewerModel || !reviewerPrompt) return { code: 0, message: 'Launch cancelled' };
     if (!selectedTickets.length) return { code: 0, message: 'No tickets selected' };
+    if (sandboxMode === 'docker') {
+      const dockerBlock = await validateDockerHeadlessPrerequisites(
+        'run',
+        false,
+        runtime,
+        env,
+        harness,
+        reviewerHarness,
+        model,
+        reviewerModel,
+      );
+      if (dockerBlock) return dockerBlock;
+    }
     const selectedFeatures = [...new Set(selectedTickets.map((ticket) => ticket.feature))];
     selectedTickets = expandSelectedFeaturesToAllTickets(selectedTickets, launchTickets);
     selectedTickets = materializeLinearTicketMirrors(repoRoot, selectedTickets);
@@ -1811,6 +1833,64 @@ function headlessFailure(
   return { code: 1, message: isJson ? headlessJsonError(command, code, message, details) : message };
 }
 
+async function validateDockerHeadlessPrerequisites(
+  command: string,
+  isJson: boolean,
+  runtime: RunAfkRuntime,
+  env: NodeJS.ProcessEnv,
+  harness: SelectableHarnessId,
+  reviewerHarness: SelectableHarnessId,
+  model: LaunchModel,
+  reviewerModel: LaunchModel,
+): Promise<{ code: number; message: string } | null> {
+  if (!(runtime.detectDockerAvailable ?? detectDockerAvailable)()) {
+    return headlessFailure(
+      command,
+      isJson,
+      'docker-unavailable',
+      'Docker sandbox mode requires Docker to be available before launch.',
+    );
+  }
+  const imageValidation = await (runtime.validateSandcastleRuntimeImage ?? validateSandcastleRuntimeImage)(
+    new DockerSandcastleRuntimeImageClient(),
+    AFK_RUNTIME_IMAGE,
+  );
+  if (!imageValidation.ok) {
+    return headlessFailure(command, isJson, 'docker-runtime-image-unavailable', imageValidation.failure.message, {
+      ...imageValidation.failure,
+    });
+  }
+  const authInput = { env, pathExists: runtime.dockerAuthPathExists ?? existsSync };
+  const failures = [
+    {
+      role: 'implementation',
+      failure: validateSandcastleDockerAuth(
+        resolveSandcastleAgentProvider(harness, model, authInput, 'docker'),
+        authInput,
+      ),
+    },
+    {
+      role: 'reviewer',
+      failure: validateSandcastleDockerAuth(
+        resolveSandcastleAgentProvider(reviewerHarness, reviewerModel, authInput, 'docker'),
+        authInput,
+      ),
+    },
+  ].filter((item): item is { role: string; failure: NonNullable<ReturnType<typeof validateSandcastleDockerAuth>> } =>
+    Boolean(item.failure),
+  );
+  if (failures.length) {
+    return headlessFailure(
+      command,
+      isJson,
+      'docker-auth-unavailable',
+      failures.map((item) => `${item.role}: ${item.failure.message}`).join('\n'),
+      { failures },
+    );
+  }
+  return null;
+}
+
 interface HeadlessLaunchInput {
   repoRoot: string;
   runtime: {
@@ -1961,6 +2041,20 @@ async function runHeadlessLaunch(input: HeadlessLaunchInput): Promise<{ code: nu
       flag: '--features',
       name: 'features',
     });
+  }
+
+  if (sandboxMode === 'docker') {
+    const dockerBlock = await validateDockerHeadlessPrerequisites(
+      command,
+      isJson,
+      runtime,
+      env,
+      implValidation.harness,
+      reviewerValidation.harness,
+      implValidation.model,
+      reviewerValidation.model,
+    );
+    if (dockerBlock) return dockerBlock;
   }
 
   let allTickets: TicketRecord[];
