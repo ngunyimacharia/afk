@@ -16,7 +16,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -73,7 +73,7 @@ jobs:
           - os: ubuntu-latest
             target: bun-linux-x64
             asset: afk-linux-x64
-          - os: macos-latest
+          - os: macos-15
             target: bun-darwin-arm64
             asset: afk-darwin-arm64
           - os: macos-13
@@ -82,7 +82,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.bump-version.outputs.tag }}
 
@@ -104,7 +104,7 @@ jobs:
         run: chmod +x dist/bin/${{ matrix.asset }}
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.asset }}
           path: dist/bin/${{ matrix.asset }}
@@ -115,12 +115,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.bump-version.outputs.tag }}
 
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: dist/bin
           merge-multiple: true
