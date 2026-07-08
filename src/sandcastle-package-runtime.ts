@@ -138,8 +138,8 @@ function createPiSandcastleAgentProvider(selection: SandcastleAgentProviderSelec
 
 function extractPiAssistantText(parsed: Record<string, unknown>): string | null {
   const type = String(parsed.type ?? '').toLowerCase();
-  // PI assistant messages contain the model's text response
-  if (type === 'message' || type === 'assistant_message' || type === 'user_message') {
+  // PI assistant message variants — extract text content from all of them
+  if (type === 'message' || type === 'assistant_message' || type === 'message_update') {
     const content = (parsed as { content?: Array<{ type?: string; text?: string }> }).content;
     if (Array.isArray(content)) {
       const parts = content
@@ -149,6 +149,16 @@ function extractPiAssistantText(parsed: Record<string, unknown>): string | null 
     }
     const text = (parsed as { text?: string }).text;
     if (typeof text === 'string') return text;
+  }
+  // PI message and agent end events contain the final message state
+  if (type === 'message_end' || type === 'agent_end') {
+    const message = (parsed as { message?: { role?: string; content?: Array<{ type?: string; text?: string; thinking?: string }> } }).message;
+    if (message?.role === 'assistant' && Array.isArray(message.content)) {
+      const parts = message.content
+        .filter((c): c is { type: string; text: string } => typeof c?.text === 'string' && c.type !== 'thinking')
+        .map((c) => c.text);
+      if (parts.length) return parts.join('\n');
+    }
   }
   // PI tool call items contain command output — skip these for reviewer clarity
   const item = (parsed as { item?: { type?: string } }).item;
