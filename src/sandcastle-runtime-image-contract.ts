@@ -8,7 +8,7 @@ export const AFK_RUNTIME_PROVIDER_CONFIG_TARGETS = {
   opencode: '/home/sandbox/.config/opencode',
   claudeCode: '/home/sandbox/.claude',
   codex: '/home/sandbox/.codex',
-  pi: '/home/sandbox/.pi',
+  pi: '/home/agent/.pi',
 } as const;
 
 export type SandcastleRuntimeImageValidationFailureKind = 'missing-image' | 'missing-phase-executor';

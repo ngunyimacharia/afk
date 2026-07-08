@@ -1,0 +1,11 @@
+FROM afk-runtime:latest
+
+# Install git and standard shell tools required by AFK prompts and readiness commands
+RUN apk add --no-cache git bash curl
+
+# Create sandbox and agent users for Sandcastle container contract
+RUN adduser -D -h /home/sandbox sandbox && \
+    adduser -D -h /home/agent agent && \
+    adduser agent sandbox && \
+    chown -R agent:agent /home/agent && \
+    chmod 777 /home/agent

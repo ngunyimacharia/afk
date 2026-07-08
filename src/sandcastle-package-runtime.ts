@@ -113,12 +113,13 @@ export function createAfkSandcastleAgentProvider(selection: SandcastleAgentProvi
 }
 
 function createPiSandcastleAgentProvider(selection: SandcastleAgentProviderSelection): AgentProvider {
+  const model = selection.model ? selection.model.replace(/^pi\//, '') : undefined;
   return {
     name: 'pi',
-    env: { HOME: '/home/sandbox' },
+    env: {},
     captureSessions: true,
     buildPrintCommand: (options) => ({
-      command: ['pi', ...(selection.model ? ['--model', selection.model] : []), '--print', '--json'].join(' '),
+      command: ['pi', ...(model ? ['--model', model] : []), '--print', '--mode', 'json'].join(' '),
       stdin: options.prompt,
     }),
     parseStreamLine: (line: string) => {
@@ -262,8 +263,8 @@ class SandcastleDockerRuntimeAdapter implements AfkSandcastleRuntimeAdapter {
   }
 
   async identifyContainer(): Promise<AfkSandcastleContainerIdentity> {
-    const result: ExecResult = await this.sandbox.exec('hostname');
-    const id = result.stdout.trim();
+    const result: ExecResult = await this.sandbox.exec("sh -c 'hostname 2>/dev/null || cat /etc/hostname 2>/dev/null'");
+    const id = result.stdout.trim().split(/\r?\n/).find(Boolean);
     if (result.exitCode !== 0 || !id) {
       throw new Error(`Sandcastle Docker identity probe failed with exit code ${result.exitCode}`);
     }
