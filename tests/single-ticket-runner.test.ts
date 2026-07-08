@@ -959,6 +959,181 @@ test('blocks before provider execution when launch context mismatches', async ()
   assert.match(metadata, /"FAILURE_KIND": "launcher-context-mismatch"/);
 });
 
+test('completes Sandcastle cleanup when Docker launch context mismatches', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-docker-context-mismatch-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'docker-context.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, 'Status: ready-for-agent\n');
+  let cleanupCalls = 0;
+  const runner = new SingleTicketRunner(
+    store,
+    { execute: async () => ({ status: 'failed', unsafeReason: 'direct provider should not run' }) },
+    {},
+    undefined,
+    undefined,
+    {
+      validateRuntimeImage: async () => ({
+        ok: true,
+        image: AFK_RUNTIME_IMAGE,
+        capability: AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+      }),
+      create: async () => ({
+        identifyContainer: async () => ({ image: AFK_RUNTIME_IMAGE, containerId: 'ctx-container' }),
+        cleanup: async () => {
+          cleanupCalls += 1;
+          return { status: 'succeeded' };
+        },
+        run: async () => ({ status: 'failed', unsafeReason: 'should not run' }),
+      }),
+    },
+  );
+  const plan = {
+    repoRoot,
+    harness: 'Codex',
+    model: { id: 'model-1' },
+    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
+    reviewerHarness: 'Claude',
+    reviewerModel: { id: 'review-model' },
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    sandboxMode: 'docker',
+    tickets: [
+      {
+        path: ticketPath,
+        feature: 'feat',
+        issueName: 'docker-context',
+        label: 'feat/docker-context',
+        executorAfk: true,
+      },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'afk/feat/docker-context',
+      branchNameSource: 'fallback',
+      worktreePath: repoRoot,
+    },
+    snapshots: {
+      'feat/docker-context': {
+        generatedAt: 'now',
+        ticketLabel: 'feat/docker-context',
+        ticketStatus: 'ready',
+        ticketIssueName: 'docker-context',
+        featureSlug: 'feat',
+        ticketPath,
+        repoRoot,
+        worktreePath: path.join(repoRoot, 'other-worktree'),
+        worktreeName: 'other',
+        branchName: 'afk/feat/docker-context',
+        head: 'head',
+        gitStatusShort: [],
+        ticketOutsideWorktree: true,
+        dependencies: [],
+        readiness: null,
+      },
+    },
+  };
+
+  const result = await runner.launch(plan as never, { runId: 'run-docker-context-mismatch' });
+
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(cleanupCalls, 1);
+  const sandcastleRecord = new SandcastleRuntimeStore({ repoRoot }).readRun(
+    path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', 'run-docker-context-mismatch', 'record.json'),
+  );
+  assert.equal(sandcastleRecord.terminal.status, 'handoff');
+  assert.match(sandcastleRecord.terminal.handoffReason ?? '', /does not match checkout worktree/);
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.resourceId, 'ctx-container');
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.status, 'succeeded');
+});
+
+test('completes Sandcastle cleanup when Docker reviewer reports target mismatch', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-docker-target-mismatch-'));
+  const store = new RuntimeStore({ repoRoot });
+  const ticketPath = path.join(repoRoot, '.scratch', 'feat', 'issues', 'docker-target.md');
+  mkdirSync(path.dirname(ticketPath), { recursive: true });
+  writeFileSync(ticketPath, 'Status: done\n\n## AFK Summary\n\nDone\n');
+  let cleanupCalls = 0;
+  const runner = new SingleTicketRunner(
+    store,
+    { execute: async () => ({ status: 'failed', unsafeReason: 'direct provider should not run' }) },
+    {},
+    undefined,
+    undefined,
+    {
+      validateRuntimeImage: async () => ({
+        ok: true,
+        image: AFK_RUNTIME_IMAGE,
+        capability: AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
+      }),
+      create: async () => ({
+        identifyContainer: async () => ({ image: AFK_RUNTIME_IMAGE, containerId: 'target-container' }),
+        cleanup: async () => {
+          cleanupCalls += 1;
+          return { status: 'succeeded' };
+        },
+        run: async ({ invocationMode }: { invocationMode?: string }) => {
+          if (invocationMode === 'reviewer') {
+            return {
+              status: 'completed' as const,
+              sessionId: 'review-target',
+              output: [
+                JSON.stringify({
+                  done: false,
+                  summary: 'Review target mismatch: HEAD is stale',
+                  targetMismatch: true,
+                  findings: [],
+                }),
+              ],
+            };
+          }
+          return { status: 'completed' as const, sessionId: 'exec-target', output: ['done'] };
+        },
+      }),
+    },
+  );
+  const plan = {
+    repoRoot,
+    harness: 'Codex',
+    model: { id: 'model-1' },
+    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
+    reviewerHarness: 'Claude',
+    reviewerModel: { id: 'review-model' },
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerPrompt: resolveReviewerPromptTemplate(),
+    sandboxMode: 'docker',
+    tickets: [
+      { path: ticketPath, feature: 'feat', issueName: 'docker-target', label: 'feat/docker-target', executorAfk: true },
+    ],
+    gitContext: { commits: [] },
+    checkout: {
+      featureSlug: 'feat',
+      defaultWorktreeName: 'feat',
+      effectiveWorktreeName: 'feat',
+      defaultBranchName: 'feat',
+      effectiveBranchName: 'afk/feat/docker-target',
+      branchNameSource: 'fallback',
+      worktreePath: repoRoot,
+    },
+  };
+
+  const result = await runner.launch(plan as never, { runId: 'run-docker-target-mismatch' });
+
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(cleanupCalls, 1);
+  const sandcastleRecord = new SandcastleRuntimeStore({ repoRoot }).readRun(
+    path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', 'run-docker-target-mismatch', 'record.json'),
+  );
+  assert.equal(sandcastleRecord.terminal.status, 'handoff');
+  assert.equal(sandcastleRecord.terminal.handoffReason, 'Reviewer detected review target mismatch');
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.resourceId, 'target-container');
+  assert.equal(sandcastleRecord.cleanupResults?.[0]?.status, 'succeeded');
+});
+
 test('hands off when reviewer output stays empty after retry', async () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runner-empty-review-'));
   const store = new RuntimeStore({ repoRoot });

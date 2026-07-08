@@ -375,7 +375,8 @@ export class SingleTicketRunner {
     const snapshot = plan.snapshots?.[ticket.label];
     if (snapshot) this.recordSnapshotMetadata(record.metadataPath, snapshot);
     const contextMismatch = this.validateLaunchContext(plan, ticket.label);
-    if (contextMismatch) return this.handoffForLauncherContextMismatch(ticket, record, options, contextMismatch);
+    if (contextMismatch)
+      return this.handoffForLauncherContextMismatch(ticket, record, options, contextMismatch, completeSandcastleRun);
     installCommitMessageSanitizer(plan.checkout.worktreePath);
     let prompt = buildPrompt({
       checkout: plan.checkout,
@@ -814,7 +815,14 @@ export class SingleTicketRunner {
         );
 
         if (decision.targetMismatch) {
-          return this.handoffForReviewTargetMismatch(ticket, record, options, reviewCycle + 1, sessionId);
+          return this.handoffForReviewTargetMismatch(
+            ticket,
+            record,
+            options,
+            reviewCycle + 1,
+            sessionId,
+            completeSandcastleRun,
+          );
         }
 
         if (decision.decision === 'approve') {
@@ -1219,6 +1227,10 @@ export class SingleTicketRunner {
     options: { onProgress?: AgentExecutionProgressCallback },
     cycle: number,
     sessionId: string | null,
+    completeSandcastleRun?: (
+      status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
+      handoffReason?: string,
+    ) => Promise<void> | void,
   ): Promise<SingleTicketRunResult> {
     const reason = 'Reviewer detected review target mismatch';
     this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -1249,6 +1261,7 @@ export class SingleTicketRunner {
       }),
     );
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+      await completeSandcastleRun?.('handoff', reason);
       this.runtimeStore.markFailed(record, 'needs-human handoff required');
       this.runtimeStore.appendLog(record.logPath, 'review target mismatch handoff: review-target-mismatch');
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
@@ -1270,6 +1283,10 @@ export class SingleTicketRunner {
     record: RuntimeRecordHandle,
     options: { onProgress?: AgentExecutionProgressCallback },
     reason: string,
+    completeSandcastleRun?: (
+      status: 'completed' | 'handoff' | 'failed' | 'blocked' | 'interrupted',
+      handoffReason?: string,
+    ) => Promise<void> | void,
   ): Promise<SingleTicketRunResult> {
     this.runtimeStore.updateMetadata(record.metadataPath, {
       STATUS: 'blocked',
@@ -1278,6 +1295,7 @@ export class SingleTicketRunner {
       RUN_STATUS: 'blocked',
     });
     return this.runtimeStore.runPhase(record.metadataPath, record.logPath, 'finalization', async () => {
+      await completeSandcastleRun?.('handoff', reason);
       this.runtimeStore.markFailed(record, reason);
       this.runtimeStore.appendLog(record.logPath, `launcher context mismatch: ${reason}`);
       this.runtimeStore.appendLog(record.logPath, 'run blocked');
