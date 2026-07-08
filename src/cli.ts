@@ -443,6 +443,15 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
       ])
       .filter(Boolean) as string[];
     if (plan.workspaceExecutionPath) logTargets.push(plan.workspaceExecutionPath);
+    const runtimeArtifactPaths = plan.runtimeArtifactTargets.flatMap((target) => [
+      target.logPath,
+      target.metadataPath,
+      target.doneSentinelPath,
+      target.failedSentinelPath,
+      target.handoffSentinelPath,
+    ]).filter(Boolean) as string[];
+    const rootFileTargets = [plan.executionJsonPath].filter(Boolean) as string[];
+    const logDirTargets = [plan.afkLogsDir].filter(Boolean) as string[];
     const sandcastleTargets = (plan.sandcastleResourceTargets ?? []).map(
       (target) =>
         `- ${target.feature}/${target.issueName} ${target.resource.type} id=${target.resource.id}${target.resource.path ? ` path=${target.resource.path}` : ''}${target.resource.cleanupCommand ? ` command=${target.resource.cleanupCommand}` : ''}`,
@@ -459,6 +468,15 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
       '',
       'Matching logs / metadata to delete',
       ...(logTargets.length ? logTargets.map((filePath) => `- ${filePath}`) : ['- none']),
+      '',
+      'Runtime artifacts to delete',
+      ...(runtimeArtifactPaths.length ? runtimeArtifactPaths.map((filePath) => `- ${filePath}`) : ['- none']),
+      '',
+      'Root files to delete',
+      ...(rootFileTargets.length ? rootFileTargets.map((filePath) => `- ${filePath}`) : ['- none']),
+      '',
+      'AFK logs directory to delete',
+      ...(logDirTargets.length ? logDirTargets.map((filePath) => `- ${filePath}`) : ['- none']),
       '',
       'Missing PRD issues to create',
       ...(plan.prdIssueCreationTargets.length

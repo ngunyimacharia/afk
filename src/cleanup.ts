@@ -116,6 +116,8 @@ export interface CleanupPlan {
   preservedArtifacts: string[];
   featureDirectoriesToDelete: string[];
   workspaceExecutionPath?: string;
+  executionJsonPath?: string;
+  afkLogsDir?: string;
 }
 
 export interface PendingPostMergeCleanupItem {
@@ -817,6 +819,33 @@ function _runtimeArtifactTarget(repoRoot: string, feature: string, issueName: st
   };
 }
 
+function findPrdOnlyScratchFeatures(repoRoot: string, issues: CleanupIssueRecord[]): string[] {
+  const scratchRoot = path.join(repoRoot, '.scratch');
+  if (!exists(scratchRoot)) return [];
+  const featuresWithIssues = new Set(issues.map((issue) => issue.feature));
+  const prdOnly: string[] = [];
+  for (const entry of readdirSync(scratchRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+    if (featuresWithIssues.has(entry.name)) continue;
+    const featurePath = path.join(scratchRoot, entry.name);
+    if (!exists(featurePath)) continue;
+    // Check this is a PRD-only feature: has PRD.md but no issues/ dir
+    const hasPrd = fileExists(path.join(featurePath, 'PRD.md'));
+    const hasIssuesDir = exists(path.join(featurePath, 'issues'));
+    if (hasPrd && !hasIssuesDir) {
+      // Verify no unexpected files
+      const files = readdirSync(featurePath, { withFileTypes: true });
+      const allowed = new Set(['PRD.md', 'execution.json']);
+      const allAllowed = files.every(
+        (f) => (f.isFile() && allowed.has(f.name)) || (f.isDirectory() && f.name === 'issues'),
+      );
+      if (allAllowed) prdOnly.push(featurePath);
+    }
+  }
+  return prdOnly;
+}
+
 function scratchFeaturePath(repoRoot: string, feature: string): string | undefined {
   return resolvePathWithinRoot(path.resolve(repoRoot, '.scratch'), feature);
 }
@@ -824,16 +853,23 @@ function scratchFeaturePath(repoRoot: string, feature: string): string | undefin
 function isCanonicalScratchFeatureDirectory(repoRoot: string, feature: string): boolean {
   const featurePath = scratchFeaturePath(repoRoot, feature);
   if (!featurePath || !exists(featurePath)) return false;
-  const issuesDir = path.join(featurePath, 'issues');
-  if (!exists(issuesDir)) return false;
 
+  const allowedTopLevel = new Set(['PRD.md', 'execution.json', 'issues']);
   for (const entry of readdirSync(featurePath, { withFileTypes: true })) {
-    if (entry.name === 'PRD.md' || entry.name === 'execution.json') continue;
     if (entry.name === 'issues' && entry.isDirectory()) continue;
+    if (entry.isFile() && allowedTopLevel.has(entry.name)) continue;
     return false;
   }
 
-  for (const entry of readdirSync(issuesDir, { withFileTypes: true })) {
+  const issuesDir = path.join(featurePath, 'issues');
+  // PRD-only features (no issues dir) are canonical when all remaining files are allowed
+  if (!exists(issuesDir)) return true;
+
+  // Empty issues dir is fine — all issues were cleaned
+  const issueFiles = readdirSync(issuesDir, { withFileTypes: true });
+  if (issueFiles.length === 0) return true;
+
+  for (const entry of issueFiles) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) return false;
   }
 
@@ -993,41 +1029,64 @@ export class CleanupPlanner {
         })),
     );
 
-    if (sandcastleRuns.length === 0) {
-      return {
-        terminalTargets: [],
-        issueDeletionTargets: scratchCleanupPlan.issueDeletionTargets,
-        prdIssueCreationTargets: scratchCleanupPlan.prdIssueCreationTargets,
-        runtimeArtifactTargets: [],
-        sandcastleResourceTargets: [],
-        orphanedWorktreeTargets,
-        pendingPostMergeCleanupTargets,
-        preservedIssues: [],
-        preservedArtifacts: [],
-        featureDirectoriesToDelete: scratchCleanupPlan.featureDirectoriesToDelete,
-      };
-    }
+    // Build runtime artifact targets from all terminal scratch issues
+    const runtimeArtifactTargets = scratchIssues
+      .filter((issue) => TERMINAL_STATUSES.has(normalize(issue.status)))
+      .map((issue) => _runtimeArtifactTarget(this.input.repoRoot, issue.feature, issue.issueName))
+      .filter(
+        (target) =>
+          target.logPath || target.metadataPath || target.doneSentinelPath || target.failedSentinelPath || target.handoffSentinelPath,
+      );
 
-    return {
-      terminalTargets: terminalRuns
+    // Include PRD-only features (no issues, only PRD.md) when all scratch issues are terminal
+    const prdOnlyFeatures = findPrdOnlyScratchFeatures(this.input.repoRoot, scratchIssues);
+    const allIssueFeaturesTerminal =
+      scratchIssues.length > 0 && scratchIssues.every((issue) => TERMINAL_STATUSES.has(normalize(issue.status)));
+    const featureDirectoriesToDelete = [
+      ...scratchCleanupPlan.featureDirectoriesToDelete,
+      ...(allIssueFeaturesTerminal ? prdOnlyFeatures : []),
+    ];
+
+    // Root execution.json is safe to delete when all features are terminal and no runs preserved
+    const executionJsonPath =
+      allIssueFeaturesTerminal && preservedRuns.length === 0
+        ? existingFilePath(path.join(this.input.repoRoot, '.scratch', 'execution.json'))
+        : undefined;
+
+    // AFK logs dir is safe to delete when all features are terminal and no runs preserved
+    const afkLogsDir =
+      allIssueFeaturesTerminal && preservedRuns.length === 0
+        ? ticketLogRoot(this.input.repoRoot)
+        : undefined;
+
+    const terminalTargets = sandcastleRuns.length === 0 ? [] :
+      terminalRuns
         .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
         .map(({ record }) => ({
           feature: record.ticket.featureSlug,
           issueName: record.ticket.issueName,
           issuePath: record.ticket.ticketPath,
           reason: `terminal Sandcastle run: ${record.terminal.status}`,
-        })),
+        }));
+
+    const preservedIssues = sandcastleRuns.length === 0 ? [] :
+      preservedRuns
+        .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
+        .map(({ record }) => record.ticket.ticketPath);
+
+    return {
+      terminalTargets,
       issueDeletionTargets: scratchCleanupPlan.issueDeletionTargets,
       prdIssueCreationTargets: scratchCleanupPlan.prdIssueCreationTargets,
-      runtimeArtifactTargets: [],
-      sandcastleResourceTargets,
+      runtimeArtifactTargets,
+      sandcastleResourceTargets: sandcastleRuns.length === 0 ? [] : sandcastleResourceTargets,
       orphanedWorktreeTargets,
       pendingPostMergeCleanupTargets,
-      preservedIssues: preservedRuns
-        .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
-        .map(({ record }) => record.ticket.ticketPath),
+      preservedIssues,
       preservedArtifacts: [],
-      featureDirectoriesToDelete: scratchCleanupPlan.featureDirectoriesToDelete,
+      featureDirectoriesToDelete,
+      executionJsonPath,
+      afkLogsDir,
     };
   }
 }
@@ -1246,6 +1305,18 @@ export class CleanupExecutor {
       try {
         rmSync(featureDir, { force: true, recursive: true });
         deleted.push(featureDir);
+      } catch {}
+    }
+    if (plan.executionJsonPath) {
+      try {
+        rmSync(plan.executionJsonPath, { force: true, recursive: false });
+        deleted.push(plan.executionJsonPath);
+      } catch {}
+    }
+    if (plan.afkLogsDir) {
+      try {
+        rmSync(plan.afkLogsDir, { force: true, recursive: true });
+        deleted.push(plan.afkLogsDir);
       } catch {}
     }
     if (plan.workspaceExecutionPath) {
