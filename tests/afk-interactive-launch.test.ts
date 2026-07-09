@@ -23,7 +23,6 @@ import {
 } from '../src/cli.js';
 import {
   dockerSandboxChoices,
-  featureCompletionActionChoices,
   formatFeatureSelectionTitle,
   formatModelSelectionTitle,
   noDockerSandboxChoices,
@@ -308,17 +307,21 @@ test('ignores stale preferred model choice', () => {
   );
 });
 
-test('feature completion action choices replace manual branch inspection', () => {
-  assert.deepEqual(featureCompletionActionChoices, [
-    { title: 'Merge back to base branch on completion', value: 'merge-to-base' },
-    { title: 'Create a GitHub PR for completed feature branches', value: 'create-pr' },
-  ]);
-  assert.equal(
-    featureCompletionActionChoices.some((choice) =>
-      choice.title.includes('Leave feature branches for manual inspection'),
-    ),
-    false,
-  );
+test('feature completion action always defaults to create-pr', async () => {
+  injectPromptAnswers(['docker', 'provider/model', 'provider/model', ['feat'], 1]);
+
+  const result = await runInteractiveLaunchWizard({
+    io: promptIo(),
+    repoRoot: '/tmp/repo',
+    availableHarnesses: ['PI'],
+    discoverModels: async () => [{ id: 'provider/model' }],
+    tickets: [launchTicket()],
+    dockerAvailable: true,
+  });
+
+  assert.equal(result.cancelled, false);
+  assert.equal(result.featureCompletionAction, 'create-pr');
+  assert.equal(result.mergeBackToBase, false);
 });
 
 test('Docker-present launch choices recommend Docker and still offer no-sandbox', () => {
@@ -349,21 +352,12 @@ test('Docker detection succeeds only when docker info exits successfully', () =>
 });
 
 test('interactive wizard records Docker sandbox choice', async () => {
-  injectPromptAnswers([
-    'OpenCode',
-    'docker',
-    'provider/model',
-    'OpenCode (same as implementation)',
-    'provider/model',
-    ['feat'],
-    1,
-    'merge-to-base',
-  ]);
+  injectPromptAnswers(['docker', 'provider/model', 'provider/model', ['feat'], 1]);
 
   const result = await runInteractiveLaunchWizard({
     io: promptIo(),
     repoRoot: '/tmp/repo',
-    availableHarnesses: ['OpenCode'],
+    availableHarnesses: ['PI'],
     discoverModels: async () => [{ id: 'provider/model' }],
     tickets: [launchTicket()],
     dockerAvailable: true,
@@ -374,21 +368,12 @@ test('interactive wizard records Docker sandbox choice', async () => {
 });
 
 test('interactive wizard records explicit no-sandbox choice when Docker is missing', async () => {
-  injectPromptAnswers([
-    'OpenCode',
-    'no-sandbox',
-    'provider/model',
-    'OpenCode (same as implementation)',
-    'provider/model',
-    ['feat'],
-    1,
-    'merge-to-base',
-  ]);
+  injectPromptAnswers(['no-sandbox', 'provider/model', 'provider/model', ['feat'], 1]);
 
   const result = await runInteractiveLaunchWizard({
     io: promptIo(),
     repoRoot: '/tmp/repo',
-    availableHarnesses: ['OpenCode'],
+    availableHarnesses: ['PI'],
     discoverModels: async () => [{ id: 'provider/model' }],
     tickets: [launchTicket()],
     dockerAvailable: false,
@@ -399,12 +384,12 @@ test('interactive wizard records explicit no-sandbox choice when Docker is missi
 });
 
 test('interactive wizard aborts when Docker is missing and abort is selected', async () => {
-  injectPromptAnswers(['OpenCode', 'abort']);
+  injectPromptAnswers(['abort']);
 
   const result = await runInteractiveLaunchWizard({
     io: promptIo(),
     repoRoot: '/tmp/repo',
-    availableHarnesses: ['OpenCode'],
+    availableHarnesses: ['PI'],
     discoverModels: async () => {
       throw new Error('model discovery should not run after abort');
     },
@@ -523,18 +508,18 @@ test('run outcome ignores stale metadata from a previous launch', () => {
   assert.match(lines.join('\n'), /feat\/01: unknown \(stale runtime metadata from previous launch\)/);
 });
 
-test('run metadata displays Codex provider as Codex', () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-codex-'));
+test('run metadata displays PI provider as PI', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-status-pi-'));
   const metadataRoot = path.join(repoRoot, '.scratch', '.opencode-afk-logs', 'runtime-metadata');
   mkdirSync(metadataRoot, { recursive: true });
   writeFileSync(
     path.join(metadataRoot, 'feat-01.json'),
-    JSON.stringify({ RUN_ID: 'run-codex', EXECUTION_PROVIDER: 'codex', EXECUTION_MODEL_ID: 'codex/default' }),
+    JSON.stringify({ RUN_ID: 'run-pi', EXECUTION_PROVIDER: 'pi', EXECUTION_MODEL_ID: 'pi/default' }),
   );
 
-  assert.deepEqual(readRunMetadata(repoRoot, 'run-codex'), {
-    modelId: 'codex/default',
-    harness: 'Codex',
+  assert.deepEqual(readRunMetadata(repoRoot, 'run-pi'), {
+    modelId: 'pi/default',
+    harness: 'PI',
     ticketCount: 1,
   });
 });
@@ -893,14 +878,10 @@ test('headless run --features missing-feature ... --json reports invalid-feature
     'node',
     'src/cli.ts',
     'run',
-    '--harness',
-    'Codex',
     '--model',
-    'codex/default',
-    '--reviewer-harness',
-    'Codex',
+    'pi/default',
     '--reviewer-model',
-    'codex/default',
+    'pi/default',
     '--features',
     'missing-feature',
     '--concurrency',
@@ -916,8 +897,8 @@ test('headless run --features missing-feature ... --json reports invalid-feature
       io: { stdin: { isTTY: false } as never, stdout: { isTTY: false } as never },
       env: { ...process.env, CI: '' },
       discoverAvailableHarnesses: async () => ({
-        availableHarnesses: ['Codex'],
-        harnessModelCache: { Codex: [{ id: 'codex/default' }] },
+        availableHarnesses: ['PI'],
+        harnessModelCache: { PI: [{ id: 'pi/default' }] },
       }),
       trackerProvider: makeFakeTrackerProvider([makeTrackerWorkItem('existing', '01', 'ready-for-agent')]),
     });
@@ -949,14 +930,10 @@ test('headless run with valid flags starts daemon and writes run plan', async ()
     'node',
     'src/cli.ts',
     'run',
-    '--harness',
-    'Codex',
     '--model',
-    'codex/default',
-    '--reviewer-harness',
-    'Codex',
+    'pi/default',
     '--reviewer-model',
-    'codex/default',
+    'pi/default',
     '--features',
     'feat',
     '--concurrency',
@@ -973,8 +950,8 @@ test('headless run with valid flags starts daemon and writes run plan', async ()
       io: { stdin: { isTTY: false } as never, stdout: { isTTY: false } as never },
       env: { ...process.env, CI: '' },
       discoverAvailableHarnesses: async () => ({
-        availableHarnesses: ['Codex'],
-        harnessModelCache: { Codex: [{ id: 'codex/default' }] },
+        availableHarnesses: ['PI'],
+        harnessModelCache: { PI: [{ id: 'pi/default' }] },
       }),
       spawnDaemon: () => {
         spawned = true;
@@ -988,10 +965,10 @@ test('headless run with valid flags starts daemon and writes run plan', async ()
     assert.ok(typeof parsed.data.runId === 'string');
     assert.deepEqual(parsed.data.features, ['feat']);
     assert.deepEqual(parsed.data.tickets, ['feat/01']);
-    assert.equal(parsed.data.harness, 'Codex');
-    assert.equal(parsed.data.model, 'codex/default');
-    assert.equal(parsed.data.reviewerHarness, 'Codex');
-    assert.equal(parsed.data.reviewerModel, 'codex/default');
+    assert.equal(parsed.data.harness, 'PI');
+    assert.equal(parsed.data.model, 'pi/default');
+    assert.equal(parsed.data.reviewerHarness, 'PI');
+    assert.equal(parsed.data.reviewerModel, 'pi/default');
     assert.equal(parsed.data.concurrency, 2);
     assert.equal(parsed.data.sandboxMode, 'no-sandbox');
     assert.equal(parsed.data.completionAction, 'create-pr');

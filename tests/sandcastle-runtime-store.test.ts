@@ -26,10 +26,10 @@ function createInput(overrides: Partial<SandcastleRuntimeCreateInput> = {}): San
     },
     trackerSource: 'scratch',
     provider: {
-      provider: 'opencode',
-      model: 'openai/gpt-5.5',
-      reviewerProvider: 'claude',
-      reviewerModel: 'sonnet',
+      provider: 'pi',
+      model: 'pi/default',
+      reviewerProvider: 'pi',
+      reviewerModel: 'pi/default',
     },
     sandbox: {
       mode: 'docker',
@@ -62,10 +62,10 @@ test('creates a Sandcastle runtime record in the new runtime directory', () => {
   assert.equal(record.ticket.label, 'feature-a/001');
   assert.equal(record.trackerSource, 'scratch');
   assert.deepEqual(record.provider, {
-    provider: 'opencode',
-    model: 'openai/gpt-5.5',
-    reviewerProvider: 'claude',
-    reviewerModel: 'sonnet',
+    provider: 'pi',
+    model: 'pi/default',
+    reviewerProvider: 'pi',
+    reviewerModel: 'pi/default',
   });
   assert.equal(record.sandbox.mode, 'docker');
   assert.equal(record.branch, 'afk/feature-a/001');
@@ -84,15 +84,9 @@ test('creates a Sandcastle runtime record in the new runtime directory', () => {
   assert.deepEqual(record.cleanupResources, []);
 });
 
-test('maps AFK harness selections to Sandcastle agent providers', () => {
+test('maps AFK harness selection to Sandcastle agent provider', () => {
   const homeDir = '/home/runner';
 
-  assert.equal(resolveSandcastleAgentProvider('OpenCode', { id: 'openai/gpt-5.5' }, { homeDir }).provider, 'opencode');
-  assert.equal(
-    resolveSandcastleAgentProvider('Claude', { id: 'anthropic/claude-sonnet-4' }, { homeDir }).provider,
-    'claudeCode',
-  );
-  assert.equal(resolveSandcastleAgentProvider('Codex', { id: 'codex/gpt-5.1-codex' }, { homeDir }).provider, 'codex');
   assert.equal(resolveSandcastleAgentProvider('PI', { id: 'pi/openai/gpt-5.1' }, { homeDir }).provider, 'pi');
 });
 
@@ -101,7 +95,7 @@ test('launch plans carry Sandcastle provider selections for runtime orchestratio
 
   const plan = buildLaunchPlan(
     repoRoot,
-    { id: 'codex/default' },
+    { id: 'pi/default' },
     [],
     {
       featureSlug: 'feature-a',
@@ -113,43 +107,18 @@ test('launch plans carry Sandcastle provider selections for runtime orchestratio
       worktreePath: repoRoot,
     },
     {
-      harness: 'Claude',
-      model: { id: 'anthropic/claude-sonnet-4' },
+      model: { id: 'pi/default' },
       prompt: { id: 'reviewer-default', label: 'Default reviewer', path: '/tmp/reviewer.md' },
     },
-    undefined,
-    undefined,
-    'Codex',
   );
 
-  assert.equal(plan.sandcastleProvider?.provider, 'codex');
+  assert.equal(plan.sandcastleProvider?.provider, 'pi');
   assert.equal(plan.sandcastleProvider?.model, undefined);
-  assert.equal(plan.reviewerSandcastleProvider?.provider, 'claudeCode');
-  assert.equal(plan.reviewerSandcastleProvider?.model, 'anthropic/claude-sonnet-4');
+  assert.equal(plan.reviewerSandcastleProvider?.provider, 'pi');
+  assert.equal(plan.reviewerSandcastleProvider?.model, undefined);
 });
 
 test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
-  const opencode = resolveSandcastleAgentProvider('OpenCode', { id: 'openai/gpt-5.5' }, { homeDir: '/home/runner' });
-  const claudeDefault = resolveSandcastleAgentProvider('Claude', { id: 'default-model' }, { homeDir: '/home/runner' });
-  const codexDefault = resolveSandcastleAgentProvider('Codex', { id: 'codex/default' }, { homeDir: '/home/runner' });
-
-  assert.equal(opencode.model, 'openai/gpt-5.5');
-  assert.equal(claudeDefault.model, undefined);
-  assert.equal(codexDefault.model, undefined);
-  assert.deepEqual(opencode.docker.env, ['OPENCODE_AUTH']);
-  assert.equal(opencode.docker.mounts[0]?.target, AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.opencode);
-  assert.deepEqual(resolveSandcastleAgentProvider('Claude', undefined, { homeDir: '/home/runner' }).docker.env, [
-    'ANTHROPIC_API_KEY',
-  ]);
-  assert.equal(
-    resolveSandcastleAgentProvider('Claude', undefined, { homeDir: '/home/runner' }).docker.mounts[0]?.target,
-    AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.claudeCode,
-  );
-  assert.deepEqual(resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.env, []);
-  assert.equal(
-    resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }).docker.mounts[0]?.target,
-    AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.codex,
-  );
   const pi = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' });
   assert.deepEqual(pi.docker.env, []);
   assert.deepEqual(
@@ -159,6 +128,9 @@ test('normalizes Sandcastle model IDs and provider Docker requirements', () => {
   assert.equal(pi.docker.mounts[0]?.target, AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi);
   assert.equal(pi.noSandbox?.enabled, true);
   assert.equal(pi.model, undefined);
+
+  const piCustom = resolveSandcastleAgentProvider('PI', { id: 'pi/openai/gpt-5.1' }, { homeDir: '/home/runner' });
+  assert.equal(piCustom.model, 'pi/openai/gpt-5.1');
 
   const dockerPi = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' }, 'docker');
   assert.equal(dockerPi.noSandbox, undefined);
@@ -206,25 +178,21 @@ test('reports AFK runtime images without the phase executor capability', async (
 });
 
 test('reports missing provider Docker auth clearly', () => {
-  const selection = resolveSandcastleAgentProvider(
-    'Claude',
-    { id: 'anthropic/claude-sonnet-4' },
-    { homeDir: '/home/runner' },
-  );
+  const selection = resolveSandcastleAgentProvider('PI', { id: 'pi/default' }, { homeDir: '/home/runner' });
 
   const failure = validateSandcastleDockerAuth(selection, {
     env: {},
     pathExists: () => false,
   });
 
-  assert.equal(failure?.provider, 'claudeCode');
+  assert.equal(failure?.provider, 'pi');
   assert.equal(failure?.kind, 'missing-auth');
-  assert.deepEqual(failure?.missingEnv, ['ANTHROPIC_API_KEY']);
+  assert.deepEqual(failure?.missingEnv, []);
   assert.deepEqual(
     failure?.missingMounts?.map((mount) => mount.source),
-    ['/home/runner/.claude'],
+    ['/home/runner/.pi'],
   );
-  assert.match(failure?.message ?? '', /Sandcastle claudeCode Docker auth is unavailable/);
+  assert.match(failure?.message ?? '', /Sandcastle pi Docker auth is unavailable/);
 });
 
 test('represents no-sandbox runs', () => {
@@ -324,7 +292,7 @@ test('records provider-specific failures in the runtime schema', () => {
   const store = new SandcastleRuntimeStore({ repoRoot, now: () => 0 });
   const handle = store.createRun(createInput());
   const failure = validateSandcastleDockerAuth(
-    resolveSandcastleAgentProvider('Codex', undefined, { homeDir: '/home/runner' }),
+    resolveSandcastleAgentProvider('PI', undefined, { homeDir: '/home/runner' }),
     { env: {}, pathExists: () => false },
   );
 
@@ -332,7 +300,7 @@ test('records provider-specific failures in the runtime schema', () => {
   const record = store.recordProviderFailure(handle.recordPath, failure, 'implementation');
 
   assert.equal(record.providerFailures.length, 1);
-  assert.equal(record.providerFailures[0]?.provider, 'codex');
+  assert.equal(record.providerFailures[0]?.provider, 'pi');
   assert.equal(record.providerFailures[0]?.phase, 'implementation');
   assert.equal(record.providerFailures[0]?.occurredAt, '1970-01-01T00:00:00.000Z');
 });

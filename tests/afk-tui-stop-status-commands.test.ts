@@ -360,11 +360,7 @@ test('afk status falls back to launch preferences when runtime metadata director
 `,
     'utf8',
   );
-  writeFileSync(
-    path.join(logsDir, 'launch-preferences.json'),
-    JSON.stringify({ modelId: 'codex/default', harness: 'Codex', reviewerHarness: 'Codex' }),
-    'utf8',
-  );
+  writeFileSync(path.join(logsDir, 'launch-preferences.json'), JSON.stringify({ modelId: 'pi/default' }), 'utf8');
 
   const originalArg = process.argv[2];
   process.argv[2] = 'status';

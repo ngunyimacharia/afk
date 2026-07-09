@@ -29,7 +29,6 @@ test('__daemon command runs scheduler from context file', async () => {
       worktreePath: repoRoot,
     },
     {
-      harness: 'OpenCode',
       model: { id: 'reviewer-model' },
       prompt: { id: 'reviewer-default', label: 'Default', path: '/tmp/reviewer.md' },
     },
@@ -39,8 +38,8 @@ test('__daemon command runs scheduler from context file', async () => {
     repoRoot,
     runId: 'daemon-run-1',
     plan,
-    harness: 'OpenCode' as const,
-    reviewerHarness: 'OpenCode' as const,
+    harness: 'PI' as const,
+    reviewerHarness: 'PI' as const,
     concurrency: 1,
   };
 
@@ -86,8 +85,8 @@ test('__daemon command clears active run on empty plan', async () => {
     repoRoot,
     runId: 'daemon-run-2',
     plan,
-    harness: 'OpenCode' as const,
-    reviewerHarness: 'OpenCode' as const,
+    harness: 'PI' as const,
+    reviewerHarness: 'PI' as const,
     concurrency: 1,
   };
 
@@ -111,14 +110,14 @@ test('__daemon command clears active run on empty plan', async () => {
   assert.equal(existsSync(contextPath), false);
 });
 
-test('__daemon command accepts Codex implementation and reviewer context', async () => {
-  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-daemon-codex-'));
+test('__daemon command accepts PI implementation and reviewer context', async () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-daemon-pi-'));
   writeMinimalAfkConfig(repoRoot);
   const contextPath = path.join(repoRoot, 'daemon-context.json');
 
   const plan = buildLaunchPlan(
     repoRoot,
-    { id: 'codex/default' },
+    { id: 'pi/default' },
     [],
     {
       featureSlug: 'feat',
@@ -130,21 +129,17 @@ test('__daemon command accepts Codex implementation and reviewer context', async
       worktreePath: repoRoot,
     },
     {
-      harness: 'Codex',
-      model: { id: 'codex/default' },
+      model: { id: 'pi/default' },
       prompt: { id: 'reviewer-default', label: 'Default', path: '/tmp/reviewer.md' },
     },
-    undefined,
-    undefined,
-    'Codex',
   );
 
   const context = {
     repoRoot,
-    runId: 'daemon-run-codex',
+    runId: 'daemon-run-pi',
     plan,
-    harness: 'Codex' as const,
-    reviewerHarness: 'Codex' as const,
+    harness: 'PI' as const,
+    reviewerHarness: 'PI' as const,
     concurrency: 1,
   };
 
@@ -183,7 +178,6 @@ test('__daemon command in argv[1] works for compiled mode', async () => {
       worktreePath: repoRoot,
     },
     {
-      harness: 'OpenCode',
       model: { id: 'reviewer-model' },
       prompt: { id: 'reviewer-default', label: 'Default', path: '/tmp/reviewer.md' },
     },
@@ -193,8 +187,8 @@ test('__daemon command in argv[1] works for compiled mode', async () => {
     repoRoot,
     runId: 'daemon-run-compiled',
     plan,
-    harness: 'OpenCode' as const,
-    reviewerHarness: 'OpenCode' as const,
+    harness: 'PI' as const,
+    reviewerHarness: 'PI' as const,
     concurrency: 1,
   };
 

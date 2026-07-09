@@ -93,18 +93,14 @@ test('round-trips launch preferences', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
   const store = new RuntimeStore({ repoRoot });
   store.writeLaunchPreferences({
-    harness: 'OpenCode',
     modelId: 'provider/exec',
-    reviewerHarness: 'Claude',
     reviewerModelId: 'provider/review',
     featureCompletionAction: 'create-pr',
     sandboxMode: 'docker',
   });
 
   assert.deepEqual(store.readLaunchPreferences(), {
-    harness: 'OpenCode',
     modelId: 'provider/exec',
-    reviewerHarness: 'Claude',
     reviewerModelId: 'provider/review',
     featureCompletionAction: 'create-pr',
     sandboxMode: 'docker',
@@ -115,7 +111,6 @@ test('reads optional budget preferences', () => {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'afk-runtime-'));
   const store = new RuntimeStore({ repoRoot });
   store.writeLaunchPreferences({
-    harness: 'OpenCode',
     budgets: {
       malformedReviewerRetries: 1,
       fixupCycleLimit: 3,

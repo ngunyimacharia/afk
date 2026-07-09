@@ -9,6 +9,7 @@ import { resolveExecutable } from '../src/executable-resolution.js';
 import { resolveReviewerPromptTemplate } from '../src/reviewer-prompt-catalog.js';
 import { RuntimeStore } from '../src/runtime-store.js';
 import { resetDefaultSandcastleDockerCleanup, setDefaultSandcastleDockerCleanup } from '../src/sandcastle-cleanup.js';
+import { resolveProjectImageTag } from '../src/sandcastle-image-builder.js';
 import { resolveSandcastleAgentProvider } from '../src/sandcastle-provider.js';
 import {
   AFK_RUNTIME_IMAGE,
@@ -21,7 +22,7 @@ import { collectSandcastleDockerMounts, SingleTicketRunner } from '../src/single
 
 const GIT_PATH = resolveExecutable('git');
 
-test('collects PI Docker auth mount as writable for session persistence', () => {
+test('PI Docker auth mount is writable for session persistence', () => {
   const mounts = collectSandcastleDockerMounts({
     sandcastleProvider: resolveSandcastleAgentProvider(
       'PI',
@@ -30,15 +31,15 @@ test('collects PI Docker auth mount as writable for session persistence', () => 
       'docker',
     ),
     reviewerSandcastleProvider: resolveSandcastleAgentProvider(
-      'Codex',
-      { id: 'codex/default' },
+      'PI',
+      { id: 'pi/default' },
       { homeDir: '/home/runner' },
       'docker',
     ),
   } as never);
 
   assert.equal(mounts.find((mount) => mount.sandboxPath === '/home/agent/.pi')?.readonly, false);
-  assert.equal(mounts.find((mount) => mount.sandboxPath === '/home/sandbox/.codex')?.readonly, true);
+  assert.equal(mounts.filter((mount) => mount.sandboxPath === '/home/agent/.pi').length, 1);
 });
 
 function git(repoRoot: string, args: string[]): string {
@@ -59,12 +60,12 @@ test('launches one ticket and writes runtime artifacts before exit', async () =>
   );
   const plan = {
     repoRoot,
-    harness: 'Codex',
+    harness: 'PI',
     model: { id: 'model-1' },
-    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
-    reviewerHarness: 'Claude',
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'model-1' }),
+    reviewerHarness: 'PI',
     reviewerModel: { id: 'review-model' },
-    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '001', label: 'feat/001', executorAfk: true }],
     gitContext: { commits: [] },
@@ -112,9 +113,9 @@ test('launches a PI ticket and writes provider-specific runtime metadata', async
     harness: 'PI' as const,
     model: { id: 'pi/default' },
     sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'pi/default' }),
-    reviewerHarness: 'Claude' as const,
+    reviewerHarness: 'PI' as const,
     reviewerModel: { id: 'review-model' },
-    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     tickets: [{ path: '/tmp/ticket.md', feature: 'feat', issueName: '002', label: 'feat/002', executorAfk: true }],
     gitContext: { commits: [] },
@@ -772,12 +773,12 @@ test('runs implementation, reviewer repair, and fixup in one warm Sandcastle san
   );
   const plan = {
     repoRoot,
-    harness: 'Codex',
+    harness: 'PI',
     model: { id: 'model-1' },
-    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
-    reviewerHarness: 'Claude',
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'model-1' }),
+    reviewerHarness: 'PI',
     reviewerModel: { id: 'review-model' },
-    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     sandboxMode: 'docker',
     tickets: [{ path: ticketPath, feature: 'feat', issueName: 'warm', label: 'feat/warm', executorAfk: true }],
@@ -865,12 +866,12 @@ test('blocks Docker Sandcastle launch when runtime image validation fails', asyn
   );
   const plan = {
     repoRoot,
-    harness: 'Codex',
+    harness: 'PI',
     model: { id: 'model-1' },
-    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
-    reviewerHarness: 'Claude',
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'model-1' }),
+    reviewerHarness: 'PI',
     reviewerModel: { id: 'review-model' },
-    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     sandboxMode: 'docker',
     tickets: [{ path: ticketPath, feature: 'feat', issueName: 'docker', label: 'feat/docker', executorAfk: true }],
@@ -903,7 +904,10 @@ test('blocks Docker Sandcastle launch when runtime image validation fails', asyn
     path.join(repoRoot, '.scratch', 'sandcastle-runtime', 'runs', 'run-docker-missing', 'record.json'),
   );
   assert.equal(sandcastleRecord.sandbox.mode, 'docker');
-  assert.equal(sandcastleRecord.sandbox.mode === 'docker' ? sandcastleRecord.sandbox.image : '', AFK_RUNTIME_IMAGE);
+  assert.equal(
+    sandcastleRecord.sandbox.mode === 'docker' ? sandcastleRecord.sandbox.image : '',
+    resolveProjectImageTag(repoRoot),
+  );
   assert.equal(
     sandcastleRecord.sandbox.mode === 'docker' ? sandcastleRecord.sandbox.worktreePath : '',
     AFK_RUNTIME_WORKTREE_PATH,
@@ -946,12 +950,12 @@ test('records failed Sandcastle runtime when Docker sandbox creation throws', as
   );
   const plan = {
     repoRoot,
-    harness: 'Codex',
+    harness: 'PI',
     model: { id: 'model-1' },
-    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
-    reviewerHarness: 'Claude',
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'model-1' }),
+    reviewerHarness: 'PI',
     reviewerModel: { id: 'review-model' },
-    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     sandboxMode: 'docker',
     tickets: [
@@ -1087,12 +1091,12 @@ test('completes Sandcastle cleanup when Docker launch context mismatches', async
   );
   const plan = {
     repoRoot,
-    harness: 'Codex',
+    harness: 'PI',
     model: { id: 'model-1' },
-    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
-    reviewerHarness: 'Claude',
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'model-1' }),
+    reviewerHarness: 'PI',
     reviewerModel: { id: 'review-model' },
-    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     sandboxMode: 'docker',
     tickets: [
@@ -1195,12 +1199,12 @@ test('completes Sandcastle cleanup when Docker reviewer reports target mismatch'
   );
   const plan = {
     repoRoot,
-    harness: 'Codex',
+    harness: 'PI',
     model: { id: 'model-1' },
-    sandcastleProvider: resolveSandcastleAgentProvider('Codex', { id: 'model-1' }),
-    reviewerHarness: 'Claude',
+    sandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'model-1' }),
+    reviewerHarness: 'PI',
     reviewerModel: { id: 'review-model' },
-    reviewerSandcastleProvider: resolveSandcastleAgentProvider('Claude', { id: 'review-model' }),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider('PI', { id: 'review-model' }),
     reviewerPrompt: resolveReviewerPromptTemplate(),
     sandboxMode: 'docker',
     tickets: [
