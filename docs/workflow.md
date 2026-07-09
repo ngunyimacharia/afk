@@ -105,14 +105,13 @@ First-pass feature stacks are linear. A dependent feature branch is created from
 
 ## Feature Completion Handling
 
-After all selected tickets for a feature complete successfully, AFK runs the operator-selected feature completion action against that feature branch. This applies to both inline and background daemon runs.
+After all selected tickets for a feature complete successfully, AFK creates a GitHub pull request for that feature branch. This applies to both inline and background daemon runs.
 
-Supported actions:
+Supported action:
 
-- `merge-to-base` merges the completed feature branch into the base branch captured at launch and runs the existing post-merge cleanup.
 - `create-pr` pushes the feature branch and opens a GitHub pull request into the base branch via a dedicated pull-request agent mode (push and PR permissions only, no source edits). The repository's PR template is used when one is discovered.
 
-There is no longer a "leave completed feature branches for manual inspection" path; PR creation is the non-merge completion option.
+PR creation is now the only feature completion option. The former `merge-to-base` action has been removed.
 
 Behavior notes:
 
