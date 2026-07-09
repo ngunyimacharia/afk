@@ -1,15 +1,24 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Actor check
+        run: |
+          if [ "${{ github.actor }}" != "ngunyimacharia" ]; then
+            echo "Only ngunyimacharia can trigger this workflow."
+            exit 1
+          fi
+
   bump-version:
+    needs: gate
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -21,28 +30,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check for skip ci
-        id: skip
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          message=$(git log -1 --pretty=%B)
-          if echo "$message" | grep -q '\[skip ci\]'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Configure git
-        if: steps.skip.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Bump version
-        if: steps.skip.outputs.skip == 'false'
         id: version
         run: |
           npm version patch --no-git-tag-version
@@ -51,14 +44,12 @@ jobs:
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
       - name: Commit version bump
-        if: steps.skip.outputs.skip == 'false'
         run: |
           git add package.json package-lock.json
           git commit -m "chore(release): bump version to ${{ steps.version.outputs.version }} [skip ci]"
           git push
 
       - name: Push tag
-        if: steps.skip.outputs.skip == 'false'
         run: |
           git tag ${{ steps.version.outputs.tag }}
           git push origin ${{ steps.version.outputs.tag }}
@@ -76,9 +67,6 @@ jobs:
           - os: macos-15
             target: bun-darwin-arm64
             asset: afk-darwin-arm64
-          - os: macos-13
-            target: bun-darwin-x64
-            asset: afk-darwin-x64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
