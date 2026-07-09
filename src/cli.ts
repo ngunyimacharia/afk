@@ -31,11 +31,7 @@ import {
   resolveExecutable,
   resolveExecutables,
 } from './executable-resolution.js';
-import {
-  type FeatureBaseMergeResult,
-  featuresWithAllTicketsCompleted,
-  mergeCompletedFeaturesToBase,
-} from './feature-base-merge.js';
+import { featuresWithAllTicketsCompleted } from './feature-base-merge.js';
 import { buildFeatureExecutionGraph, type FeatureExecutionGraph } from './feature-execution-graph.js';
 import { FeatureExecutionRefreshService } from './feature-execution-refresh.js';
 import { createPullRequestsForCompletedFeatures, type FeaturePrCreationResult } from './feature-pr-creation.js';
@@ -43,8 +39,6 @@ import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-featu
 import {
   discoverAvailableHarnesses,
   discoverHarnessModels,
-  displayNameForHarness,
-  isSelectableHarnessId,
   providerNameForHarness,
   type SelectableHarnessId,
 } from './harness-registry.js';
@@ -77,10 +71,11 @@ import { resolveReviewerPromptTemplate } from './reviewer-prompt-catalog.js';
 import { RuntimeStore } from './runtime-store.js';
 import { detectDockerAvailable } from './sandbox-selection.js';
 import { SandcastleAgentExecutionProvider } from './sandcastle-agent-execution-provider.js';
+import { resolveProjectImageTag } from './sandcastle-image-builder.js';
 import { resolveSandcastleAgentProvider, validateSandcastleDockerAuth } from './sandcastle-provider.js';
 import {
-  AFK_RUNTIME_IMAGE,
   DockerSandcastleRuntimeImageClient,
+  ensureRuntimeImage,
   validateSandcastleRuntimeImage,
 } from './sandcastle-runtime-image-contract.js';
 import { SandcastleWorktreeService } from './sandcastle-worktree-service.js';
@@ -300,6 +295,7 @@ export interface RunAfkRuntime {
   upgradeDependencies?: UpgradeDependencies;
   skipUpgradeCheck?: boolean;
   detectDockerAvailable?: () => boolean;
+  ensureRuntimeImage?: typeof ensureRuntimeImage;
   validateSandcastleRuntimeImage?: typeof validateSandcastleRuntimeImage;
   dockerAuthPathExists?: (path: string) => boolean;
 }
@@ -443,13 +439,15 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
       ])
       .filter(Boolean) as string[];
     if (plan.workspaceExecutionPath) logTargets.push(plan.workspaceExecutionPath);
-    const runtimeArtifactPaths = plan.runtimeArtifactTargets.flatMap((target) => [
-      target.logPath,
-      target.metadataPath,
-      target.doneSentinelPath,
-      target.failedSentinelPath,
-      target.handoffSentinelPath,
-    ]).filter(Boolean) as string[];
+    const runtimeArtifactPaths = plan.runtimeArtifactTargets
+      .flatMap((target) => [
+        target.logPath,
+        target.metadataPath,
+        target.doneSentinelPath,
+        target.failedSentinelPath,
+        target.handoffSentinelPath,
+      ])
+      .filter(Boolean) as string[];
     const rootFileTargets = [plan.executionJsonPath].filter(Boolean) as string[];
     const logDirTargets = [plan.afkLogsDir].filter(Boolean) as string[];
     const sandcastleTargets = (plan.sandcastleResourceTargets ?? []).map(
@@ -804,9 +802,9 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
     let selectedTickets: TicketRecord[] = [];
     let concurrency = 3;
     let mergeBackToBase = false;
-    let featureCompletionAction: FeatureCompletionAction = 'merge-to-base';
-    let harness: SelectableHarnessId = 'OpenCode';
-    let reviewerHarness: SelectableHarnessId = 'OpenCode';
+    let featureCompletionAction: FeatureCompletionAction = 'create-pr';
+    let harness: SelectableHarnessId = 'PI';
+    let reviewerHarness: SelectableHarnessId = 'PI';
     let sandboxMode: SandboxMode =
       launchPreferences.sandboxMode ?? launchPreferences.sandcastleSandboxMode ?? 'no-sandbox';
 
@@ -817,7 +815,7 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
     if (availableHarnesses.length === 0) {
       return {
         code: 0,
-        message: 'No harnesses available. Install and configure OpenCode, Claude, Codex, or PI.',
+        message: 'PI harness is not available. Install and configure PI.',
       };
     }
 
@@ -836,20 +834,18 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
         dockerAvailable,
       });
       if (wizard.cancelled) return { code: 0, message: 'Launch cancelled' };
-      harness = wizard.harness ?? 'OpenCode';
-      reviewerHarness = wizard.reviewerHarness ?? harness;
+      harness = wizard.harness;
+      reviewerHarness = wizard.reviewerHarness;
       model = wizard.model;
       reviewerModel = wizard.reviewerModel;
       reviewerPrompt = wizard.reviewerPrompt;
       selectedTickets = wizard.tickets ?? [];
       concurrency = wizard.concurrency ?? concurrency;
-      mergeBackToBase = wizard.mergeBackToBase ?? false;
-      featureCompletionAction = wizard.featureCompletionAction ?? (mergeBackToBase ? 'merge-to-base' : 'create-pr');
+      mergeBackToBase = false;
+      featureCompletionAction = 'create-pr';
       sandboxMode = wizard.sandboxMode ?? 'no-sandbox';
       runtimeStore.writeLaunchPreferences({
-        harness: wizard.harness,
         modelId: model?.id,
-        reviewerHarness: wizard.reviewerHarness,
         reviewerModelId: reviewerModel?.id,
         sandcastleSandboxMode: sandboxMode,
         concurrency,
@@ -872,6 +868,7 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
         false,
         runtime,
         env,
+        repoRoot,
         harness,
         reviewerHarness,
         model,
@@ -955,10 +952,9 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
       model,
       selectedTickets,
       checkout,
-      { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
+      { model: reviewerModel, prompt: reviewerPrompt },
       checkoutsByFeature,
       featureDependencies,
-      harness,
       sandboxMode,
     );
     writeRunPlan(repoRoot, runId, plan.tickets);
@@ -1204,7 +1200,6 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
     }, 500);
 
     let schedulerResult: Awaited<ReturnType<Scheduler['launch']>>;
-    let baseMergeResults: FeatureBaseMergeResult[] = [];
     let prCreationResults: FeaturePrCreationResult[] = [];
     try {
       commandPollInterval = setInterval(() => {
@@ -1221,22 +1216,7 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
         runId,
         signal: killController.signal,
       });
-      if (featureCompletionAction === 'merge-to-base') {
-        const eligibleFeatures = featuresWithAllTicketsCompleted(schedulerResult.ticketResults, checkoutFeatures);
-        if (eligibleFeatures.length > 0) {
-          baseMergeResults = await mergeCompletedFeaturesToBase({
-            repoRoot,
-            baseBranch,
-            features: eligibleFeatures,
-            checkoutsByFeature,
-            coordinator: mergeBackCoordinator,
-            model: plan.model,
-            reviewerModel: plan.reviewerModel,
-            reviewerPrompt: plan.reviewerPrompt,
-            onProgress,
-          });
-        }
-      } else if (featureCompletionAction === 'create-pr') {
+      if (featureCompletionAction === 'create-pr') {
         const eligibleFeatures = featuresWithAllTicketsCompleted(schedulerResult.ticketResults, checkoutFeatures);
         if (eligibleFeatures.length > 0) {
           prCreationResults = await createPullRequestsForCompletedFeatures({
@@ -1302,7 +1282,6 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
           runId,
           ticketResults: schedulerResult.ticketResults,
         }),
-        ...formatFeatureBaseMergeResultLines(baseMergeResults),
         ...formatFeaturePrCreationResultLines(prCreationResults),
         ...formatManualPermissionReviewLines(permissionCoordinator.history),
       ].join('\n'),
@@ -1311,24 +1290,6 @@ async function runAfkInternal(repoRoot: string, runtime: RunAfkRuntime, parsed: 
     if (killPollInterval) clearInterval(killPollInterval);
     if (clearOnExit) activeRunControlPlane.clear(runId);
   }
-}
-
-function formatFeatureBaseMergeResultLines(results: FeatureBaseMergeResult[]): string[] {
-  if (!results.length) return [];
-  return [
-    'Feature base merge results',
-    ...results.map((result) => {
-      let status: string;
-      if (result.success && !result.warning) {
-        status = 'merged and cleaned up';
-      } else if (result.warning) {
-        status = `merged with cleanup warnings (${result.warning})`;
-      } else {
-        status = `failed (${result.reason ?? 'unknown error'})`;
-      }
-      return `- ${result.feature}: ${status}`;
-    }),
-  ];
 }
 
 export function formatFeaturePrCreationResultLines(results: FeaturePrCreationResult[]): string[] {
@@ -1460,9 +1421,7 @@ export function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
       if (existsSync(prefsPath)) {
         const prefs = JSON.parse(readFileSync(prefsPath, 'utf8')) as Record<string, unknown>;
         if (!modelId && typeof prefs.modelId === 'string') modelId = prefs.modelId;
-        if (!harness && typeof prefs.harness === 'string' && isSelectableHarnessId(prefs.harness)) {
-          harness = displayNameForHarness(prefs.harness);
-        }
+        if (!harness) harness = 'PI';
       }
     } catch {
       // ignore unreadable preferences
@@ -1473,9 +1432,6 @@ export function readRunMetadata(repoRoot: string, runId: string): RunMetadata {
 }
 
 export function displayNameForProvider(provider: string): string {
-  if (provider === 'opencode') return 'OpenCode';
-  if (provider === 'claude') return 'Claude';
-  if (provider === 'codex') return 'Codex';
   if (provider === 'pi') return 'PI';
   return provider;
 }
@@ -1865,6 +1821,7 @@ async function validateDockerHeadlessPrerequisites(
   isJson: boolean,
   runtime: RunAfkRuntime,
   env: NodeJS.ProcessEnv,
+  repoRoot: string,
   harness: SelectableHarnessId,
   reviewerHarness: SelectableHarnessId,
   model: LaunchModel,
@@ -1878,9 +1835,24 @@ async function validateDockerHeadlessPrerequisites(
       'Docker sandbox mode requires Docker to be available before launch.',
     );
   }
+  const image = resolveProjectImageTag(repoRoot);
+  const ensureResult = (runtime.ensureRuntimeImage ?? ensureRuntimeImage)(image, repoRoot, (msg) => {
+    if (!isJson) process.stderr.write(`${msg}\n`);
+  });
+  if (!ensureResult.ok) {
+    return headlessFailure(
+      command,
+      isJson,
+      'docker-runtime-image-unavailable',
+      ensureResult.message ?? `Docker runtime image ${image} is not available.`,
+      {
+        image,
+      },
+    );
+  }
   const imageValidation = await (runtime.validateSandcastleRuntimeImage ?? validateSandcastleRuntimeImage)(
     new DockerSandcastleRuntimeImageClient(),
-    AFK_RUNTIME_IMAGE,
+    image,
   );
   if (!imageValidation.ok) {
     return headlessFailure(command, isJson, 'docker-runtime-image-unavailable', imageValidation.failure.message, {
@@ -1948,33 +1920,30 @@ async function runHeadlessLaunch(input: HeadlessLaunchInput): Promise<{ code: nu
   const command = 'run';
 
   const requiredFlags = [
-    { flag: '--harness', name: 'harness' },
     { flag: '--model', name: 'model' },
-    { flag: '--reviewer-harness', name: 'reviewer-harness' },
     { flag: '--reviewer-model', name: 'reviewer-model' },
     { flag: '--features', name: 'features' },
     { flag: '--concurrency', name: 'concurrency' },
-    { flag: '--completion', name: 'completion' },
+    { flag: '--completion', name: 'completion', optional: true },
     { flag: '--sandbox', name: 'sandbox' },
   ] as const;
 
-  for (const { flag, name } of requiredFlags) {
-    const value = parseStringFlag(argv, flag);
+  for (const entry of requiredFlags) {
+    if ('optional' in entry && entry.optional) continue;
+    const value = parseStringFlag(argv, entry.flag);
     if (!value) {
-      return headlessFailure(command, isJson, 'missing-required-flag', `Missing required flag: ${flag}`, {
-        flag,
-        name,
+      return headlessFailure(command, isJson, 'missing-required-flag', `Missing required flag: ${entry.flag}`, {
+        flag: entry.flag,
+        name: entry.name,
       });
     }
   }
 
-  const harnessFlag = parseStringFlag(argv, '--harness') as string;
   const modelFlag = parseStringFlag(argv, '--model') as string;
-  const reviewerHarnessFlag = parseStringFlag(argv, '--reviewer-harness') as string;
   const reviewerModelFlag = parseStringFlag(argv, '--reviewer-model') as string;
   const featureSlugs = parseCommaSeparatedFlag(argv, '--features');
   const concurrencyFlag = parseStringFlag(argv, '--concurrency') as string;
-  const completionFlag = parseStringFlag(argv, '--completion') as string;
+  const completionFlag = parseStringFlag(argv, '--completion') ?? 'create-pr';
   const sandboxFlag = parseStringFlag(argv, '--sandbox') as string;
 
   if (sandboxFlag !== 'docker' && sandboxFlag !== 'no-sandbox') {
@@ -1999,60 +1968,44 @@ async function runHeadlessLaunch(input: HeadlessLaunchInput): Promise<{ code: nu
     );
   }
 
-  if (completionFlag !== 'merge-to-base' && completionFlag !== 'create-pr') {
+  if (completionFlag !== 'create-pr') {
     return headlessFailure(
       command,
       isJson,
       'invalid-completion-action',
-      `Invalid completion action: ${completionFlag}. Must be 'merge-to-base' or 'create-pr'.`,
+      `Invalid completion action: ${completionFlag}. Only 'create-pr' is supported.`,
       { completion: completionFlag },
     );
   }
-  const featureCompletionAction: FeatureCompletionAction = completionFlag;
-  const mergeBackToBase = featureCompletionAction === 'merge-to-base';
+  const featureCompletionAction: FeatureCompletionAction = 'create-pr';
+  const mergeBackToBase = false;
 
-  const { availableHarnesses, harnessModelCache } = await (
-    runtime.discoverAvailableHarnesses ?? discoverAvailableHarnesses
-  )(undefined, repoRoot);
+  const { harnessModelCache } = await (runtime.discoverAvailableHarnesses ?? discoverAvailableHarnesses)(
+    undefined,
+    repoRoot,
+  );
 
-  function validateHarnessAndModel(
-    harnessValue: string,
+  function validateModel(
     modelValue: string,
-    role: 'implementation' | 'reviewer',
-  ):
-    | { harness: SelectableHarnessId; model: LaunchModel }
-    | { code: string; message: string; details: Record<string, unknown> } {
-    if (!isSelectableHarnessId(harnessValue)) {
-      return {
-        code: 'invalid-harness',
-        message: `Invalid ${role} harness: ${harnessValue}.`,
-        details: { harness: harnessValue, role },
-      };
-    }
-    if (!availableHarnesses.includes(harnessValue)) {
-      return {
-        code: 'unavailable-harness',
-        message: `${role === 'implementation' ? 'Implementation' : 'Reviewer'} harness '${harnessValue}' is not available. Available: ${availableHarnesses.join(', ') || 'none'}.`,
-        details: { harness: harnessValue, role, availableHarnesses },
-      };
-    }
-    const models = harnessModelCache[harnessValue] ?? [];
+    role: string,
+  ): { model: LaunchModel } | { code: string; message: string; details: Record<string, unknown> } {
+    const models = harnessModelCache.PI ?? [];
     const model = models.find((item) => item.id === modelValue);
     if (!model) {
       return {
         code: 'invalid-model',
-        message: `Invalid ${role} model: ${modelValue} for harness ${harnessValue}. Available models: ${models.map((m) => m.id).join(', ') || 'none'}.`,
-        details: { model: modelValue, harness: harnessValue, role, availableModels: models.map((m) => m.id) },
+        message: `Invalid ${role} model: ${modelValue}. Available models: ${models.map((m) => m.id).join(', ') || 'none'}.`,
+        details: { model: modelValue, role, availableModels: models.map((m) => m.id) },
       };
     }
-    return { harness: harnessValue, model };
+    return { model };
   }
 
-  const implValidation = validateHarnessAndModel(harnessFlag, modelFlag, 'implementation');
+  const implValidation = validateModel(modelFlag, 'implementation');
   if ('code' in implValidation) {
     return headlessFailure(command, isJson, implValidation.code, implValidation.message, implValidation.details);
   }
-  const reviewerValidation = validateHarnessAndModel(reviewerHarnessFlag, reviewerModelFlag, 'reviewer');
+  const reviewerValidation = validateModel(reviewerModelFlag, 'reviewer');
   if ('code' in reviewerValidation) {
     return headlessFailure(
       command,
@@ -2076,8 +2029,9 @@ async function runHeadlessLaunch(input: HeadlessLaunchInput): Promise<{ code: nu
       isJson,
       runtime,
       env,
-      implValidation.harness,
-      reviewerValidation.harness,
+      repoRoot,
+      'PI' as SelectableHarnessId,
+      'PI' as SelectableHarnessId,
       implValidation.model,
       reviewerValidation.model,
     );
@@ -2166,9 +2120,9 @@ async function runHeadlessLaunch(input: HeadlessLaunchInput): Promise<{ code: nu
   runId = activeRun.record.runId;
   activeRunControlPlane.transition(runId, 'running');
 
-  const harness = implValidation.harness;
+  const harness: SelectableHarnessId = 'PI';
   const model = implValidation.model;
-  const reviewerHarness = reviewerValidation.harness;
+  const reviewerHarness: SelectableHarnessId = 'PI';
   const reviewerModel = reviewerValidation.model;
   const reviewerPrompt = resolveReviewerPromptTemplate();
 
@@ -2267,10 +2221,9 @@ async function runHeadlessLaunch(input: HeadlessLaunchInput): Promise<{ code: nu
     model,
     selectedTickets,
     checkout,
-    { harness: reviewerHarness, model: reviewerModel, prompt: reviewerPrompt },
+    { model: reviewerModel, prompt: reviewerPrompt },
     checkoutsByFeature,
     featureDependencies,
-    harness,
     sandboxMode,
   );
   writeRunPlan(repoRoot, runId, plan.tickets);

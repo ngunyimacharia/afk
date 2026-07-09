@@ -1,5 +1,5 @@
 import prompts from 'prompts';
-import { displayNameForHarness, isSelectableHarnessId, type SelectableHarnessId } from './harness-registry.js';
+import type { SelectableHarnessId } from './harness-registry.js';
 import { resolveReviewerPromptTemplate } from './reviewer-prompt-catalog.js';
 import type {
   FeatureCompletionAction,
@@ -17,9 +17,9 @@ export interface PromptIO {
 
 export interface LaunchWizardResult {
   cancelled: boolean;
-  harness?: SelectableHarnessId;
+  harness: SelectableHarnessId;
   model?: LaunchModel;
-  reviewerHarness?: SelectableHarnessId;
+  reviewerHarness: SelectableHarnessId;
   reviewerModel?: LaunchModel;
   reviewerPrompt?: ReviewerPromptTemplate;
   tickets?: TicketRecord[];
@@ -37,11 +37,6 @@ export const dockerSandboxChoices: Array<{ title: string; value: SandboxMode }> 
 export const noDockerSandboxChoices: Array<{ title: string; value: SandboxMode | 'abort' }> = [
   { title: 'Continue without sandbox (host execution)', value: 'no-sandbox' },
   { title: 'Abort launch', value: 'abort' },
-];
-
-export const featureCompletionActionChoices: Array<{ title: string; value: FeatureCompletionAction }> = [
-  { title: 'Merge back to base branch on completion', value: 'merge-to-base' },
-  { title: 'Create a GitHub PR for completed feature branches', value: 'create-pr' },
 ];
 
 export function isInteractiveLaunchAllowed(io: PromptIO, env: NodeJS.ProcessEnv): { ok: boolean; reason?: string } {
@@ -64,77 +59,51 @@ export async function runInteractiveLaunchWizard(input: {
   preferences?: LaunchPreferences;
   dockerAvailable: boolean;
 }): Promise<LaunchWizardResult> {
-  const harnessChoices = input.availableHarnesses;
-  if (harnessChoices.length === 0) {
-    input.io.stdout.write('No harnesses available. Install and configure OpenCode, Claude, Codex, or PI.\n');
-    return { cancelled: true };
+  const harness: SelectableHarnessId = 'PI';
+  const reviewerHarness: SelectableHarnessId = 'PI';
+
+  if (input.availableHarnesses.length === 0 || !input.availableHarnesses.includes('PI')) {
+    input.io.stdout.write('PI harness is not available. Install and configure PI.\n');
+    return { cancelled: true, harness, reviewerHarness };
   }
 
-  const harnessInitial = input.preferences?.harness ? harnessChoices.indexOf(input.preferences.harness) : undefined;
-  const selectedHarness = await promptSingleSelect(
-    input.io,
-    'Select implementation harness',
-    harnessChoices,
-    harnessInitial,
-  );
-  if (!selectedHarness || !isSelectableHarnessId(selectedHarness)) return { cancelled: true };
-  const harness = selectedHarness;
-
   const sandboxMode = await promptSandboxMode(input.io, input.dockerAvailable, input.preferences);
-  if (!sandboxMode) return { cancelled: true };
+  if (!sandboxMode) return { cancelled: true, harness, reviewerHarness };
 
   const models = await input.discoverModels(harness);
   if (!models.length) {
     input.io.stdout.write(`No models available for ${harness}. Configure the provider and run \`afk\` again.\n`);
-    return { cancelled: true };
+    return { cancelled: true, harness, reviewerHarness };
   }
 
   const modelChoices = prioritizeModelChoices(models, input.preferences?.modelId);
   const selectedModelId = await promptSingleSelect(input.io, 'Select implementation model', modelChoices, 0);
-  if (!selectedModelId) return { cancelled: true };
+  if (!selectedModelId) return { cancelled: true, harness, reviewerHarness };
   const model = models.find((item) => item.id === selectedModelId);
-  if (!model) return { cancelled: true };
+  if (!model) return { cancelled: true, harness, reviewerHarness };
 
-  const reviewerHarnessChoices = harnessChoices.map((choice) =>
-    choice === harness ? `${displayNameForHarness(choice)} (same as implementation)` : displayNameForHarness(choice),
-  );
-  const reviewerHarnessInitial = input.preferences?.reviewerHarness
-    ? harnessChoices.indexOf(input.preferences.reviewerHarness)
-    : harnessChoices.indexOf(harness);
-  const selectedReviewerHarnessDisplay = await promptSingleSelect(
-    input.io,
-    'Select reviewer harness',
-    reviewerHarnessChoices,
-    reviewerHarnessInitial >= 0 ? reviewerHarnessInitial : undefined,
-  );
-  if (!selectedReviewerHarnessDisplay) return { cancelled: true };
-  const reviewerHarnessIndex = reviewerHarnessChoices.indexOf(selectedReviewerHarnessDisplay);
-  const reviewerHarness = harnessChoices[reviewerHarnessIndex];
-  if (!reviewerHarness || !isSelectableHarnessId(reviewerHarness)) return { cancelled: true };
-
-  const reviewerModels = reviewerHarness === harness ? models : await input.discoverModels(reviewerHarness);
+  const reviewerModels = models;
   if (!reviewerModels.length) {
     input.io.stdout.write(
       `No models available for ${reviewerHarness}. Configure the provider and run \`afk\` again.\n`,
     );
-    return { cancelled: true };
+    return { cancelled: true, harness, reviewerHarness };
   }
 
   const reviewerModelChoices = prioritizeModelChoices(reviewerModels, input.preferences?.reviewerModelId);
   const selectedReviewerModelId = await promptSingleSelect(input.io, 'Select reviewer model', reviewerModelChoices, 0);
-  if (!selectedReviewerModelId) return { cancelled: true };
+  if (!selectedReviewerModelId) return { cancelled: true, harness, reviewerHarness };
   const reviewerModel = reviewerModels.find((item) => item.id === selectedReviewerModelId);
-  if (!reviewerModel) return { cancelled: true };
+  if (!reviewerModel) return { cancelled: true, harness, reviewerHarness };
 
   const reviewerPrompt = resolveReviewerPromptTemplate();
 
   const selectedTickets = await promptFeatureMultiSelect(input.io, input.tickets);
-  if (!selectedTickets) return { cancelled: true };
+  if (!selectedTickets) return { cancelled: true, harness, reviewerHarness };
   const concurrency = await promptConcurrency(input.io, input.preferences?.concurrency ?? 3);
-  if (!concurrency) return { cancelled: true };
-  const featureCompletionAction = await promptFeatureCompletionAction(input.io, input.preferences);
-  if (!featureCompletionAction) return { cancelled: true };
-  const mergeBackToBase = featureCompletionAction === 'merge-to-base';
+  if (!concurrency) return { cancelled: true, harness, reviewerHarness };
+  const featureCompletionAction: FeatureCompletionAction = 'create-pr';
+  const mergeBackToBase = false;
 
   return {
     cancelled: false,
@@ -284,40 +253,6 @@ async function promptConcurrency(io: PromptIO, initial: number): Promise<number 
     if (Number.isInteger(result.value) && result.value > 0) return result.value;
     io.stdout.write('Validation error: enter a positive integer.\n');
   }
-}
-
-function preferredFeatureCompletionAction(preferences?: LaunchPreferences): FeatureCompletionAction {
-  if (preferences?.featureCompletionAction) return preferences.featureCompletionAction;
-  return 'merge-to-base';
-}
-
-async function promptFeatureCompletionAction(
-  _io: PromptIO,
-  preferences?: LaunchPreferences,
-): Promise<FeatureCompletionAction | null> {
-  const initialValue = preferredFeatureCompletionAction(preferences);
-  const initial = featureCompletionActionChoices.findIndex((choice) => choice.value === initialValue);
-  const result = await prompts(
-    {
-      type: 'autocomplete',
-      name: 'value',
-      message: 'After tickets complete, how should feature branches be handled?',
-      choices: featureCompletionActionChoices,
-      initial: initial >= 0 ? initial : 0,
-      suggest: async (input: string, choices: PromptSuggestChoice[]) => {
-        const query = input.trim().toLowerCase();
-        if (!query) return choices;
-        return choices.filter((choice) =>
-          String(choice?.title ?? '')
-            .toLowerCase()
-            .includes(query),
-        );
-      },
-    },
-    { onCancel: () => true },
-  );
-  if (result.value === 'merge-to-base' || result.value === 'create-pr') return result.value;
-  return null;
 }
 
 async function promptSandboxMode(

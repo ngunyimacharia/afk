@@ -1,12 +1,6 @@
 import type { AgentExecutionProvider, AgentExecutionRequest } from './agent-execution-provider.js';
 import { decideAfkPermission, resolveAgentInvocationPolicy } from './agent-execution-provider.js';
-import { ClaudeCodeSessionExecutor } from './claude-code.js';
-import { CodexSessionExecutor } from './codex.js';
-import {
-  type OpenCodeSessionExecutor,
-  type OpenCodeSessionProgressEvent,
-  SDKOpenCodeSessionExecutor,
-} from './opencode.js';
+import type { OpenCodeSessionExecutor, OpenCodeSessionProgressEvent } from './opencode.js';
 import { PiSessionExecutor } from './pi.js';
 import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 import type { AgentExecutionResult } from './types.js';
@@ -60,10 +54,7 @@ class DefaultSandcastleExecutionClient implements SandcastlePhaseExecutionClient
       sessionId: request.sessionId,
       workDir: request.plan.checkout.worktreePath,
       repoRoot: request.plan.repoRoot,
-      sandboxMode:
-        input.provider.provider === 'codex' && request.plan.sandboxMode === 'no-sandbox'
-          ? 'danger-full-access'
-          : undefined,
+      sandboxMode: request.plan.sandboxMode === 'no-sandbox' ? 'danger-full-access' : undefined,
       permissionMode: 'allow',
       onProgress: (event) => request.onProgress?.(toAgentProgressEvent(ticket?.label ?? 'unknown', event)),
       decidePermission: (permissionRequest) =>
@@ -86,15 +77,11 @@ class DefaultSandcastleExecutionClient implements SandcastlePhaseExecutionClient
   }
 
   private createExecutor(
-    provider: SandcastleAgentProviderSelection,
-    repoRoot: string,
+    _provider: SandcastleAgentProviderSelection,
+    _repoRoot: string,
     invocationMode?: string,
   ): OpenCodeSessionExecutor {
-    if (provider.provider === 'claudeCode') return new ClaudeCodeSessionExecutor(repoRoot);
-    if (provider.provider === 'codex') return new CodexSessionExecutor();
-    if (provider.provider === 'pi')
-      return new PiSessionExecutor(invocationMode as import('./agent-execution-provider.js').AgentInvocationMode);
-    return new SDKOpenCodeSessionExecutor();
+    return new PiSessionExecutor(invocationMode as import('./agent-execution-provider.js').AgentInvocationMode);
   }
 }
 

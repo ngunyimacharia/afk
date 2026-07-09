@@ -7,7 +7,6 @@ import {
   type SandboxRunResult,
 } from '@ai-hero/sandcastle';
 import { type DockerOptions, docker } from '@ai-hero/sandcastle/sandboxes/docker';
-import { parsePiEvent } from './pi.js';
 import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 
 type SandcastleStreamEvent =
@@ -128,7 +127,7 @@ function createPiSandcastleAgentProvider(selection: SandcastleAgentProviderSelec
   };
 }
 
-function extractPiAssistantText(parsed: Record<string, unknown>): string | null {
+function _extractPiAssistantText(parsed: Record<string, unknown>): string | null {
   const type = String(parsed.type ?? '').toLowerCase();
   // PI assistant message variants — extract text content from all of them
   if (type === 'message' || type === 'assistant_message' || type === 'message_update') {
@@ -144,7 +143,9 @@ function extractPiAssistantText(parsed: Record<string, unknown>): string | null 
   }
   // PI message and agent end events contain the final message state
   if (type === 'message_end' || type === 'agent_end') {
-    const message = (parsed as { message?: { role?: string; content?: Array<{ type?: string; text?: string; thinking?: string }> } }).message;
+    const message = (
+      parsed as { message?: { role?: string; content?: Array<{ type?: string; text?: string; thinking?: string }> } }
+    ).message;
     if (message?.role === 'assistant' && Array.isArray(message.content)) {
       const parts = message.content
         .filter((c): c is { type: string; text: string } => typeof c?.text === 'string' && c.type !== 'thinking')
@@ -158,7 +159,7 @@ function extractPiAssistantText(parsed: Record<string, unknown>): string | null 
   return null;
 }
 
-function toSandcastleStreamEvents(event: {
+function _toSandcastleStreamEvents(event: {
   message: string;
   sessionId?: string | null;
   activity?: string | null;

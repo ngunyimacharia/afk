@@ -351,7 +351,12 @@ async function waitForPromptOrStale(input: {
   getLastMeaningfulProgressAt: () => number;
   getActiveTool: () => OpenCodeActiveToolState | null;
   signal?: AbortSignal;
-}): Promise<'completed' | { status: 'stale'; message: string } | { status: 'aborted'; message: string } | { status: 'error'; message: string }> {
+}): Promise<
+  | 'completed'
+  | { status: 'stale'; message: string }
+  | { status: 'aborted'; message: string }
+  | { status: 'error'; message: string }
+> {
   const prompt = input.prompt
     .then(() => 'completed' as const)
     .catch((error: unknown) => ({

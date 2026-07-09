@@ -68,9 +68,7 @@ export type SandboxMode = 'docker' | 'no-sandbox';
 export type SandcastleSandboxMode = SandboxMode;
 
 export interface LaunchPreferences {
-  harness?: SelectableHarnessId;
   modelId?: string;
-  reviewerHarness?: SelectableHarnessId;
   reviewerModelId?: string;
   sandcastleSandboxMode?: SandcastleSandboxMode;
   concurrency?: number;

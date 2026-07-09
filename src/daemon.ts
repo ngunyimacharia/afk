@@ -2,7 +2,7 @@ import path from 'node:path';
 import { ActiveRunControlPlane } from './active-run-control-plane.js';
 import { ActiveRunEventStream } from './active-run-event-stream.js';
 import { CompositeAgentExecutionProvider } from './agent-execution-provider.js';
-import { featuresWithAllTicketsCompleted, mergeCompletedFeaturesToBase } from './feature-base-merge.js';
+import { featuresWithAllTicketsCompleted } from './feature-base-merge.js';
 import { createPullRequestsForCompletedFeatures } from './feature-pr-creation.js';
 import { GitFeatureLockProvider, GitFeatureMergeBackProvider } from './git-feature-providers.js';
 import type { SelectableHarnessId } from './harness-registry.js';
@@ -38,9 +38,8 @@ export interface DaemonLaunchContext {
 }
 
 export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
-  const { repoRoot, runId, plan, concurrency, budgets, mergeBackToBase, featureCompletionAction, baseBranch } = context;
-  const resolvedCompletionAction: FeatureCompletionAction =
-    featureCompletionAction ?? (mergeBackToBase === false ? 'create-pr' : 'merge-to-base');
+  const { repoRoot, runId, plan, concurrency, budgets, featureCompletionAction, baseBranch } = context;
+  const resolvedCompletionAction: FeatureCompletionAction = featureCompletionAction ?? 'create-pr';
 
   const activeRunControlPlane = new ActiveRunControlPlane({ repoRoot });
   activeRunControlPlane.transition(runId, 'running');
@@ -233,25 +232,7 @@ export async function runDaemon(context: DaemonLaunchContext): Promise<void> {
       return;
     }
 
-    if (baseBranch && resolvedCompletionAction === 'merge-to-base') {
-      const eligibleFeatures = featuresWithAllTicketsCompleted(
-        schedulerResult.ticketResults,
-        Object.keys(checkoutsByFeature),
-      );
-      if (eligibleFeatures.length > 0) {
-        await mergeCompletedFeaturesToBase({
-          repoRoot,
-          baseBranch,
-          features: eligibleFeatures,
-          checkoutsByFeature,
-          coordinator: mergeBackCoordinator,
-          model: plan.model,
-          reviewerModel: plan.reviewerModel,
-          reviewerPrompt: plan.reviewerPrompt,
-          onProgress,
-        });
-      }
-    } else if (resolvedCompletionAction === 'create-pr') {
+    if (resolvedCompletionAction === 'create-pr') {
       const eligibleFeatures = featuresWithAllTicketsCompleted(
         schedulerResult.ticketResults,
         Object.keys(checkoutsByFeature),

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { SelectableHarnessId } from './harness-registry.js';
 import { resolveSandcastleAgentProvider } from './sandcastle-provider.js';
 import type {
   AfkStateSnapshot,
@@ -169,15 +168,14 @@ export function buildLaunchPlan(
   tickets: TicketRecord[],
   checkout: PreparedCheckoutContext,
   reviewer?: {
-    harness?: SelectableHarnessId;
     model?: LaunchModel;
     prompt?: ReviewerPromptTemplate;
   },
   checkoutsByFeature?: Record<string, PreparedCheckoutContext>,
   featureDependencies?: Record<string, string[]>,
-  harness?: SelectableHarnessId,
   sandboxMode?: SandboxMode,
 ): LaunchPlan {
+  const harness = 'PI' as const;
   const snapshots = Object.fromEntries(
     tickets.map((ticket) => [
       ticket.label,
@@ -189,14 +187,10 @@ export function buildLaunchPlan(
     harness,
     sandboxMode,
     model,
-    ...(harness ? { sandcastleProvider: resolveSandcastleAgentProvider(harness, model, {}, sandboxMode) } : {}),
-    reviewerHarness: reviewer?.harness,
+    sandcastleProvider: resolveSandcastleAgentProvider(harness, model, {}, sandboxMode),
+    reviewerHarness: harness,
     reviewerModel: reviewer?.model,
-    ...(reviewer?.harness
-      ? {
-          reviewerSandcastleProvider: resolveSandcastleAgentProvider(reviewer.harness, reviewer.model, {}, sandboxMode),
-        }
-      : {}),
+    reviewerSandcastleProvider: resolveSandcastleAgentProvider(harness, reviewer?.model, {}, sandboxMode),
     reviewerPrompt: reviewer?.prompt,
     tickets,
     checkout,

@@ -1035,7 +1035,11 @@ export class CleanupPlanner {
       .map((issue) => _runtimeArtifactTarget(this.input.repoRoot, issue.feature, issue.issueName))
       .filter(
         (target) =>
-          target.logPath || target.metadataPath || target.doneSentinelPath || target.failedSentinelPath || target.handoffSentinelPath,
+          target.logPath ||
+          target.metadataPath ||
+          target.doneSentinelPath ||
+          target.failedSentinelPath ||
+          target.handoffSentinelPath,
       );
 
     // Include PRD-only features (no issues, only PRD.md) when all scratch issues are terminal
@@ -1055,24 +1059,26 @@ export class CleanupPlanner {
 
     // AFK logs dir is safe to delete when all features are terminal and no runs preserved
     const afkLogsDir =
-      allIssueFeaturesTerminal && preservedRuns.length === 0
-        ? ticketLogRoot(this.input.repoRoot)
-        : undefined;
+      allIssueFeaturesTerminal && preservedRuns.length === 0 ? ticketLogRoot(this.input.repoRoot) : undefined;
 
-    const terminalTargets = sandcastleRuns.length === 0 ? [] :
-      terminalRuns
-        .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
-        .map(({ record }) => ({
-          feature: record.ticket.featureSlug,
-          issueName: record.ticket.issueName,
-          issuePath: record.ticket.ticketPath,
-          reason: `terminal Sandcastle run: ${record.terminal.status}`,
-        }));
+    const terminalTargets =
+      sandcastleRuns.length === 0
+        ? []
+        : terminalRuns
+            .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
+            .map(({ record }) => ({
+              feature: record.ticket.featureSlug,
+              issueName: record.ticket.issueName,
+              issuePath: record.ticket.ticketPath,
+              reason: `terminal Sandcastle run: ${record.terminal.status}`,
+            }));
 
-    const preservedIssues = sandcastleRuns.length === 0 ? [] :
-      preservedRuns
-        .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
-        .map(({ record }) => record.ticket.ticketPath);
+    const preservedIssues =
+      sandcastleRuns.length === 0
+        ? []
+        : preservedRuns
+            .filter(({ record }) => isPathWithinScratch(this.input.repoRoot, record.ticket.ticketPath))
+            .map(({ record }) => record.ticket.ticketPath);
 
     return {
       terminalTargets,

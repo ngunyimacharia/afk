@@ -12,9 +12,7 @@ export interface CliFlags {
   verbose: boolean;
   version: boolean;
   manifest?: string;
-  harness?: string;
   model?: string;
-  reviewerHarness?: string;
   reviewerModel?: string;
   features?: string[];
   concurrency?: number;
@@ -170,14 +168,8 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
       case '--manifest':
         flags.manifest = value ?? argsToParse[++i];
         break;
-      case '--harness':
-        flags.harness = value ?? argsToParse[++i];
-        break;
       case '--model':
         flags.model = value ?? argsToParse[++i];
-        break;
-      case '--reviewer-harness':
-        flags.reviewerHarness = value ?? argsToParse[++i];
         break;
       case '--reviewer-model':
         flags.reviewerModel = value ?? argsToParse[++i];

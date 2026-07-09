@@ -10,7 +10,7 @@ export class ModelSelector {
 
   async selectModel(): Promise<LaunchModel> {
     const models = await this.discoverModels();
-    if (!models.length) throw new Error('No OpenCode models available');
+    if (!models.length) throw new Error('No PI models available');
     const selected = await this.chooser(models);
     if (!selected) throw new Error('No model selected');
     return selected;

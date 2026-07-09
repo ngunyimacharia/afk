@@ -4,7 +4,7 @@ import type { SelectableHarnessId } from './harness-registry.js';
 import { AFK_RUNTIME_PROVIDER_CONFIG_TARGETS } from './sandcastle-runtime-image-contract.js';
 import type { LaunchModel, SandboxMode } from './types.js';
 
-export type SandcastleAgentProviderName = 'opencode' | 'claudeCode' | 'codex' | 'pi';
+export type SandcastleAgentProviderName = 'pi';
 export type SandcastleProviderFailureKind = 'missing-auth' | 'invalid-provider' | 'runtime-error';
 
 export interface SandcastleDockerMountRequirement {
@@ -51,88 +51,33 @@ export function resolveSandcastleAgentProvider(
   sandboxMode?: SandboxMode,
 ): SandcastleAgentProviderSelection {
   const homeDir = input.homeDir ?? os.homedir();
-  const configRoot = input.env?.XDG_CONFIG_HOME?.trim() || path.join(homeDir, '.config');
   const modelId = normalizeSandcastleModelId(harness, model?.id);
 
-  if (harness === 'OpenCode') {
-    return {
-      provider: 'opencode',
-      model: modelId,
-      docker: {
-        env: ['OPENCODE_AUTH'],
-        mounts: [
-          {
-            source: path.join(configRoot, 'opencode'),
-            target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.opencode,
-            required: true,
-          },
-        ],
-      },
-      noSandbox: { enabled: true, reason: 'OpenCode can run on the prepared worktree without container isolation.' },
-    };
-  }
-
-  if (harness === 'Claude') {
-    return {
-      provider: 'claudeCode',
-      model: modelId,
-      docker: {
-        env: ['ANTHROPIC_API_KEY'],
-        mounts: [
-          {
-            source: path.join(homeDir, '.claude'),
-            target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.claudeCode,
-            required: true,
-          },
-        ],
-      },
-      noSandbox: {
-        enabled: true,
-        reason: 'Claude Code no-sandbox mode uses host credentials and bypasses Docker isolation.',
-      },
-    };
-  }
-
-  if (harness === 'PI') {
-    return {
-      provider: 'pi',
-      model: modelId,
-      docker: {
-        env: [],
-        mounts: [{ source: path.join(homeDir, '.pi'), target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi, required: true }],
-      },
-      ...(sandboxMode === 'docker'
-        ? {}
-        : {
-            noSandbox: {
-              enabled: true as const,
-              reason: 'PI no-sandbox mode uses the host PI configuration under ~/.pi.',
-            },
-          }),
-    };
-  }
-
   return {
-    provider: 'codex',
+    provider: 'pi',
     model: modelId,
     docker: {
       env: [],
-      mounts: [
-        { source: path.join(homeDir, '.codex'), target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.codex, required: true },
-      ],
+      mounts: [{ source: path.join(homeDir, '.pi'), target: AFK_RUNTIME_PROVIDER_CONFIG_TARGETS.pi, required: true }],
     },
-    noSandbox: { enabled: true, reason: 'Codex no-sandbox mode uses the host Codex configuration directly.' },
+    ...(sandboxMode === 'docker'
+      ? {}
+      : {
+          noSandbox: {
+            enabled: true as const,
+            reason: 'PI no-sandbox mode uses the host PI configuration under ~/.pi.',
+          },
+        }),
   };
 }
 
 export function normalizeSandcastleModelId(
-  harness: SelectableHarnessId,
+  _harness: SelectableHarnessId,
   modelId: string | undefined,
 ): string | undefined {
   const trimmed = modelId?.trim();
   if (!trimmed || DEFAULT_MODEL_IDS.has(trimmed)) return undefined;
-  if (harness === 'Codex' && trimmed === 'codex/default') return undefined;
-  if (harness === 'PI' && trimmed === 'pi/default') return undefined;
+  if (trimmed === 'pi/default') return undefined;
   return trimmed;
 }
 

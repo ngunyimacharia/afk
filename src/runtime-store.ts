@@ -1,6 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { isSelectableHarnessId } from './harness-registry.js';
 import { assertPathWithinRoot } from './path-validation.js';
 import type {
   BudgetExceededEvent,
@@ -54,7 +53,7 @@ function isFeatureCompletionAction(value: unknown): value is FeatureCompletionAc
 
 function resolveFeatureCompletionAction(value: Record<string, unknown>): FeatureCompletionAction | undefined {
   if (isFeatureCompletionAction(value.featureCompletionAction)) return value.featureCompletionAction;
-  if (typeof value.mergeBackToBase === 'boolean') return value.mergeBackToBase ? 'merge-to-base' : 'create-pr';
+  if (typeof value.mergeBackToBase === 'boolean') return value.mergeBackToBase ? 'create-pr' : 'create-pr';
   return undefined;
 }
 
@@ -86,13 +85,8 @@ export class RuntimeStore {
       const value = JSON.parse(readFileSync(this.launchPreferencesPath, 'utf8')) as Record<string, unknown> | null;
       if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
       const sandcastleSandboxMode = parseSandcastleSandboxMode(value.sandcastleSandboxMode);
-      const harnessValue = typeof value.harness === 'string' ? value.harness : undefined;
-      const reviewerHarnessValue = typeof value.reviewerHarness === 'string' ? value.reviewerHarness : undefined;
       const preferences: LaunchPreferences = {
-        harness: harnessValue && isSelectableHarnessId(harnessValue) ? harnessValue : undefined,
         modelId: typeof value.modelId === 'string' ? value.modelId : undefined,
-        reviewerHarness:
-          reviewerHarnessValue && isSelectableHarnessId(reviewerHarnessValue) ? reviewerHarnessValue : undefined,
         reviewerModelId: typeof value.reviewerModelId === 'string' ? value.reviewerModelId : undefined,
         sandboxMode:
           value.sandboxMode === 'docker' || value.sandboxMode === 'no-sandbox' ? value.sandboxMode : undefined,
@@ -139,9 +133,7 @@ export class RuntimeStore {
     this.assertManagedPath(this.launchPreferencesPath, 'launch preferences');
     mkdirSync(path.dirname(this.launchPreferencesPath), { recursive: true });
     const normalized: LaunchPreferences = {
-      harness: preferences.harness,
       modelId: preferences.modelId,
-      reviewerHarness: preferences.reviewerHarness,
       reviewerModelId: preferences.reviewerModelId,
       sandcastleSandboxMode: preferences.sandcastleSandboxMode,
       concurrency: preferences.concurrency,

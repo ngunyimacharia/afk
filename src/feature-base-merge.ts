@@ -14,7 +14,11 @@ export function featuresWithAllTicketsCompleted(ticketResults: SchedulerTicketRe
 
   return features.filter((feature) => {
     const results = resultsByFeature.get(feature);
-    return results !== undefined && results.length > 0 && results.every((r) => r.outcome === 'completed');
+    return (
+      results !== undefined &&
+      results.length > 0 &&
+      results.every((r) => r.outcome === 'completed' || r.outcome === 'handoff')
+    );
   });
 }
 

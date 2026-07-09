@@ -1,10 +1,7 @@
-import { discoverClaudeModels } from './claude-code.js';
-import { discoverCodexModels } from './codex.js';
-import { discoverOpenCodeModels } from './opencode.js';
 import { discoverPiModels } from './pi.js';
 import type { LaunchModel } from './types.js';
 
-export type HarnessId = 'OpenCode' | 'Claude' | 'Codex' | 'PI';
+export type HarnessId = 'PI';
 export type SelectableHarnessId = HarnessId;
 
 interface HarnessRegistryEntry {
@@ -17,32 +14,11 @@ interface HarnessRegistryEntry {
 
 const HARNESS_REGISTRY = [
   {
-    id: 'OpenCode',
-    displayName: 'OpenCode',
-    providerName: 'opencode',
-    selectable: true,
-    discoverModels: discoverOpenCodeModels,
-  },
-  {
-    id: 'Claude',
-    displayName: 'Claude',
-    providerName: 'claude',
-    selectable: true,
-    discoverModels: discoverClaudeModels,
-  },
-  {
-    id: 'Codex',
-    displayName: 'Codex',
-    providerName: 'codex',
-    selectable: true,
-    discoverModels: (repoRoot) => discoverCodexModels(process.env, repoRoot),
-  },
-  {
     id: 'PI',
     displayName: 'PI',
     providerName: 'pi',
     selectable: true,
-    discoverModels: (repoRoot) => discoverPiModels(process.env, repoRoot),
+    discoverModels: (repoRoot?: string) => discoverPiModels(process.env, repoRoot),
   },
 ] satisfies HarnessRegistryEntry[];
 
