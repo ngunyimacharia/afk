@@ -296,6 +296,9 @@ export class Scheduler {
                   }
                 }
               }
+            } else if (outcome === 'handoff') {
+              completed.add(ticketKey(ticket));
+              failures.push(`handoff: ${result.message}`);
             } else {
               failed.add(ticketKey(ticket));
               failures.push(result.message);

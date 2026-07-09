@@ -1,13 +1,11 @@
 import { execFileSync } from 'node:child_process';
+import { ensureRuntimeImage as ensureRuntimeImageAuto } from './sandcastle-image-builder.js';
 
 export const AFK_RUNTIME_IMAGE = 'afk-runtime:latest';
 export const AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY = 'afk.phase-executor.v1';
 export const AFK_RUNTIME_WORKTREE_PATH = '/workspace/afk-worktree';
 
 export const AFK_RUNTIME_PROVIDER_CONFIG_TARGETS = {
-  opencode: '/home/sandbox/.config/opencode',
-  claudeCode: '/home/sandbox/.claude',
-  codex: '/home/sandbox/.codex',
   pi: '/home/agent/.pi',
 } as const;
 
@@ -29,13 +27,17 @@ export interface SandcastleRuntimeImageClient {
 }
 
 export class DockerSandcastleRuntimeImageClient implements SandcastleRuntimeImageClient {
-  imageExists(image: string): Promise<boolean> {
+  imageExistsSync(image: string): boolean {
     try {
       execFileSync('docker', ['image', 'inspect', image], { stdio: 'ignore' });
-      return Promise.resolve(true);
+      return true;
     } catch (_error) {
-      return Promise.resolve(false);
+      return false;
     }
+  }
+
+  imageExists(image: string): Promise<boolean> {
+    return Promise.resolve(this.imageExistsSync(image));
   }
 
   imageExposesCapability(image: string, capability: string): Promise<boolean> {
@@ -49,6 +51,28 @@ export class DockerSandcastleRuntimeImageClient implements SandcastleRuntimeImag
       return Promise.resolve(false);
     }
   }
+}
+
+export interface EnsureRuntimeImageResult {
+  ok: boolean;
+  image: string;
+  message?: string;
+}
+
+export function ensureRuntimeImage(
+  image = AFK_RUNTIME_IMAGE,
+  repoRoot?: string,
+  onProgress?: (message: string) => void,
+): EnsureRuntimeImageResult {
+  if (repoRoot) {
+    return ensureRuntimeImageAuto(repoRoot, onProgress);
+  }
+
+  return {
+    ok: false,
+    image,
+    message: `No repo root provided. Cannot auto-build ${image}.`,
+  };
 }
 
 export async function validateSandcastleRuntimeImage(

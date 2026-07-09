@@ -1,0 +1,5 @@
+#!/bin/sh
+case "$1" in
+  capabilities) echo "afk.phase-executor.v1" ;;
+  *) echo "unknown command: $1" >&2; exit 1 ;;
+esac

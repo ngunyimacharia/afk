@@ -19,9 +19,9 @@ import {
   getDefaultSandcastleDockerCleanup,
   toCleanupResult,
 } from './sandcastle-cleanup.js';
+import { resolveProjectImageTag } from './sandcastle-image-builder.js';
 import type { SandcastleAgentProviderSelection } from './sandcastle-provider.js';
 import {
-  AFK_RUNTIME_IMAGE,
   AFK_RUNTIME_PHASE_EXECUTOR_CAPABILITY,
   AFK_RUNTIME_PROVIDER_CONFIG_TARGETS,
   AFK_RUNTIME_WORKTREE_PATH,
@@ -179,7 +179,8 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
   constructor(private readonly fallbackProvider: AgentExecutionProvider) {}
 
   validateRuntimeImage(_plan: LaunchPlan): Promise<SandcastleRuntimeImageValidationResult> {
-    return validateSandcastleRuntimeImage(new DockerSandcastleRuntimeImageClient(), AFK_RUNTIME_IMAGE);
+    const image = resolveProjectImageTag(_plan.repoRoot);
+    return validateSandcastleRuntimeImage(new DockerSandcastleRuntimeImageClient(), image);
   }
 
   async create(plan: LaunchPlan): Promise<WarmSandcastleSandboxHandle> {
@@ -204,7 +205,7 @@ class DefaultWarmSandcastleSandboxFactory implements WarmSandcastleSandboxFactor
     const runtime = await packageRuntime.createAfkSandcastleDockerRuntime({
       repoRoot: plan.repoRoot,
       branch: plan.checkout.effectiveBranchName,
-      imageName: AFK_RUNTIME_IMAGE,
+      imageName: resolveProjectImageTag(plan.repoRoot),
       mounts: collectSandcastleDockerMounts(plan),
       env: collectSandcastleDockerEnv(plan),
     });
@@ -249,9 +250,10 @@ export function collectSandcastleDockerMounts(plan: LaunchPlan) {
   const scratchDir = path.join(plan.repoRoot, '.scratch');
   return Array.from(
     new Map(
-      [...providerMounts, { hostPath: scratchDir, sandboxPath: scratchDir, readonly: false }].map(
-        (mount) => [`${mount.hostPath}:${mount.sandboxPath}`, mount],
-      ),
+      [...providerMounts, { hostPath: scratchDir, sandboxPath: scratchDir, readonly: false }].map((mount) => [
+        `${mount.hostPath}:${mount.sandboxPath}`,
+        mount,
+      ]),
     ).values(),
   );
 }
@@ -333,7 +335,9 @@ export class SingleTicketRunner {
         ? `afk-${ticket.feature}-${ticket.issueName}-${options.runId ?? Date.now()}`
         : undefined;
     let dockerIdentity: DockerContainerIdentity | undefined =
-      plan.sandboxMode === 'docker' ? { image: AFK_RUNTIME_IMAGE, containerName: dockerContainerName } : undefined;
+      plan.sandboxMode === 'docker'
+        ? { image: resolveProjectImageTag(plan.repoRoot), containerName: dockerContainerName }
+        : undefined;
     const sandcastleRuntime =
       sandcastleRuntimeStore && sandcastleProvider
         ? sandcastleRuntimeStore.createRun({
@@ -358,7 +362,7 @@ export class SingleTicketRunner {
               plan.sandboxMode === 'docker'
                 ? {
                     mode: 'docker',
-                    image: AFK_RUNTIME_IMAGE,
+                    image: resolveProjectImageTag(plan.repoRoot),
                     worktreePath: AFK_RUNTIME_WORKTREE_PATH,
                     containerName: dockerContainerName,
                   }
@@ -413,9 +417,10 @@ export class SingleTicketRunner {
     const sandcastleSandboxFactory =
       this.sandcastleSandboxFactory ?? new DefaultWarmSandcastleSandboxFactory(this.provider);
     if (sandcastleRuntime && sandcastleRuntimeStore && plan.sandboxMode === 'docker') {
+      const image = resolveProjectImageTag(plan.repoRoot);
       const validation = sandcastleSandboxFactory.validateRuntimeImage
         ? await sandcastleSandboxFactory.validateRuntimeImage(plan)
-        : await validateSandcastleRuntimeImage(new DockerSandcastleRuntimeImageClient(), AFK_RUNTIME_IMAGE);
+        : await validateSandcastleRuntimeImage(new DockerSandcastleRuntimeImageClient(), image);
       if (!validation.ok) {
         const reason = validation.failure.message;
         this.runtimeStore.updateMetadata(record.metadataPath, {
@@ -504,8 +509,7 @@ export class SingleTicketRunner {
     if (warmSandbox?.worktreePath) {
       // In Docker mode, Sandcastle bind-mounts the worktree at
       // $SANDBOX_REPO_DIR and sets WORKDIR to /home/agent.
-      const promptWorktreePath =
-        plan.sandboxMode === 'docker' ? '/home/agent' : warmSandbox.worktreePath;
+      const promptWorktreePath = plan.sandboxMode === 'docker' ? '/home/agent' : warmSandbox.worktreePath;
       const promptRepoRoot = plan.sandboxMode === 'docker' ? '/home/agent' : plan.repoRoot;
       const updatedCheckout = { ...plan.checkout, worktreePath: promptWorktreePath };
       const currentSnapshot = plan.snapshots?.[ticket.label];
@@ -1110,7 +1114,13 @@ export class SingleTicketRunner {
               ticket.provider?.materializedFiles?.runSummaryPath ??
               ticket.path;
             if (ticketPath) {
-              this.ensureTicketStatusDone(ticketPath, record.logPath);
+              const ticketFinalized = this.ensureTicketStatusDone(ticketPath, record.logPath);
+              if (!ticketFinalized) {
+                this.runtimeStore.appendLog(
+                  record.logPath,
+                  `WARNING: ticket status finalization failed for ${ticketPath} — status may not be updated to done`,
+                );
+              }
             }
             if (this.hasUncommittedChanges(plan.checkout.worktreePath)) {
               this.commitUncommittedChanges(plan.checkout.worktreePath, ticket.label, record.logPath);
@@ -1223,28 +1233,49 @@ export class SingleTicketRunner {
       const message = error instanceof Error ? error.message : 'provider execution failed';
       const source = 'agent-thrown' as const;
       const classification = classifyProviderFailureFromSource(message, source);
+      const metadata = this.runtimeStore.readMetadata(record.metadataPath);
+      const implementationCompleted = metadata.IMPLEMENTATION_STATUS === 'completed';
       this.runtimeStore.updateMetadata(record.metadataPath, {
-        STATUS: 'failed',
-        RUN_STATUS: 'failed',
+        STATUS: implementationCompleted ? 'handoff' : 'failed',
+        RUN_STATUS: implementationCompleted ? 'handoff' : 'failed',
         FAILURE_KIND: classification?.kind ?? 'unknown',
         PROVIDER_FAILURE_KIND: classification?.kind ?? 'unknown',
         PROVIDER_FAILURE_SOURCE: classification?.source ?? source,
         PROVIDER_FAILURE_EVIDENCE: classification?.matchedEvidence ?? message,
         UNSAFE_REASON: message,
       });
-      this.runtimeStore.markFailed(record, 'failed');
-      this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
-      await completeSandcastleRun('failed');
-      await this.syncLinearTerminal(ticket, record, 'failed', {
-        nextAction: 'investigate failed run',
-        reviewerNotes: message,
-      });
+      if (implementationCompleted) {
+        this.runtimeStore.markHandoff(record, `finalization error: ${message}`);
+        this.runtimeStore.appendLog(
+          record.logPath,
+          `handoff: implementation completed but finalization failed: ${message}`,
+        );
+        await completeSandcastleRun('handoff', message);
+        await this.syncLinearTerminal(ticket, record, 'handoff', {
+          nextAction: 'human review required (implementation completed, finalization failed)',
+          reviewerNotes: message,
+        });
+      } else {
+        this.runtimeStore.markFailed(record, 'failed');
+        this.runtimeStore.appendLog(record.logPath, `run failed: ${message}`);
+        await completeSandcastleRun('failed');
+        await this.syncLinearTerminal(ticket, record, 'failed', {
+          nextAction: 'investigate failed run',
+          reviewerNotes: message,
+        });
+      }
       this.emitProgress(record.metadataPath, options.onProgress, {
         ticketLabel: ticket.label,
-        message: `run failed: ${message}`,
+        message: `run ${implementationCompleted ? 'handoff' : 'failed'}: ${message}`,
       });
     }
-    return { scheduled: true, message: `Scheduled ${ticket.label}`, outcome: 'failed' };
+    const metadata = this.runtimeStore.readMetadata(record.metadataPath);
+    const implementationCompleted = metadata.IMPLEMENTATION_STATUS === 'completed';
+    return {
+      scheduled: true,
+      message: `Scheduled ${ticket.label}`,
+      outcome: implementationCompleted ? 'handoff' : 'failed',
+    };
   }
 
   private resolveBudgets(): BudgetPolicy {
