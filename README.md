@@ -1,5 +1,7 @@
 # AFK
 
+> **Archived — transitioned to OpenSpec.** This project is no longer maintained. We have transitioned to using [OpenSpec](https://github.com/Fission-AI/OpenSpec) with project-specific automations instead. This repository is archived and kept for reference only.
+
 AFK is a TypeScript implementation of an autonomous local-workflow runner built around markdown tickets in `.scratch/`.
 
 It currently provides four core behaviors:
